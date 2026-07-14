@@ -1,0 +1,39 @@
+# Swift Package Manager
+/.build/
+/.swiftpm/
+/Packages/
+/*.xcodeproj
+/*.xcworkspace
+/Package.resolved
+/build/
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+DerivedData/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Tooling
+/.swift-format-results
+/coverage/
+
+# Editor
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code (local session/personal state)
+/.claude/
+
+# Local artifacts
+/tmp/
