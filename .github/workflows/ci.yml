@@ -6,24 +6,22 @@ on:
   pull_request:
     branches: [main]
 
-# S0 baseline: build + test on macOS.
+# S0 baseline: build + test on macOS 26 (Xcode 26 / Swift 6.2+ required for
+# the macOS 26 deployment target and swift-tools-version 6.2).
 # Golden-image, Metal↔CPU parity, performance-bench, and swift-format gates
 # are added in later milestones (see docs/engineering/testing.md).
 
 jobs:
   build-and-test:
-    name: Build & Test (macOS)
-    runs-on: macos-15
+    name: Build & Test (macOS 26)
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer || true
 
       - name: Show toolchain
         run: |
           swift --version
-          xcodebuild -version || true
+          xcodebuild -version
 
       - name: Build (debug)
         run: swift build
