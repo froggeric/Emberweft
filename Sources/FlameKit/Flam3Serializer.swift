@@ -66,7 +66,10 @@ public enum Flam3Serializer {
     private static func paletteString(_ p: Palette) -> String {
         var s = "    <palette>\n"
         for (i, c) in p.colors.enumerated() where c != .zero {
-            let hex = String(format: "%02X%02X%02X", Int(c.x*255), Int(c.y*255), Int(c.z*255))
+            let r = min(255, max(0, Int((c.x * 255).rounded())))
+            let g = min(255, max(0, Int((c.y * 255).rounded())))
+            let b = min(255, max(0, Int((c.z * 255).rounded())))
+            let hex = String(format: "%02X%02X%02X", r, g, b)
             s += "      <color index=\"\(i)\" rgb=\"\(hex)\"/>\n"
         }
         s += "    </palette>\n"
@@ -81,6 +84,7 @@ public enum Flam3Serializer {
 
     private static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
