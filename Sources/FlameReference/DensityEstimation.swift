@@ -1,7 +1,23 @@
 import Foundation
 
 public enum DensityEstimation {
-    /// flam3-style adaptive kernel. radius==0 disables the filter (passthrough).
+    /// M1 density-estimation approximation.
+    ///
+    /// This is NOT flam3's density estimator. It performs a per-bin adaptive-kernel
+    /// smoothing of the AVERAGE bin color (shrinking the kernel where a bin is dense,
+    /// growing it where sparse) and writes the smoothed color back to the SAME bin,
+    /// scaled by that bin's (unchanged) count. It does NOT convolve energy into
+    /// neighboring output bins, so an isolated non-zero bin is left effectively
+    /// unchanged. `radius == 0` is an exact passthrough.
+    ///
+    /// Count mass is preserved exactly (out.counts == hist.counts for populated bins).
+    /// Color mass is approximately preserved for smooth fields but is NOT guaranteed
+    /// within 5% at high-contrast boundaries.
+    ///
+    /// TODO(M2): replace with true flam3 density estimation (energy convolution into
+    /// neighbor bins), implemented once and shared with the Metal renderer. The frozen
+    /// golden genomes all set estimator_radius="0", so this approximation does not
+    /// affect oracle parity today.
     public static func apply(_ hist: Histogram, radius: Float, minimum: Float, curve: Float) -> Histogram {
         guard radius > 0 else { return hist }
         var out = Histogram(gridWidth: hist.gridWidth, gridHeight: hist.gridHeight)
