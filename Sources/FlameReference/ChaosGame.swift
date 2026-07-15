@@ -2,7 +2,13 @@ import Foundation
 import FlameKit
 
 public enum ChaosGame {
+    /// Iteration burn-in: the first `fuse` iterations after a (re)seed are discarded,
+    /// matching flam3's FUSE constant — the chaos-game chain needs a few steps to
+    /// converge onto the attractor before accumulation is meaningful.
     private static let fuse = 20
+    /// Periodically re-seed the chain position so a non-mixing attractor can't strand
+    /// it in an out-of-frame region for the whole run. 1024 is a conservative cadence
+    /// (not a flam3 constant); after each reseed the `fuse` burn-in applies again.
     private static let reseedEvery = 1024
 
     public static func iterate(flame: Flame, params: RenderParams) -> Histogram {
@@ -12,7 +18,7 @@ public enum ChaosGame {
         let weights = flame.xforms.map { max(0, $0.weight) }
         let totalW = weights.reduce(0, +)
         guard totalW > 0 else { return hist }
-        let cum = prefixSums(weights)
+        let cdf = prefixSums(weights)
 
         // Camera transform: world -> supersample-grid pixel.
         let cosR = cos(flame.camera.rotation * .pi / 180)
@@ -35,7 +41,8 @@ public enum ChaosGame {
             iterations += 1
             // Scale the uniform draw into the (un-normalized) CDF range, otherwise
             // every xform after index 0 is never selected when sum(weights) > 1.
-            let i = pickIndex(cdf: cum, r: rng.nextFloat() * totalW)
+            // TODO(M2): honor xform.chaos transition weights.
+            let i = pickIndex(cdf: cdf, r: rng.nextFloat() * totalW)
             let x = flame.xforms[i]
             p = applyXform(x, p, rng: &rng)
             if let fin = flame.finalXform { p = applyXform(fin, p, rng: &rng) }
@@ -56,18 +63,22 @@ public enum ChaosGame {
             let gx = rx * pixelsPerUnit + Float(gw) / 2
             let gy = ry * pixelsPerUnit + Float(gh) / 2
 
+            // `sinceReseed` counts only non-NaN iterations: NaN hits `continue`
+            // above before reaching here, so the fuse/reseed window advances
+            // exclusively along the live chain.
             sinceReseed += 1
             // Safe Int conversion: a diverging (non-contracting) genome can
             // produce grid coordinates far outside the Int representable range,
             // which would trap in `Int(gx)`. Guard in float space — such a bin
             // would be out of bounds anyway, so skipping is observationally
-            // identical to the bounds check below.
+            // identical to the bounds check below. The bound is conservative:
+            // Float(Int.max) rounds up to 2^63 > Int.max, so we use Int.max/2.
             if gx.isFinite, gy.isFinite,
-               abs(gx) <= Float(Int.max), abs(gy) <= Float(Int.max) {
+               abs(gx) < Float(Int.max / 2), abs(gy) < Float(Int.max / 2) {
                 let u = Int(gx.rounded(.down)), v = Int(gy.rounded(.down))
                 if sinceReseed > fuse, u >= 0, u < gw, v >= 0, v < gh {
                     let pal = samplePalette(flame.palette, t: colorT, hue: flame.hueShift)
-                    let idx = hist[u, v]
+                    let idx = hist.binIndex(u, v)
                     hist.counts[idx] += 1
                     hist.colors[idx] += pal
                     produced += 1
@@ -82,6 +93,7 @@ public enum ChaosGame {
     }
 
     static func applyXform(_ x: Xform, _ p: SIMD2<Float>, rng: inout PCG32) -> SIMD2<Float> {
+        // TODO(M2): apply xform.opacity.
         let pre = x.affine.apply(p)
         let v = Variations.evaluate(x.variations, at: pre, rng: &rng)
         return x.postAffine.apply(v)

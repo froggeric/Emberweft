@@ -28,10 +28,10 @@ final class ChaosGameTests: XCTestCase {
         let p = RenderParams(seed: 7, width: 64, height: 64, oversample: 1, samplesPerPixel: 500)
         let h = ChaosGame.iterate(flame: sierpinski(), params: p)
         // (a) well-formed contractive flame reaches exactly the budget
-        XCTAssertEqual(Int(h.totalSamples), p.totalSamples, "safety cap tripped — flame not contractive?")
+        XCTAssertEqual(Int(h.sampleSum), p.totalSamples, "safety cap tripped — flame not contractive?")
         // (b) attractor stays inside the triangle: no hits in the four extreme
         // image corners (which lie outside the Sierpinski hull for this genome).
-        let cornerBins = [h[0,0], h[63,0], h[0,63], h[63,63]]
+        let cornerBins = [h.binIndex(0,0), h.binIndex(63,0), h.binIndex(0,63), h.binIndex(63,63)]
         XCTAssertTrue(cornerBins.allSatisfy { h.counts[$0] == 0 }, "hits outside the triangle")
         // (c) but plenty of hits somewhere in the grid
         XCTAssertGreaterThan(h.counts.reduce(0, +), 0)
