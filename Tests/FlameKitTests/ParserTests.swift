@@ -57,4 +57,44 @@ final class ParserTests: XCTestCase {
         let xml = "<flames><flame>"
         XCTAssertThrowsError(try Flam3Parser.parse(xml.data(using: .utf8)!))
     }
+    func testPaletteDoesNotLeakBetweenFlames() throws {
+        // Regression: palette state must reset per <flame> so entries written by
+        // flame N do not persist into flame N+1 in a multi-flame document.
+        let xml = """
+        <flames>
+          <flame name="a"><xform coefs="1 0 0 1 0 0" linear="1"/>
+            <palette><color index="0" rgb="FF0000"/></palette></flame>
+          <flame name="b"><xform coefs="1 0 0 1 0 0" linear="1"/>
+            <palette><color index="255" rgb="0000FF"/></palette></flame>
+        </flames>
+        """
+        let flames = try Flam3Parser.parse(xml.data(using: .utf8)!)
+        XCTAssertEqual(flames.count, 2)
+        // Flame b only set index 255; index 0 must NOT carry over red from flame a.
+        XCTAssertEqual(flames[1].palette.colors[0], SIMD3<Float>(0, 0, 0))
+        XCTAssertEqual(flames[1].palette.colors[255], SIMD3<Float>(0, 0, 1))
+        XCTAssertEqual(flames[0].palette.colors[0], SIMD3<Float>(1, 0, 0))
+    }
+    func testParsesHexBlockPalette() throws {
+        // flam3 native <palette> hex-text form: 6 hex digits per color (RRGGBB).
+        let xml = """
+        <flames><flame><xform coefs="1 0 0 1 0 0" linear="1"/>
+          <palette>FF000000FF00</palette></flame></flames>
+        """
+        let f = try Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        XCTAssertEqual(f.palette.colors[0], SIMD3<Float>(1, 0, 0))
+        XCTAssertEqual(f.palette.colors[1], SIMD3<Float>(0, 1, 0))
+    }
+    func testParsesFinalXform() throws {
+        let xml = """
+        <flames><flame>
+          <xform coefs="1 0 0 1 0 0" linear="1"/>
+          <finalxform coefs="1 0 0 1 0 0" spherical="1"/>
+        </flame></flames>
+        """
+        let f = try Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        XCTAssertEqual(f.xforms.count, 1)
+        XCTAssertNotNil(f.finalXform)
+        XCTAssertEqual(f.finalXform?.variations, [Variation(name: "spherical", weight: 1)])
+    }
 }

@@ -48,7 +48,8 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
             }
         case "palette":
             inPalette = true; hexAccumulator = ""
-            applyPaletteColors(attr: attr)   // <color> children handled in 'color'
+            // Reset per flame so entries from a sibling <flame> don't leak in.
+            paletteColors = Array(repeating: .zero, count: 256)
         case "color":
             if inPalette, let idxStr = attr["index"], let rgb = attr["rgb"] {
                 let idx = Int(idxStr) ?? 0
@@ -75,10 +76,7 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         case "finalxform":
             if let xf = xform { flame?.finalXform = xf }; xform = nil
         case "flame":
-            if var f = flame {
-                if f.palette.colors.allSatisfy({ $0 == .zero }) { f.palette = .black }
-                flames.append(f)
-            }
+            if let f = flame { flames.append(f) }
             flame = nil
         default: break
         }
@@ -160,10 +158,6 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         let g = Float((v >> 8) & 0xff) / 255
         let b = Float(v & 0xff) / 255
         return SIMD3(r, g, b)
-    }
-
-    private func applyPaletteColors(attr: [String: String]) {
-        if let h = attr["hue"] { _ = h }
     }
 
     /// flam3 native: hex digits, 2 per channel, 3 channels per color (0-255).
