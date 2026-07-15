@@ -1,0 +1,89 @@
+import XCTest
+@testable import FlameReference
+import FlameKit
+
+final class PropertyTests: XCTestCase {
+    func testFiniteDeterministicRenders() {
+        var rng = PCG32(seed: 12345, stream: 1)
+        for _ in 0..<50 {
+            let f = GenomeGen.make(rng: &rng)
+            let p = RenderParams(seed: 7, width: 16, height: 16, oversample: 1, samplesPerPixel: 50)
+            // Float-domain finiteness: NaN/Inf would first surface in the
+            // histogram (counts + accumulated palette colors), before any
+            // UInt8 clamping masks it. This is the load-bearing assertion.
+            let hist = ChaosGame.iterate(flame: f, params: p)
+            XCTAssertTrue(hist.counts.allSatisfy { $0.isFinite }, "non-finite count")
+            XCTAssertTrue(hist.colors.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite },
+                          "non-finite color")
+            let a = ReferenceRenderer.render(flame: f, params: p)
+            // Pixel-level finiteness is structurally guaranteed: RGBA8Image.pixels
+            // is [UInt8], and the pipeline clamps via ToneMapping.clamp8. Float-
+            // domain finiteness of the histogram (where NaN/Inf would first
+            // appear) is asserted directly above.
+            let b = ReferenceRenderer.render(flame: f, params: p)
+            XCTAssertEqual(a, b)
+        }
+    }
+    func testParserRoundTrip() throws {
+        // Serialization formats floats to 6 decimals and emits variations as
+        // xform attributes (order not preserved by XMLParser), so exact equality
+        // is neither required nor expected. Compare structurally with a 1e-4
+        // tolerance and order-insensitive variation matching.
+        var rng = PCG32(seed: 999, stream: 2)
+        for _ in 0..<50 {
+            let f = GenomeGen.make(rng: &rng)
+            let xml = Flam3Serializer.serialize([f])
+            let parsed = try Flam3Parser.parse(xml.data(using: .utf8)!)
+            XCTAssertTrue(flameApproxEqual(f, parsed[0], accuracy: 1e-4),
+                          "round-trip diverged:\n\(xml)")
+        }
+    }
+    private func flameApproxEqual(_ a: Flame, _ b: Flame, accuracy: Double) -> Bool {
+        guard a.size == b.size, a.xforms.count == b.xforms.count else { return false }
+        guard abs(a.camera.scale - b.camera.scale) <= accuracy,
+              abs(a.camera.zoom - b.camera.zoom) <= accuracy,
+              abs(a.camera.rotation - b.camera.rotation) <= accuracy,
+              abs(a.camera.center.x - b.camera.center.x) <= accuracy,
+              abs(a.camera.center.y - b.camera.center.y) <= accuracy,
+              abs(a.quality.gamma - b.quality.gamma) <= accuracy,
+              abs(a.quality.gammaThreshold - b.quality.gammaThreshold) <= accuracy,
+              abs(a.quality.vibrancy - b.quality.vibrancy) <= accuracy,
+              a.quality.oversample == b.quality.oversample,
+              abs(Double(a.quality.samplesPerPixel) - Double(b.quality.samplesPerPixel)) <= 0.01,
+              abs(a.hueShift - b.hueShift) <= accuracy,
+              abs(a.time - b.time) <= accuracy
+        else { return false }
+        for (xa, xb) in zip(a.xforms, b.xforms) {
+            guard xformApproxEqual(xa, xb, accuracy: accuracy) else { return false }
+        }
+        // finalXform: presence must match; if both present, fields compared.
+        switch (a.finalXform, b.finalXform) {
+        case (nil, nil): break
+        case let (fa?, fb?): guard xformApproxEqual(fa, fb, accuracy: accuracy) else { return false }
+        default: return false
+        }
+        // `palette` is intentionally omitted: 8-bit hex quantization exceeds the
+        // 1e-4 tolerance. It is covered by the dedicated ParserTests/SerializerTests
+        // palette round-trip cases.
+        return true
+    }
+    private func xformApproxEqual(_ xa: Xform, _ xb: Xform, accuracy: Double) -> Bool {
+        let ca = xa.affine, cb = xb.affine
+        let pa = xa.postAffine, pb = xb.postAffine
+        guard abs(xa.weight - xb.weight) <= accuracy,
+              abs(xa.color - xb.color) <= accuracy,
+              abs(xa.colorSpeed - xb.colorSpeed) <= accuracy,
+              abs(xa.opacity - xb.opacity) <= accuracy,
+              abs(ca.a-cb.a) <= accuracy, abs(ca.b-cb.b) <= accuracy, abs(ca.c-cb.c) <= accuracy,
+              abs(ca.d-cb.d) <= accuracy, abs(ca.e-cb.e) <= accuracy, abs(ca.f-cb.f) <= accuracy,
+              abs(pa.a-pb.a) <= accuracy, abs(pa.b-pb.b) <= accuracy, abs(pa.c-pb.c) <= accuracy,
+              abs(pa.d-pb.d) <= accuracy, abs(pa.e-pb.e) <= accuracy, abs(pa.f-pb.f) <= accuracy
+        else { return false }
+        // variations: order-insensitive, matched by name
+        let da = Dictionary(uniqueKeysWithValues: xa.variations.map { ($0.name, $0.weight) })
+        let db = Dictionary(uniqueKeysWithValues: xb.variations.map { ($0.name, $0.weight) })
+        guard da.count == db.count else { return false }
+        for (k, va) in da where abs(va - (db[k] ?? .nan)) > accuracy { return false }
+        return true
+    }
+}

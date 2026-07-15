@@ -17,10 +17,10 @@ Read these before making non-trivial changes. They override any generic assumpti
 1. **Reference-then-Optimize.** `FlameReference` (CPU, Swift) is built and proven first, then `FlameRenderer` (Metal) is validated against it. Do not build Metal behavior that isn't matched by the CPU oracle.
 2. **Determinism is mandatory.** Same genome + seed + params → identical frame, offline and realtime. Never introduce time-based or order-dependent randomness.
 3. **Test-first.** Write the failing test (golden / parity / unit) before the implementation that satisfies it.
-4. **Oracle independence.** `flam3` (GPL) is a **dev-only external oracle** (Homebrew). Never link, bundle, copy, or distribute it. Emberweft's PolyForm-NC license must stay independent of GPL.
-5. **No surprise external dependencies.** Prefer Apple SDKs only (Foundation, Metal, AVFoundation, Accelerate). Any new dependency needs explicit approval.
-6. **Swift 6 strict concurrency.** Mutable state is actor-isolated or `Sendable`; Metal command recording is `@MainActor` where the API requires it.
-7. **No "open source" claims.** Emberweft is **source-available** (PolyForm Noncommercial), not OSI-open-source. Match this wording in all docs and strings.
+4. **No surprise external dependencies.** Prefer Apple SDKs only (Foundation, Metal, AVFoundation, Accelerate). Any new dependency needs explicit approval.
+5. **Swift 6 strict concurrency.** Mutable state is actor-isolated or `Sendable`; Metal command recording is `@MainActor` where the API requires it.
+6. **Faithful flam3 port.** The CPU reference renderer is a faithful Swift port of flam3's algorithms (affine convention, variation formulas, ISAAC RNG + consumption order, density estimation, display pipeline) — port the logic for correctness and parity, do not approximate or reinterpret. The affine/atan bugs found via the parity oracle are the exact class of error faithful porting eliminates.
+7. **License posture — owner's decision (under review).** Emberweft is currently **source-available** (PolyForm Noncommercial). Because the renderer ports flam3, the final license (including any GPL implications) is the owner's call and under review — do not assert a license constraint either way, and do not impose GPL-avoidance, until the owner decides.
 
 ## Conventions
 

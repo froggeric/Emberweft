@@ -15,7 +15,7 @@ let package = Package(
         .library(name: "FlameRenderer", targets: ["FlameRenderer"]),
         .library(name: "FlamePlayer", targets: ["FlamePlayer"]),
         .library(name: "FlameExport", targets: ["FlameExport"]),
-        .executable(name: "emberweft", targets: ["EmberweftCLI"])
+        .executable(name: "emberweft", targets: ["EmberweftApp"])
     ],
     targets: [
         // Core genome model + .flam3 parsing/interpolation (no Metal).
@@ -47,16 +47,32 @@ let package = Package(
             dependencies: ["FlameRenderer", "FlameKit"],
             path: "Sources/FlameExport"
         ),
-        // `emberweft` command-line tool (render / animate / validate / info).
-        .executableTarget(
+        // Testable `emberweft` CLI engine library (render / validate / info).
+        .target(
             name: "EmberweftCLI",
             dependencies: ["FlameKit", "FlameReference", "FlameRenderer"],
             path: "Sources/EmberweftCLI"
+        ),
+        // `emberweft` executable — thin wrapper over the EmberweftCLI library.
+        .executableTarget(
+            name: "EmberweftApp",
+            dependencies: ["EmberweftCLI"],
+            path: "Sources/EmberweftApp"
         ),
         .testTarget(
             name: "FlameKitTests",
             dependencies: ["FlameKit"],
             path: "Tests/FlameKitTests"
+        ),
+        .testTarget(
+            name: "FlameReferenceTests",
+            dependencies: ["FlameReference", "FlameKit"],
+            path: "Tests/FlameReferenceTests"
+        ),
+        .testTarget(
+            name: "EmberweftCLITests",
+            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference"],
+            path: "Tests/EmberweftCLITests"
         )
     ]
 )

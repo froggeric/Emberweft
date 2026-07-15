@@ -34,17 +34,20 @@ The resulting sequence converges to a unique attractor set—the fractal image.
 
 ### Standard Affine Transform
 
-In traditional IFS, each transform is a 2D affine transformation:
+In traditional IFS, each transform is a 2D affine transformation. The
+`coefs = "a b c d e f"` string is laid out as the matrix
+`| a c e |` / `| b d f |` (matching flam3 `parser.c:974` and
+`variations.c:2145`):
 
 ```
-F_i(x) = [x']   [a_i  b_i  c_i] [x]
-        [y'] = [d_i  e_i  f_i] [y]
+F_i(x) = [x']   [a_i  c_i  e_i] [x]
+        [y'] = [b_i  d_i  f_i] [y]
                                    [1]
 ```
 
 Or equivalently:
-- x' = a_i · x + b_i · y + c_i
-- y' = d_i · x + e_i · y + f_i
+- x' = a_i · x + c_i · y + e_i
+- y' = b_i · x + d_i · y + f_i
 
 Contractivity requires that the matrix eigenvalues have magnitude < 1.
 
