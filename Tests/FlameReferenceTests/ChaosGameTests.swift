@@ -61,6 +61,6 @@ final class ChaosGameTests: XCTestCase {
                            variations: [Variation(name: "linear", weight: 1)])])
         let p = RenderParams(seed: 1, width: 16, height: 16, oversample: 1, samplesPerPixel: 50)
         let h = ChaosGame.iterate(flame: diverging, params: p)
-        XCTAssertEqual(h.counts.count, 16*16)   // it returned at all
+        XCTAssertEqual(h.counts.count, p.gridWidth * p.gridHeight)   // it returned at all (grid includes gutter)
     }
 }

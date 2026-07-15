@@ -33,18 +33,29 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
 
     private var flame: Flame?
     private var xform: Xform?
+    /// Running xform-array index (flam3 stores the final xform at the tail of
+    /// the same array, so the final's index = count of regular xforms).
+    /// Used for the flam3 `initialize_xforms` color default (`xform[i].color
+    /// = i & 1`, flam3.c:3139) when the `color` attribute is absent.
+    private var xformIndex = 0
     private var inPalette = false
-    private var paletteColors: [SIMD3<Float>] = Array(repeating: .zero, count: 256)
+    private var paletteColors: [SIMD3<Double>] = Array(repeating: .zero, count: 256)
     private var hexAccumulator = ""
 
     func parser(_ p: XMLParser, didStartElement name: String, namespaceURI: String?,
                 qualifiedName qName: String?, attributes attr: [String: String]) {
         switch name {
-        case "flame": flame = makeFlame(attr: attr)
-        case "xform", "finalxform": xform = makeXform(attr: attr)
+        case "flame":
+            flame = makeFlame(attr: attr)
+            xformIndex = 0
+        case "xform", "finalxform":
+            // flam3 indexes the final xform at the tail of the xform array
+            // (its index = number of regular xforms parsed so far). Pass the
+            // current index so the color default matches initialize_xforms.
+            xform = makeXform(attr: attr, index: xformIndex)
         case "var":
             if let n = attr["name"], let w = attr["weight"], xform != nil {
-                xform!.variations.append(Variation(name: n, weight: Float(w) ?? 1))
+                xform!.variations.append(Variation(name: n, weight: Double(w) ?? 1))
             }
         case "palette":
             inPalette = true; hexAccumulator = ""
@@ -73,6 +84,7 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
             flame?.palette = Palette(colors: paletteColors)
         case "xform":
             if let xf = xform { flame?.xforms.append(xf) }; xform = nil
+            xformIndex += 1
         case "finalxform":
             if let xf = xform { flame?.finalXform = xf }; xform = nil
         case "flame":
@@ -92,32 +104,36 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.name = attr["name"] ?? ""
         if let s = attr["size"] { let p = floats(s); if p.count == 2 { f.size = SIMD2(Int(p[0]), Int(p[1])) } }
         if let c = attr["center"] { let p = floats(c); if p.count == 2 { f.camera.center = SIMD2(p[0], p[1]) } }
-        f.camera.scale = attr["scale"].flatMap { Float($0) } ?? 250
-        f.camera.zoom = attr["zoom"].flatMap { Float($0) } ?? 0
-        f.camera.rotation = attr["rotate"].flatMap { Float($0) } ?? 0
+        f.camera.scale = attr["scale"].flatMap { Double($0) } ?? 250
+        f.camera.zoom = attr["zoom"].flatMap { Double($0) } ?? 0
+        f.camera.rotation = attr["rotate"].flatMap { Double($0) } ?? 0
         f.quality.oversample = attr["oversample"].flatMap { Int($0) } ?? 1
         f.quality.samplesPerPixel = attr["quality"].flatMap { Int($0) } ?? 100
-        f.quality.gamma = attr["gamma"].flatMap { Float($0) } ?? 2.2
-        f.quality.gammaThreshold = attr["gamma_threshold"].flatMap { Float($0) } ?? 0.01
-        f.quality.vibrancy = attr["vibrancy"].flatMap { Float($0) } ?? 1.0
-        f.quality.estimatorRadius = attr["estimator_radius"].flatMap { Float($0) } ?? 0
-        f.quality.estimatorMinimum = attr["estimator_minimum"].flatMap { Float($0) } ?? 0
-        f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Float($0) } ?? 0.6
-        f.hueShift = attr["hue"].flatMap { Float($0) } ?? 0
+        f.quality.gamma = attr["gamma"].flatMap { Double($0) } ?? 2.2
+        f.quality.gammaThreshold = attr["gamma_threshold"].flatMap { Double($0) } ?? 0.01
+        f.quality.vibrancy = attr["vibrancy"].flatMap { Double($0) } ?? 1.0
+        f.quality.estimatorRadius = attr["estimator_radius"].flatMap { Double($0) } ?? 0
+        f.quality.estimatorMinimum = attr["estimator_minimum"].flatMap { Double($0) } ?? 0
+        f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Double($0) } ?? 0.6
+        f.hueShift = attr["hue"].flatMap { Double($0) } ?? 0
         f.time = attr["time"].flatMap { Double($0) } ?? 0
         return f
     }
 
-    private func makeXform(attr: [String: String]) -> Xform {
+    private func makeXform(attr: [String: String], index: Int) -> Xform {
         var x = Xform()
-        x.weight = attr["weight"].flatMap { Float($0) } ?? 1
-        x.color = attr["color"].flatMap { Float($0) } ?? 0
+        x.weight = attr["weight"].flatMap { Double($0) } ?? 1
+        // flam3 `initialize_xforms` (flam3.c:3139): when the `color` attribute
+        // is absent, default to `i & 1` (0.0 for even-index, 1.0 for odd). This
+        // applies to BOTH regular xforms and the finalxform (which sits at the
+        // tail of flam3's xform array), matching flam3's exact default.
+        x.color = attr["color"].flatMap { Double($0) } ?? Double(index & 1)
         // Prefer the explicit `color_speed` attribute (what we serialize); fall
         // back to legacy `symmetry` (flam3/Apophysis) for imported genomes.
-        if let cs = attr["color_speed"].flatMap({ Float($0) }) { x.colorSpeed = cs }
-        else if let sym = attr["symmetry"].flatMap({ Float($0) }) { x.colorSpeed = 1 - sym }
+        if let cs = attr["color_speed"].flatMap({ Double($0) }) { x.colorSpeed = cs }
+        else if let sym = attr["symmetry"].flatMap({ Double($0) }) { x.colorSpeed = 1 - sym }
         else { x.colorSpeed = 0.5 }
-        x.opacity = attr["opacity"].flatMap { Float($0) } ?? 1
+        x.opacity = attr["opacity"].flatMap { Double($0) } ?? 1
         if let cf = attr["coefs"] { x.affine = parseAffine(cf) ?? .identity }
         if let pf = attr["post"] { x.postAffine = parseAffine(pf) ?? .identity }
         if let ch = attr["chaos"] { x.chaos = floats(ch) }
@@ -134,7 +150,7 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         ]
         let attrVars = attr
             .filter { !reserved.contains($0.key) }
-            .compactMap { (k, v) -> Variation? in Float(v).map { Variation(name: k, weight: $0) } }
+            .compactMap { (k, v) -> Variation? in Double(v).map { Variation(name: k, weight: $0) } }
             .sorted { $0.name < $1.name }
         x.variations = attrVars
         return x
@@ -147,16 +163,16 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         return AffineTransform(a: p[0], b: p[1], c: p[2], d: p[3], e: p[4], f: p[5])
     }
 
-    private func floats(_ s: String) -> [Float] {
-        s.split(whereSeparator: { $0.isWhitespace }).compactMap { Float($0) }
+    private func floats(_ s: String) -> [Double] {
+        s.split(whereSeparator: { $0.isWhitespace }).compactMap { Double($0) }
     }
 
-    private func parseHex(_ rgb: String) -> SIMD3<Float> {
+    private func parseHex(_ rgb: String) -> SIMD3<Double> {
         var hex = rgb; if hex.hasPrefix("#") { hex.removeFirst() }
         guard let v = UInt32(hex, radix: 16) else { return .zero }
-        let r = Float((v >> 16) & 0xff) / 255
-        let g = Float((v >> 8) & 0xff) / 255
-        let b = Float(v & 0xff) / 255
+        let r = Double((v >> 16) & 0xff) / 255
+        let g = Double((v >> 8) & 0xff) / 255
+        let b = Double(v & 0xff) / 255
         return SIMD3(r, g, b)
     }
 

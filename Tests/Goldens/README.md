@@ -93,7 +93,7 @@ invokes:
 
 ```sh
 env format=png transparency=0 \
-    seed=42 isaac_seed=emberweftgoldens \
+    seed=42 isaac_seed=emberweftgoldens nthreads=1 \
     in="Tests/Goldens/genomes/<name>.flam3" \
     out="Tests/Goldens/reference/<name>.png" flam3-render
 ```
@@ -101,23 +101,34 @@ env format=png transparency=0 \
 `flam3-render` takes **all** parameters as environment variables (there are no
 `--` flags, and no width/height/quality env var — those come from the genome).
 
-## Reproducibility — pinned seeds & metadata normalization
+## Reproducibility — pinned seeds, nthreads=1 & metadata normalization
 
-`flam3-render` is **non-deterministic by default**: it has two independent RNGs
-that both seed from wall-clock time:
+`flam3-render` is **non-deterministic by default** because it has THREE
+machine/time-dependent inputs:
 
-| RNG                | env var      | default              | used for                  |
+| Input              | env var      | default              | used for                  |
 |--------------------|--------------|----------------------|---------------------------|
 | libc `srandom`     | `seed`       | `time(0)+getpid()`   | misc randomness           |
 | ISAAC chaos-game   | `isaac_seed` | `time(0)` (string)   | the iteration loop        |
+| thread count       | `nthreads`   | physical CPU count   | sample-batch parallelism  |
 
-The harness **pins both** so goldens are byte-reproducible across runs and
-machines. The defaults are constants, but each can be overridden from the
-environment to intentionally re-seed:
+The harness **pins all three**. `seed` and `isaac_seed` make a render
+byte-reproducible across runs; **`nthreads=1` is critical for parity** —
+flam3's multi-threading splits the sample budget across N threads each seeded
+with its OWN child ISAAC (rect.c:858-865), producing an N-way blend. Emberweft's
+CPU reference is single-threaded (one ISAAC stream) for provable determinism,
+so it can only match a single-threaded flam3 golden. Pinning `nthreads=1` also
+makes the goldens machine-independent (independent of host CPU count). Measured:
+flam3(`nthreads=1`) vs Emberweft = byte-identical per-bin counts; a multi-thread
+golden vs Emberweft collapses to ~15-30 dB.
+
+The defaults are constants, but each can be overridden from the environment to
+intentionally re-seed/retread:
 
 ```
 FLAM3_SEED=42
 FLAM3_ISAAC_SEED=emberweftgoldens
+FLAM3_NTHREADS=1
 ```
 
 flam3 also embeds a `flam3_time` PNG `tEXt` chunk recording the render's
@@ -127,23 +138,29 @@ metadata chunk post-render (stdlib Python), so committed PNGs are
 byte-identical regardless of host speed. The pixel data (PNG `IDAT`) and all
 other metadata (genome, version, sample count) are left byte-intact.
 
-> **Note:** Emberweft's own CPU render (`FlameReference`) uses its own
-> independent PCG32 seed (see `FlameKit/RNG.swift`); the flam3 RNGs need not
-> match Emberweft's. Each side is merely internally deterministic, and parity
-> between them is asserted **statistically** (PSNR/SSIM) in Task 13. Keep the
-> same flam3 seeds when re-goldening unless you intend to change the reference.
+> **Note:** Emberweft's CPU reference (`FlameReference`) ports flam3's ISAAC
+> RNG + chaos-game consumption order byte-for-byte. With `nthreads=1` goldens,
+> the two are **near-byte-exact** (PSNR 51-72 dB, SSIM ≈ 1.0 across all 6 frozen
+> genomes) — not merely statistically correlated. Parity is asserted strict
+> (≥30 dB / ≥0.95 SSIM) in `GoldenParityTests`.
 
 ## Parity status
 
-The deterministic frozen genomes (`sierpinski`, `heart_disc`, `swirl_field`)
-achieve near-byte-exact parity with the flam3 goldens (48–58 dB PSNR,
-SSIM ≈ 1.0) via the faithful display-pipeline port.
+All 6 frozen genomes achieve near-byte-exact parity with the flam3 goldens and
+pass the strict gate (≥30 dB PSNR, ≥0.95 SSIM) in `GoldenParityTests`:
 
-Genomes containing the `julia` variation (`julia_bubbles`, `final_warp`,
-`rich`) are **temporarily skipped** in the parity gate pending ISAAC wiring
-into the chaos game (a byte-exact ISAAC port is staged in
-`Sources/FlameKit/ISAAC.swift`). The final parity target is byte-exact for
-all genomes.
+| Genome          | PSNR (dB) | SSIM  |
+|-----------------|-----------|-------|
+| `sierpinski`    | 63.4      | 1.000 |
+| `heart_disc`    | 71.6      | 1.000 |
+| `swirl_field`   | 61.6      | 1.000 |
+| `rich`          | 53.8      | 1.000 |
+| `julia_bubbles` | 51.6      | 1.000 |
+| `final_warp`    | 67.2      | 1.000 |
+
+This includes the `julia`-containing genomes (`julia_bubbles`, `final_warp`,
+`rich`), which require the faithful ISAAC + Double-precision + operation-order
+port to match flam3's chaotic trajectory sample-for-sample.
 
 ## Licensing & attribution (important)
 

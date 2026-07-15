@@ -12,8 +12,8 @@ import Foundation
 /// y' = b·x + d·y + f
 /// ```
 public struct AffineTransform: Sendable, Equatable {
-    public var a, b, c, d, e, f: Float
-    public init(a: Float, b: Float, c: Float, d: Float, e: Float, f: Float) {
+    public var a, b, c, d, e, f: Double
+    public init(a: Double, b: Double, c: Double, d: Double, e: Double, f: Double) {
         (self.a, self.b, self.c, self.d, self.e, self.f) = (a, b, c, d, e, f)
     }
 
@@ -21,8 +21,8 @@ public struct AffineTransform: Sendable, Equatable {
     public static let identity = AffineTransform(a: 1, b: 0, c: 0, d: 1, e: 0, f: 0)
 
     /// Apply the transform to a 2D point using the flam3 convention.
-    public func apply(_ p: SIMD2<Float>) -> SIMD2<Float> {
-        SIMD2<Float>(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
+    public func apply(_ p: SIMD2<Double>) -> SIMD2<Double> {
+        SIMD2<Double>(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
     }
 }
 
@@ -30,30 +30,30 @@ public struct AffineTransform: Sendable, Equatable {
 /// serialization but contribute nothing during rendering (logged once).
 public struct Variation: Sendable, Equatable {
     public let name: String
-    public let weight: Float
-    public init(name: String, weight: Float) { (self.name, self.weight) = (name, weight) }
+    public let weight: Double
+    public init(name: String, weight: Double) { (self.name, self.weight) = (name, weight) }
 }
 
 /// A single IFS transform: affine pre-transform, weighted variations, post-transform.
 public struct Xform: Sendable, Equatable {
     public var affine: AffineTransform
     public var postAffine: AffineTransform
-    public var weight: Float
-    public var color: Float          // [0,1]
-    public var colorSpeed: Float     // blend factor (flam3 `color_speed`)
+    public var weight: Double
+    public var color: Double          // [0,1]
+    public var colorSpeed: Double     // blend factor (flam3 `color_speed`)
     public var variations: [Variation]
-    public var chaos: [Float]?       // nil => uniform
-    public var opacity: Float
+    public var chaos: [Double]?       // nil => uniform
+    public var opacity: Double
 
     public init(
         affine: AffineTransform = .identity,
         postAffine: AffineTransform = .identity,
-        weight: Float = 1.0,
-        color: Float = 0.0,
-        colorSpeed: Float = 0.5,
+        weight: Double = 1.0,
+        color: Double = 0.0,
+        colorSpeed: Double = 0.5,
         variations: [Variation] = [],
-        chaos: [Float]? = nil,
-        opacity: Float = 1.0
+        chaos: [Double]? = nil,
+        opacity: Double = 1.0
     ) {
         self.affine = affine
         self.postAffine = postAffine
@@ -73,21 +73,21 @@ public enum FilterShape: String, Sendable {
 
 /// Color lookup table: 256 RGB entries in [0,1].
 public struct Palette: Sendable, Equatable {
-    public var colors: [SIMD3<Float>]
-    public init(colors: [SIMD3<Float>]) { self.colors = colors }
+    public var colors: [SIMD3<Double>]
+    public init(colors: [SIMD3<Double>]) { self.colors = colors }
 
     /// Black palette (256 entries).
-    public static let black = Palette(colors: Array(repeating: SIMD3<Float>(0, 0, 0), count: 256))
+    public static let black = Palette(colors: Array(repeating: SIMD3<Double>(0, 0, 0), count: 256))
 }
 
 /// Camera projection parameters.
 public struct Camera: Sendable, Equatable {
-    public var center: SIMD2<Float>
-    public var scale: Float        // pixels per unit
-    public var zoom: Float         // additional log-scale zoom (flam3: pixels *= 2^zoom)
-    public var rotation: Float     // degrees
+    public var center: SIMD2<Double>
+    public var scale: Double        // pixels per unit
+    public var zoom: Double         // additional log-scale zoom (flam3: pixels *= 2^zoom)
+    public var rotation: Double     // degrees
 
-    public init(center: SIMD2<Float> = .zero, scale: Float = 250, zoom: Float = 0, rotation: Float = 0) {
+    public init(center: SIMD2<Double> = .zero, scale: Double = 250, zoom: Double = 0, rotation: Double = 0) {
         self.center = center
         self.scale = scale
         self.zoom = zoom
@@ -99,26 +99,26 @@ public struct Camera: Sendable, Equatable {
 public struct Quality: Sendable, Equatable {
     public var oversample: Int
     public var samplesPerPixel: Int
-    public var filterRadius: Float
+    public var filterRadius: Double
     public var filterShape: FilterShape
-    public var gamma: Float
-    public var gammaThreshold: Float
-    public var vibrancy: Float
-    public var estimatorRadius: Float
-    public var estimatorMinimum: Float
-    public var estimatorCurveRate: Float   // flam3 `estimator_curve`
+    public var gamma: Double
+    public var gammaThreshold: Double
+    public var vibrancy: Double
+    public var estimatorRadius: Double
+    public var estimatorMinimum: Double
+    public var estimatorCurveRate: Double   // flam3 `estimator_curve`
 
     public init(
         oversample: Int = 1,
         samplesPerPixel: Int = 100,
-        filterRadius: Float = 0,
+        filterRadius: Double = 0,
         filterShape: FilterShape = .gaussian,
-        gamma: Float = 2.2,
-        gammaThreshold: Float = 0.01,
-        vibrancy: Float = 1.0,
-        estimatorRadius: Float = 0,
-        estimatorMinimum: Float = 0,
-        estimatorCurveRate: Float = 0.6
+        gamma: Double = 2.2,
+        gammaThreshold: Double = 0.01,
+        vibrancy: Double = 1.0,
+        estimatorRadius: Double = 0,
+        estimatorMinimum: Double = 0,
+        estimatorCurveRate: Double = 0.6
     ) {
         self.oversample = oversample
         self.samplesPerPixel = samplesPerPixel
@@ -142,7 +142,7 @@ public struct Flame: Sendable, Equatable {
     public var xforms: [Xform]
     public var finalXform: Xform?
     public var palette: Palette
-    public var hueShift: Float
+    public var hueShift: Double
     public var time: Double
 
     public init(
@@ -153,7 +153,7 @@ public struct Flame: Sendable, Equatable {
         xforms: [Xform] = [],
         finalXform: Xform? = nil,
         palette: Palette = .black,
-        hueShift: Float = 0,
+        hueShift: Double = 0,
         time: Double = 0
     ) {
         self.name = name

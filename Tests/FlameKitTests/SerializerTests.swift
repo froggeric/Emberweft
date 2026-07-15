@@ -46,9 +46,9 @@ final class SerializerTests: XCTestCase {
         fin.affine = .identity
         f.finalXform = fin
         var pal = Palette.black
-        pal.colors[0] = SIMD3<Float>(1, 0, 0)
-        pal.colors[10] = SIMD3<Float>(0, 1, 0)
-        pal.colors[200] = SIMD3<Float>(0, 0, 1)
+        pal.colors[0] = SIMD3<Double>(1, 0, 0)
+        pal.colors[10] = SIMD3<Double>(0, 1, 0)
+        pal.colors[200] = SIMD3<Double>(0, 0, 1)
         f.palette = pal
 
         let out = Flam3Serializer.serialize([f])

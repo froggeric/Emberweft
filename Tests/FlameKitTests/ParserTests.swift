@@ -28,8 +28,8 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(f.xforms[0].variations,
                        [Variation(name: "linear", weight: 1),
                         Variation(name: "sinusoidal", weight: 0.5)])
-        XCTAssertEqual(f.palette.colors[0], SIMD3<Float>(1, 0, 0))
-        XCTAssertEqual(f.palette.colors[255], SIMD3<Float>(0, 0, 1))
+        XCTAssertEqual(f.palette.colors[0], SIMD3<Double>(1, 0, 0))
+        XCTAssertEqual(f.palette.colors[255], SIMD3<Double>(0, 0, 1))
     }
     func testParsesVarChildForm() throws {
         // The <var> child-element form (genome-format.md) is also accepted,
@@ -71,9 +71,9 @@ final class ParserTests: XCTestCase {
         let flames = try Flam3Parser.parse(xml.data(using: .utf8)!)
         XCTAssertEqual(flames.count, 2)
         // Flame b only set index 255; index 0 must NOT carry over red from flame a.
-        XCTAssertEqual(flames[1].palette.colors[0], SIMD3<Float>(0, 0, 0))
-        XCTAssertEqual(flames[1].palette.colors[255], SIMD3<Float>(0, 0, 1))
-        XCTAssertEqual(flames[0].palette.colors[0], SIMD3<Float>(1, 0, 0))
+        XCTAssertEqual(flames[1].palette.colors[0], SIMD3<Double>(0, 0, 0))
+        XCTAssertEqual(flames[1].palette.colors[255], SIMD3<Double>(0, 0, 1))
+        XCTAssertEqual(flames[0].palette.colors[0], SIMD3<Double>(1, 0, 0))
     }
     func testParsesHexBlockPalette() throws {
         // flam3 native <palette> hex-text form: 6 hex digits per color (RRGGBB).
@@ -82,8 +82,8 @@ final class ParserTests: XCTestCase {
           <palette>FF000000FF00</palette></flame></flames>
         """
         let f = try Flam3Parser.parse(xml.data(using: .utf8)!)[0]
-        XCTAssertEqual(f.palette.colors[0], SIMD3<Float>(1, 0, 0))
-        XCTAssertEqual(f.palette.colors[1], SIMD3<Float>(0, 1, 0))
+        XCTAssertEqual(f.palette.colors[0], SIMD3<Double>(1, 0, 0))
+        XCTAssertEqual(f.palette.colors[1], SIMD3<Double>(0, 1, 0))
     }
     func testParsesFinalXform() throws {
         let xml = """

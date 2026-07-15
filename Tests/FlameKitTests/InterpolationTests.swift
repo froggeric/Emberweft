@@ -2,7 +2,7 @@ import XCTest
 @testable import FlameKit
 
 final class InterpolationTests: XCTestCase {
-    private func flame(_ c: Float, _ scale: Float, xformCount: Int = 1) -> Flame {
+    private func flame(_ c: Double, _ scale: Double, xformCount: Int = 1) -> Flame {
         Flame(camera: Camera(scale: scale),
               xforms: (0..<xformCount).map { _ in
                   Xform(affine: AffineTransform(a: c, b: 0, c: 0, d: c, e: 0, f: 0),

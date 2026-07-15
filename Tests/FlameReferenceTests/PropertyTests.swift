@@ -38,7 +38,7 @@ final class PropertyTests: XCTestCase {
                           "round-trip diverged:\n\(xml)")
         }
     }
-    private func flameApproxEqual(_ a: Flame, _ b: Flame, accuracy: Float) -> Bool {
+    private func flameApproxEqual(_ a: Flame, _ b: Flame, accuracy: Double) -> Bool {
         guard a.size == b.size, a.xforms.count == b.xforms.count else { return false }
         guard abs(a.camera.scale - b.camera.scale) <= accuracy,
               abs(a.camera.zoom - b.camera.zoom) <= accuracy,
@@ -49,9 +49,9 @@ final class PropertyTests: XCTestCase {
               abs(a.quality.gammaThreshold - b.quality.gammaThreshold) <= accuracy,
               abs(a.quality.vibrancy - b.quality.vibrancy) <= accuracy,
               a.quality.oversample == b.quality.oversample,
-              abs(Float(a.quality.samplesPerPixel) - Float(b.quality.samplesPerPixel)) <= 0.01,
+              abs(Double(a.quality.samplesPerPixel) - Double(b.quality.samplesPerPixel)) <= 0.01,
               abs(a.hueShift - b.hueShift) <= accuracy,
-              abs(Float(a.time) - Float(b.time)) <= accuracy
+              abs(a.time - b.time) <= accuracy
         else { return false }
         for (xa, xb) in zip(a.xforms, b.xforms) {
             guard xformApproxEqual(xa, xb, accuracy: accuracy) else { return false }
@@ -67,7 +67,7 @@ final class PropertyTests: XCTestCase {
         // palette round-trip cases.
         return true
     }
-    private func xformApproxEqual(_ xa: Xform, _ xb: Xform, accuracy: Float) -> Bool {
+    private func xformApproxEqual(_ xa: Xform, _ xb: Xform, accuracy: Double) -> Bool {
         let ca = xa.affine, cb = xb.affine
         let pa = xa.postAffine, pb = xb.postAffine
         guard abs(xa.weight - xb.weight) <= accuracy,

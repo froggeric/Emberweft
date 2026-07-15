@@ -26,12 +26,13 @@ lint:         ## Lint sources with swift-format
 
 bootstrap-oracle:  ## Build dev-only GPL flam3 oracle from source into $(HOME)/flam3-oracle
 	@echo "Building dev-only flam3 oracle (GPL) from source into $$HOME/flam3-oracle"
+	@echo "  -> strict-IEEE build (no -ffast-math) for reproducible parity."
 	@mkdir -p "$$HOME/flam3-oracle-src" && cd "$$HOME/flam3-oracle-src" && \
 	  git clone --depth 1 https://github.com/scottdraves/flam3.git && \
 	  cd flam3 && \
 	  CPPFLAGS="-I$$(brew --prefix)/include" LDFLAGS="-L$$(brew --prefix)/lib" \
 	  ./configure --prefix="$$HOME/flam3-oracle" && \
-	  make -j8 && make install
+	  make -j8 AM_CFLAGS="" CFLAGS="-O2 -g" && make install
 	@echo "Done. flam3-render is at $$HOME/flam3-oracle/bin/flam3-render (dev-only; never linked/bundled)."
 
 regen-goldens:                      ## (dev) regenerate flam3 golden reference PNGs

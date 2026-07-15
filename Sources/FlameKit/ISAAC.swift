@@ -172,22 +172,21 @@ public struct ISAAC: Sendable {
 
     /// `flam3_random_isaac_01` (flam3.c:2519-2521):
     /// `((int)irand(ct) & 0xfffffff) / (double)0xfffffff` → uniform in [0, 1].
-    /// The `(int)` cast is a no-op for the 28-bit masked value. Returns Float
-    /// (Emberweft iterates in Float; the cast matches storing flam3's double
-    /// result into a Float).
+    /// The `(int)` cast is a no-op for the 28-bit masked value. Returns Double
+    /// matching flam3's double result exactly (no Float intermediary).
     @inlinable
-    public mutating func isaac01() -> Float {
+    public mutating func isaac01() -> Double {
         let v = UInt32(next() & 0xfffffff)
-        return Float(Double(v) / Double(UInt32(0xfffffff)))
+        return Double(v) / Double(UInt32(0xfffffff))
     }
 
     /// `flam3_random_isaac_11` (flam3.c:2523-2525):
     /// `(((int)irand(ct) & 0xfffffff) - 0x7ffffff) / (double)0x7ffffff`
     /// → uniform in [-1, 1].
     @inlinable
-    public mutating func isaac11() -> Float {
+    public mutating func isaac11() -> Double {
         let v = UInt32(next() & 0xfffffff)
-        return Float((Double(v) - Double(UInt32(0x7ffffff))) / Double(UInt32(0x7ffffff)))
+        return (Double(v) - Double(UInt32(0x7ffffff))) / Double(UInt32(0x7ffffff))
     }
 
     // MARK: - `randinit` / `irandinit`

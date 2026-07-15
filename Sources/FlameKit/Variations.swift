@@ -28,150 +28,170 @@ public enum Variations {
     public static func resetWarnings() { lock.withLock { _warnings.removeAll() } }
     static func warnUnknown(_ name: String) { _ = lock.withLock { _warnings.insert(name) } }
 
-    /// Sum of `weight_j * V_j(p)` over the given variations.
+    /// Sum of variations over the given list, matching flam3 `apply_xform`
+    /// (variations.c:2129-2381). Each variation applies its `weight` internally
+    /// in flam3's EXACT arithmetic order (e.g. spherical computes
+    /// `r2 = weight/(sumsq+EPS)` then `p0 += r2*tx`) — the weight does NOT
+    /// wrap the whole term. This ULP order is load-bearing for chaotic maps
+    /// (julia) where 1-ULP differences compound exponentially.
     ///
-    /// `rng` is threaded so variations that consume randomness (notably
-    /// `julia`, which adds π with probability ½ per flam3 `var13_julia`) draw
-    /// from the single deterministic ISAAC stream — the SAME stream the chaos
-    /// game uses for xform selection, matching flam3's consumption order
-    /// (variations.c:364 draws `flam3_random_isaac_bit(f->rc)`).
-    /// Pure variations ignore it. M2 will widen this to a full affine+RNG
-    /// context for dependent variations.
-    public static func evaluate(_ variations: [Variation], at p: SIMD2<Float>,
-                                rng: inout ISAAC) -> SIMD2<Float> {
-        var acc = SIMD2<Float>.zero
+    /// No per-term finiteness guard: flam3 accumulates every term into `f.p0/p1`
+    /// and only checks `badvalue` on the final post-affine result (variations.c:2392).
+    /// The chaos game performs that check + 2-word redraw (ChaosGame badvalue path).
+    ///
+    /// `rng` is threaded for julia (`flam3_random_isaac_bit`, variations.c:364).
+    public static func evaluate(_ variations: [Variation], at p: SIMD2<Double>,
+                                rng: inout ISAAC) -> SIMD2<Double> {
+        var acc = SIMD2<Double>.zero
         for v in variations {
             guard v.weight != 0 else { continue }
-            let term: SIMD2<Float>
-            if let fn = table[v.name] {
-                term = v.weight * fn(p)
-            } else if v.name == "julia" {
-                term = v.weight * julia(p, rng: &rng)
+            let term: SIMD2<Double>
+            if v.name == "julia" {
+                term = julia(p, weight: v.weight, rng: &rng)
+            } else if let fn = table[v.name] {
+                term = fn(p, v.weight)
             } else {
                 warnUnknown(v.name)
                 continue
             }
-            // Per-variation guard: a single overflowing variation must not poison
-            // valid sibling contributions — drop only the offending term.
-            if term.x.isFinite && term.y.isFinite { acc += term }
+            acc += term
         }
-        // Defense-in-depth backstop (should be unreachable given the per-term guard).
-        if !acc.x.isFinite || !acc.y.isFinite { return .zero }
         return acc
     }
 
-    /// flam3 `var13_julia` (variations.c:350-368):
-    /// `r = weight · √(x²+y²)`, `a = atan2(x,y)/2 + (bit ? π : 0)`.
-    /// The π-bit is `flam3_random_isaac_bit(f->rc)` = `irand() & 1` — one full
-    /// ISAAC word consumed per call (NOT libc `random()`).
-    /// Note flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y) (line 2159).
-    private static func julia(_ p: SIMD2<Float>, rng: inout ISAAC) -> SIMD2<Float> {
-        let r2 = p.x*p.x + p.y*p.y
-        let r = r2.squareRoot().squareRoot()      // (x²+y²)^¼
-        var a = atan2(p.x, p.y) * 0.5
-        if rng.bit() { a += .pi }
-        return SIMD2(r * cos(a), r * sin(a))
+    /// flam3 `var13_julia` (variations.c:350-368). Operation order matches the C
+    /// source line-for-line so the chaotic julia map reproduces the oracle's
+    /// trajectory bit-for-bit:
+    ///   a   = 0.5 * precalc_atan            (precalc_atan = atan2(tx,ty) = atan2(x,y))
+    ///   if (isaac_bit) a += M_PI
+    ///   r   = weight * sqrt(precalc_sqrt)   (precalc_sqrt = sqrt(x²+y²); weight HERE)
+    ///   sincos(a, &sa, &ca)
+    ///   p0 += r * ca                        (NOT weight * (r4 * ca))
+    ///   p1 += r * sa
+    /// The weight multiply binds to `sqrt(precalc_sqrt)` BEFORE the cos/sin product,
+    /// which is the ULP-order the oracle uses. `precalc_sqrt = sqrt(sumsq)` so
+    /// `sqrt(precalc_sqrt) = (x²+y²)^¼`.
+    private static func julia(_ p: SIMD2<Double>, weight: Double, rng: inout ISAAC) -> SIMD2<Double> {
+        let sumsq = p.x*p.x + p.y*p.y
+        let precalcSqrt = sumsq.squareRoot()        // sqrt(x²+y²) — flam3 precalc
+        let a = 0.5 * atan2(p.x, p.y)               // 0.5 * precalc_atan
+        let r = weight * precalcSqrt.squareRoot()   // weight * sqrt(precalc_sqrt)
+        var aa = a
+        if rng.bit() { aa += .pi }                   // flam3_random_isaac_bit (1 word)
+        return SIMD2(r * cos(aa), r * sin(aa))      // r * ca , r * sa
     }
 
     // `nonisolated(unsafe)` is sound: `table` is a `let` initialized once at
     // first access and never mutated; the closures it holds are pure (no shared
     // mutable state). The CPU reference path is single-threaded by design.
-    private nonisolated(unsafe) static let table: [String: (SIMD2<Float>) -> SIMD2<Float>] = {
-        var t: [String: (SIMD2<Float>) -> SIMD2<Float>] = [:]
-        let safe: (SIMD2<Float>) -> SIMD2<Float> = { p in
-            guard p.x.isFinite, p.y.isFinite else { return .zero }
-            return p
+    //
+    // Each closure takes `(p, weight)` and returns the term that flam3 would add
+    // to `f.p0`/`f.p1`, with weight folded in at flam3's exact position. Formulas
+    // are line-for-line ports of flam3 variations.c (varN_*), using flam3's
+    // `precalc_atan = atan2(tx, ty)` = atan2(x, y) and `EPS = 1e-10` (private.h:47).
+    private nonisolated(unsafe) static let table: [String: (SIMD2<Double>, Double) -> SIMD2<Double>] = {
+        var t: [String: (SIMD2<Double>, Double) -> SIMD2<Double>] = [:]
+        let eps = 1e-10
+        // var0_linear (variations.c:159-160): p0 += weight*tx
+        t["linear"]      = { p, w in SIMD2(w * p.x, w * p.y) }
+        // var1_sinusoidal: p0 += weight*sin(tx)
+        t["sinusoidal"]  = { p, w in SIMD2(w * sin(p.x), w * sin(p.y)) }
+        // var2_spherical: r2 = weight/(sumsq+EPS); p0 += r2*tx
+        t["spherical"]   = { p, w in
+            let sumsq = p.x*p.x + p.y*p.y
+            let r2 = w / (sumsq + eps)
+            return SIMD2(r2 * p.x, r2 * p.y)
         }
-        // Each formula below is a line-for-line port of flam3 variations.c
-        // (varN_*), using flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y)
-        // (NOT the textbook atan2(y,x)) and r = √(x²+y²). Constants are NOT
-        // invented: variations that need the affine coefs (waves/popcorn/…) are
-        // omitted entirely rather than given wrong hard-coded constants.
-        t["linear"]      = { safe($0) }
-        t["sinusoidal"]  = { safe(SIMD2(sin($0.x), sin($0.y))) }
-        t["spherical"]   = { p in
-            let d = p.x*p.x + p.y*p.y
-            guard d > 1e-12 else { return .zero }      // flam3 uses +EPS in denominator
-            return SIMD2(p.x/d, p.y/d)
-        }
-        t["swirl"]       = { p in                      // var3: c1=sin(r²), c2=cos(r²)
+        // var3_swirl: sincos(r2,&c1,&c2); nx=c1*tx-c2*ty; p0+=weight*nx
+        t["swirl"]       = { p, w in
             let r2 = p.x*p.x + p.y*p.y
-            let s = sin(r2), c = cos(r2)
-            return SIMD2(s*p.x - c*p.y, c*p.x + s*p.y)
+            let c1 = sin(r2), c2 = cos(r2)
+            return SIMD2(w * (c1*p.x - c2*p.y), w * (c2*p.x + c1*p.y))
         }
-        t["horseshoe"]   = { p in                      // var4
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            guard r > 1e-12 else { return .zero }
-            let inv = 1 / r
-            return SIMD2((p.x - p.y) * (p.x + p.y) * inv, 2 * p.x * p.y * inv)
+        // var4_horseshoe: r = weight/(sqrt+EPS); p0 += (tx-ty)*(tx+ty)*r
+        t["horseshoe"]   = { p, w in
+            let r = w / ((p.x*p.x + p.y*p.y).squareRoot() + eps)
+            return SIMD2((p.x - p.y) * (p.x + p.y) * r, 2.0 * p.x * p.y * r)
         }
-        t["polar"]       = { p in                      // var5: flam3 θ=atan2(tx,ty)=atan2(x,y)
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            return SIMD2(atan2(p.x, p.y) / .pi, r - 1)
+        // var5_polar: nx=atan/pi; ny=sqrt-1; p0+=weight*nx
+        t["polar"]       = { p, w in
+            let nx = atan2(p.x, p.y) / .pi
+            let ny = (p.x*p.x + p.y*p.y).squareRoot() - 1.0
+            return SIMD2(w * nx, w * ny)
         }
-        t["handkerchief"] = { p in                      // var6: a=atan2(x,y)
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
+        // var6_handkerchief: a=atan; r=sqrt; p0+=weight*r*sin(a+r)
+        t["handkerchief"] = { p, w in
             let a = atan2(p.x, p.y)
-            return SIMD2(r * sin(a + r), r * cos(a - r))
-        }
-        t["heart"]       = { p in                      // var7: a=r·atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = r * atan2(p.x, p.y)
-            return SIMD2(r * sin(a), -r * cos(a))
+            return SIMD2(w * r * sin(a + r), w * r * cos(a - r))
         }
-        t["disc"]        = { p in                      // var8: a=atan2(x,y)/π
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
+        // var7_heart: a=sqrt*atan; r=weight*sqrt; p0+=r*sa; p1+=(-r)*ca
+        t["heart"]       = { p, w in
+            let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+            let a = precalcSqrt * atan2(p.x, p.y)
+            let r = w * precalcSqrt
+            return SIMD2(r * sin(a), (-r) * cos(a))
+        }
+        // var8_disc: a=atan/pi; r=pi*sqrt; p0+=weight*sin(r)*a
+        t["disc"]        = { p, w in
             let a = atan2(p.x, p.y) / .pi
-            let rr = .pi * r
-            return SIMD2(a * sin(rr), a * cos(rr))
+            let r = .pi * (p.x*p.x + p.y*p.y).squareRoot()
+            return SIMD2(w * sin(r) * a, w * cos(r) * a)
         }
-        t["spiral"]      = { p in                      // var9: a=atan2(x,y)
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            guard r > 1e-12 else { return .zero }
+        // var9_spiral: r=sqrt+EPS; r1=weight/r; p0+=r1*(cosa+sin(r))
+        t["spiral"]      = { p, w in
+            let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+            let r = precalcSqrt + eps
+            let r1 = w / r
             let a = atan2(p.x, p.y)
-            let inv = 1 / r
-            return SIMD2((cos(a) + sin(r)) * inv, (sin(a) - cos(r)) * inv)
+            return SIMD2(r1 * (cos(a) + sin(r)), r1 * (sin(a) - cos(r)))
         }
-        t["hyperbolic"]  = { p in                      // var10: a=atan2(x,y); (sin a/r, r·cos a)
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            guard r > 1e-12 else { return .zero }
+        // var10_hyperbolic: r=sqrt+EPS; p0+=weight*sin(a)/r; p1+=weight*cos(a)*r
+        t["hyperbolic"]  = { p, w in
+            let r = (p.x*p.x + p.y*p.y).squareRoot() + eps
             let a = atan2(p.x, p.y)
-            return SIMD2(sin(a) / r, r * cos(a))
+            return SIMD2(w * sin(a) / r, w * cos(a) * r)
         }
-        t["diamond"]     = { p in                      // var11: a=atan2(x,y)
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = atan2(p.x, p.y)
-            return SIMD2(sin(a) * cos(r), cos(a) * sin(r))
-        }
-        t["ex"]          = { p in                      // var12: a=atan2(x,y)
+        // var11_diamond: p0+=weight*sina*cos(r); p1+=weight*cosa*sin(r)
+        t["diamond"]     = { p, w in
             let r = (p.x*p.x + p.y*p.y).squareRoot()
             let a = atan2(p.x, p.y)
+            return SIMD2(w * sin(a) * cos(r), w * cos(a) * sin(r))
+        }
+        // var12_ex: m0=sin(a+r)³*r; p0+=weight*(m0+m1)
+        t["ex"]          = { p, w in
+            let a = atan2(p.x, p.y)
+            let r = (p.x*p.x + p.y*p.y).squareRoot()
             let n0 = sin(a + r)
             let n1 = cos(a - r)
             let m0 = n0*n0*n0 * r
             let m1 = n1*n1*n1 * r
-            return SIMD2(m0 + m1, m0 - m1)
+            return SIMD2(w * (m0 + m1), w * (m0 - m1))
         }
-        // julia (var13) is implemented in `julia(_:rng:)` — it consumes the RNG.
-        t["bent"]        = { p in                      // var14: x*2 if x<0, y/2 if y<0
-            SIMD2(p.x < 0 ? p.x * 2 : p.x,
-                  p.y < 0 ? p.y / 2 : p.y)
+        // julia (var13) is implemented in `julia(_:weight:rng:)` — consumes the RNG.
+        // var14_bent: nx=tx(×2 if<0); ny=ty(/2 if<0); p0+=weight*nx
+        t["bent"]        = { p, w in
+            let nx = p.x < 0 ? p.x * 2 : p.x
+            let ny = p.y < 0 ? p.y / 2 : p.y
+            return SIMD2(w * nx, w * ny)
         }
-        t["fisheye"]     = { p in                      // var16: r=2/(r+1); (r·y, r·x)  [note axis swap, per flam3]
-            let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let f = 2 / (r + 1)
-            return SIMD2(f * p.y, f * p.x)
+        // var16_fisheye: r=2/(sqrt+1); (r*ty, r*tx)  [axis swap per flam3]
+        t["fisheye"]     = { p, w in
+            let r = 2.0 / ((p.x*p.x + p.y*p.y).squareRoot() + 1.0)
+            return SIMD2(w * r * p.y, w * r * p.x)
         }
-        t["exponential"] = { p in                      // var18: e=exp(x-1); (e·cos(πy), e·sin(πy))
+        // var18_exponential: e=exp(tx-1); (e*cos(pi*ty), e*sin(pi*ty))
+        t["exponential"] = { p, w in
             let e = exp(p.x - 1)
-            guard e.isFinite else { return .zero }
-            return SIMD2(e * cos(.pi * p.y), e * sin(.pi * p.y))
+            return SIMD2(w * e * cos(.pi * p.y), w * e * sin(.pi * p.y))
         }
-        t["cosine"]      = { p in                      // var20: (cos(πx)·cosh y, -sin(πx)·sinh y)
-            SIMD2(cos(p.x * .pi) * cosh(p.y),
-                  -sin(p.x * .pi) * sinh(p.y))
+        // var20_cosine: (cos(pi*tx)*cosh(ty), -sin(pi*tx)*sinh(ty))
+        t["cosine"]      = { p, w in
+            SIMD2(w * cos(p.x * .pi) * cosh(p.y),
+                  w * (-sin(p.x * .pi)) * sinh(p.y))
         }
-        t["cylinder"]    = { SIMD2(sin($0.x), $0.y) }  // var29
+        // var29_cylinder: (sin(tx), ty)
+        t["cylinder"]    = { p, w in SIMD2(w * sin(p.x), w * p.y) }
         return t
     }()
 }

@@ -80,7 +80,7 @@ public enum Flam3Serializer {
         "\(f6(t.a)) \(f6(t.b)) \(f6(t.c)) \(f6(t.d)) \(f6(t.e)) \(f6(t.f))"
     }
 
-    private static func f6(_ x: Float) -> String { String(format: "%.6f", x) }
+    private static func f6(_ x: Double) -> String { String(format: "%.6f", x) }
 
     private static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")

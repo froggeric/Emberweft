@@ -64,10 +64,28 @@ public enum ChaosGame {
         let stdXforms = flame.xforms
         let finalXf = flame.finalXform
 
+        // --- dmap: colormap pre-baked with WHITE_LEVEL (rect.c:776-782) ---
+        // flam3 builds a CMAP_SIZE(=256)-entry dmap where each color is
+        //   dmap[j].color[k] = (palette[j].color[k] * WHITE_LEVEL) * color_scalar
+        // BEFORE iteration. Accumulation then adds these pre-scaled values directly
+        // (rect.c:456-466 / 501-511), so the per-hit `*255` happens once at dmap
+        // build time, NOT as a final multiply — this operation order is load-bearing
+        // for ULP parity. color_scalar = temporal_filter[0] = 1.0 for single-batch
+        // renders (nbatches=ntemporal_samples=1; rect.c:642,757). Emberweft's
+        // `Palette` stores RGB in [0,1] with no alpha; flam3 embedded palettes are
+        // opaque (alpha=1.0), so dmap.alpha = 1.0*255 = 255 uniformly.
+        let cmapSize = 256
+        let cmapSizeM1 = 255
+        let whiteLevel = 255.0
+        let colorScalar = 1.0
+        let dmap = buildDmap(flame.palette, whiteLevel: whiteLevel, colorScalar: colorScalar)
+        // dmap alpha channel (rect.c:781, k=3): opaque embedded palettes → 1.0*255 = 255.
+        let dmapAlpha = [Double](repeating: whiteLevel * colorScalar, count: cmapSize)
+
         // --- Camera transform: world → supersample-grid pixel ---
         let cosR = cos(flame.camera.rotation * .pi / 180)
         let sinR = sin(flame.camera.rotation * .pi / 180)
-        let pixelsPerUnit = flame.camera.scale * pow(2, flame.camera.zoom) * Float(params.oversample)
+        let pixelsPerUnit = flame.camera.scale * pow(2, flame.camera.zoom) * Double(params.oversample)
         let cx = flame.camera.center.x, cy = flame.camera.center.y
 
         // --- ISAAC seeding chain (rect.c:862-865) ---
@@ -97,7 +115,7 @@ public enum ChaosGame {
             // p[0],p[1] = isaac_11 (x,y ∈ [-1,1]); p[2] = isaac_01 (color);
             // p[3] = isaac_01 (vis) — consumed to keep stream alignment; its
             // value is immediately overwritten by the first xform's opacity.
-            var p = SIMD2<Float>(rng.isaac11(), rng.isaac11())
+            var p = SIMD2<Double>(rng.isaac11(), rng.isaac11())
             var colorT = rng.isaac01()
             _ = rng.isaac01()   // p[3] vis — value discarded (overwritten below)
 
@@ -119,31 +137,49 @@ public enum ChaosGame {
                 var q = applyXformBody(xf, p, rng: &rng)
                 let qColor = blendColor(xf, colorT)
 
-                // badvalue recovery (variations.c apply_xform tail): on NaN the
-                // main xform draws 2 replacement words and the slot is retried
-                // (flam3.c:257-265: consec<5 ⇒ i-=4; continue).
-                if !q.x.isFinite || !q.y.isFinite {
+                // badvalue recovery (variations.c:2392): flam3 declares badvalue
+                // when the result is NaN OR |q| > 1e10 (NOT just Inf). This range
+                // check is load-bearing — on chaotic maps (julia/spherical) large
+                // finite excursions occur, and each one triggers a 2-word redraw
+                // that keeps the ISAAC stream aligned with the oracle.
+                //   #define badvalue(x) (((x)!=(x))||((x)>1e10)||((x)<-1e10))
+                func badvalue(_ x: Double) -> Bool { x != x || x > 1e10 || x < -1e10 }
+                if badvalue(q.x) || badvalue(q.y) {
                     let rx = rng.isaac11()
                     let ry = rng.isaac11()
                     consec += 1
                     if consec < 5 {
-                        p = SIMD2<Float>(rx, ry)
+                        p = SIMD2<Double>(rx, ry)
                         continue          // retry slot, do not advance j
                     }
                     // 5 consecutive badvals: accept the replacement and proceed.
-                    q = SIMD2<Float>(rx, ry)
+                    q = SIMD2<Double>(rx, ry)
                     consec = 0
                 } else {
                     consec = 0
                 }
 
+                // The iteration point `p` and its color `colorT` carry ONLY the
+                // MAIN xform's result into the next iteration. The final xform
+                // (if any) transforms a SEPARATE point used solely for
+                // binning/display — it does NOT feed back into the trajectory.
+                // This matches flam3's `flam3_iterate` (flam3.c:275-296):
+                // `p` is the iteration state updated by the main xform; the
+                // final writes to the display/binning point `q`, leaving `p`
+                // intact. Feeding the final-transformed point back into `p`
+                // diverges the chaos-game trajectory from flam3 at T1+.
                 p = q
                 colorT = qColor
 
-                // (3) final xform (flam3.c:278-286). Applied every iteration
+                // (3) final xform (flam3.c:278-296). Applied every iteration
                 // when opacity==1 (no RNG draw); else one isaac_01 draw gates
-                // it. The final BLENDS the color coordinate (apply_xform q[2]),
-                // while the visibility (q[3]) is kept from the main xform.
+                // it. The final transforms a COPY of the main-xform point for
+                // binning; the iteration point `p` is untouched. The final
+                // re-blends the color coordinate into the binning point's color
+                // (apply_xform sets q[2] on the final's output), used only for
+                // this one accumulation — it does not flow to the next iter.
+                var binP = p
+                var binColor = colorT
                 if let fin = finalXf {
                     let apply: Bool
                     if fin.opacity >= 1 {
@@ -154,30 +190,58 @@ public enum ChaosGame {
                         apply = false
                     }
                     if apply {
-                        p = applyXformBody(fin, p, rng: &rng)
-                        colorT = blendColor(fin, colorT)
+                        binP = applyXformBody(fin, p, rng: &rng)
+                        binColor = blendColor(fin, colorT)
                     }
                 }
 
                 // (4) accumulate after the fuse burn-in (i >= 0 in flam3).
                 if j >= fuse {
                     produced += 1   // flam3 stores every post-fuse sample
-                    if p.x.isFinite, p.y.isFinite {
+                    if binP.x.isFinite, binP.y.isFinite {
                         // world → grid. floor (not Int truncation): a point at
                         // gx=-0.5 must land in bin -1 (out of frame), not bin 0.
-                        let dx = p.x - cx, dy = p.y - cy
+                        // The grid includes the gutter ring (rect.c:685-686), so the
+                        // +gw/2 offset = image_half + gutter, matching flam3's
+                        // bounds/wb0s0 binning (rect.c:808-825,440-841).
+                        let dx = binP.x - cx, dy = binP.y - cy
                         let rx = dx * cosR - dy * sinR
                         let ry = dx * sinR + dy * cosR
-                        let gx = rx * pixelsPerUnit + Float(gw) / 2
-                        let gy = ry * pixelsPerUnit + Float(gh) / 2
+                        let gx = rx * pixelsPerUnit + Double(gw) / 2
+                        let gy = ry * pixelsPerUnit + Double(gh) / 2
                         // Guard against Int overflow from diverging genomes.
-                        if abs(gx) < Float(Int.max / 2), abs(gy) < Float(Int.max / 2) {
+                        if abs(gx) < Double(Int.max / 2), abs(gy) < Double(Int.max / 2) {
                             let u = Int(gx.rounded(.down)), v = Int(gy.rounded(.down))
                             if u >= 0, u < gw, v >= 0, v < gh {
-                                let pal = samplePalette(flame.palette, t: colorT, hue: flame.hueShift)
+                                // flam3 accumulation (rect.c:440-512, USE_FLOAT_INDICES
+                                // undefined → the #else dbl_index path). p[3]=vis=1.0
+                                // for the goldens (opacity=1), so the logvis branch is
+                                // unused. Palette mode = linear (default).
                                 let idx = hist.binIndex(u, v)
-                                hist.counts[idx] += 1
-                                hist.colors[idx] += pal
+                                // dbl_index0 = p[2] * cmap_size  (rect.c:468)
+                                let dblIndex0 = binColor * Double(cmapSize)
+                                var colorIndex0 = Int(dblIndex0)
+                                var dblFrac: Double
+                                if colorIndex0 >= cmapSizeM1 {           // rect.c:475-477
+                                    colorIndex0 = cmapSizeM1 - 1
+                                    dblFrac = 1.0
+                                } else {
+                                    dblFrac = dblIndex0 - Double(colorIndex0) // rect.c:480
+                                }
+                                let i0 = dmap[colorIndex0], i1 = dmap[colorIndex0 + 1]
+                                let m0 = 1.0 - dblFrac
+                                // interpcolor[k] = dmap[i0]*(1-frac) + dmap[i1]*frac (rect.c:484-485)
+                                let interpR = i0.x * m0 + i1.x * dblFrac
+                                let interpG = i0.y * m0 + i1.y * dblFrac
+                                let interpB = i0.z * m0 + i1.z * dblFrac
+                                // dmap alpha is uniformly 255 (opaque palette); interpolate
+                                // it exactly as flam3 does (rect.c:484, ci=3) so bucket[3]
+                                // carries the identical ULP structure.
+                                let interpA = dmapAlpha[colorIndex0] * m0 + dmapAlpha[colorIndex0 + 1] * dblFrac
+                                // bump_no_overflow (rect.c:501-505): b[0][0..3] += interpcolor
+                                hist.colors[idx] += SIMD3<Double>(interpR, interpG, interpB)
+                                hist.alpha[idx] += interpA
+                                hist.counts[idx] += 1          // b[0][4] += 255.0 (÷255 here)
                             }
                         }
                     }
@@ -195,7 +259,7 @@ public enum ChaosGame {
     /// variation (if active) consumes one ISAAC word here, exactly when it is
     /// reached in the variation loop.
     @inline(__always)
-    static func applyXformBody(_ x: Xform, _ p: SIMD2<Float>, rng: inout ISAAC) -> SIMD2<Float> {
+    static func applyXformBody(_ x: Xform, _ p: SIMD2<Double>, rng: inout ISAAC) -> SIMD2<Double> {
         let pre = x.affine.apply(p)
         let v = Variations.evaluate(x.variations, at: pre, rng: &rng)
         // xform.opacity is reflected in `q[3]` / the final-xform opacity test;
@@ -208,7 +272,7 @@ public enum ChaosGame {
     /// variations.c:2139). The final xform re-blends this, so its result must
     /// flow through the iteration.
     @inline(__always)
-    static func blendColor(_ x: Xform, _ colorT: Float) -> Float {
+    static func blendColor(_ x: Xform, _ colorT: Double) -> Double {
         (1 - x.colorSpeed) * colorT + x.colorSpeed * x.color
     }
 
@@ -219,16 +283,16 @@ public enum ChaosGame {
     /// uniform draw over xforms weighted by `density` (xform weight). This is
     /// mathematically equivalent to a CDF binary search but matches flam3's
     /// exact word→index mapping, which is load-bearing for stream parity.
-    static func buildXformDistrib(_ weights: [Float]) -> [Int] {
+    static func buildXformDistrib(_ weights: [Double]) -> [Int] {
         let n = weights.count
         precondition(n > 0)
         let total = weights.reduce(0, +)
         precondition(total > 0)
-        let dr = total / Float(chooseXformGrain)
+        let dr = total / Double(chooseXformGrain)
         var table = [Int](repeating: 0, count: chooseXformGrain)
         var j = 0
         var t = weights[0]
-        var r: Float = 0
+        var r: Double = 0
         for i in 0..<chooseXformGrain {
             while r >= t {
                 j += 1
@@ -241,15 +305,18 @@ public enum ChaosGame {
     }
 }
 
-/// Linear-interpolated palette sample at t∈[0,1] with optional hue rotation.
-public func samplePalette(_ palette: Palette, t: Float, hue: Float) -> SIMD3<Float> {
-    var tt = t + hue
-    tt -= tt.rounded(.down)            // wrap to [0,1)
-    let f = tt * 255
-    let i0 = Int(f) & 255
-    let i1 = (i0 + 1) & 255
-    let frac = f - Float(i0)
-    return palette.colors[i0] * (1 - frac) + palette.colors[i1] * frac
+/// Build the pre-scaled colormap (dmap) matching flam3 rect.c:778-782.
+/// Each entry = `palette[j].color[k] * WHITE_LEVEL * color_scalar` (RGB).
+/// `CMAP_SIZE = 256` and `(j*256)/CMAP_SIZE == j`, so dmap[j] ↔ palette[j].
+@inline(__always)
+func buildDmap(_ palette: Palette, whiteLevel: Double, colorScalar: Double) -> [SIMD3<Double>] {
+    var dmap = [SIMD3<Double>](repeating: .zero, count: 256)
+    let scale = whiteLevel * colorScalar
+    for j in 0..<256 {
+        let c = palette.colors[j]
+        dmap[j] = SIMD3<Double>(c.x * scale, c.y * scale, c.z * scale)
+    }
+    return dmap
 }
 
 /// `RANDSIZ` (isaac.h: `1<<RANDSIZL` = 1<<4 = 16) — the ISAAC results/seed

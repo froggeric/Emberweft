@@ -31,17 +31,22 @@ else
   exit 1
 fi
 
-# flam3 has TWO independent RNGs and both default to time-dependent values,
-# making renders non-reproducible:
+# flam3 has THREE reproducibility-relevant inputs that all default to
+# machine/time-dependent values, making renders non-reproducible:
 #   - libc (srandom): env `seed`,         default time(0)+getpid()
 #   - ISAAC chaos-game: env `isaac_seed`, default time(0)   (string seed)
-# Pin both so goldens are byte-stable across runs and machines. The defaults
-# can be overridden from the environment to intentionally re-seed.
-# Emberweft's own CPU render uses its own PCG32 seed; parity against these
-# goldens is statistical (PSNR/SSIM, see Task 13) — the exact RNGs need not
-# match, only be deterministic on each side.
+#   - thread count:    env `nthreads`,    default = physical CPU count
+# Pin ALL THREE. nthreads=1 is critical: flam3 multi-threading splits the sample
+# budget across N threads each seeded with its OWN child ISAAC (rect.c:858-865),
+# producing an N-way blend. Emberweft's CPU reference is single-threaded (one
+# ISAAC stream) for provable determinism, so it can only match a single-threaded
+# flam3 golden. Measured: flam3(nthreads=1) vs Emberweft = byte-identical per-bin
+# counts; a 12-thread golden vs Emberweft = ~15-30 dB collapse. Pinning nthreads=1
+# also makes goldens reproducible regardless of host CPU count.
+# Defaults can be overridden from the environment to intentionally re-seed/retread.
 export FLAM3_SEED="${FLAM3_SEED:-42}"
 export FLAM3_ISAAC_SEED="${FLAM3_ISAAC_SEED:-emberweftgoldens}"
+export FLAM3_NTHREADS="${FLAM3_NTHREADS:-1}"
 
 # Strip the volatile `flam3_time` tEXt chunk from a rendered PNG in place.
 # Drops only that one metadata chunk; IDAT pixel data and all other chunks
@@ -77,7 +82,7 @@ for g in "$GENOMES_DIR"/*.flam3; do
   # flam3-render takes ALL parameters as ENVIRONMENT VARIABLES (no -- flags).
   # size + quality are baked into each genome (no width/height/quality env var).
   env format=png transparency=0 \
-      seed="$FLAM3_SEED" isaac_seed="$FLAM3_ISAAC_SEED" \
+      seed="$FLAM3_SEED" isaac_seed="$FLAM3_ISAAC_SEED" nthreads="$FLAM3_NTHREADS" \
       in="$g" out="$OUT_DIR/$name.png" "$ORACLE" || {
     echo "ERROR: flam3-render rejected $g" >&2
     exit 1

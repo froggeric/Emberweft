@@ -8,7 +8,7 @@ import Foundation
 public enum Interpolation {
     /// Interpolate two keyframe genomes at parameter `t ∈ [0,1]`.
     public static func interpolate(_ a: Flame, _ b: Flame, at t: Double) -> Flame {
-        let tf = Float(t)
+        let tf = t
         var f = Flame()
         f.name = t < 0.5 ? a.name : b.name
         f.size = t < 0.5 ? a.size : b.size
@@ -36,7 +36,7 @@ public enum Interpolation {
         return f
     }
 
-    private static func interpolateXform(_ a: Xform, _ b: Xform, _ t: Float) -> Xform {
+    private static func interpolateXform(_ a: Xform, _ b: Xform, _ t: Double) -> Xform {
         var x = Xform()
         x.weight = (1 - t) * a.weight + t * b.weight
         x.color = (1 - t) * a.color + t * b.color
@@ -50,8 +50,8 @@ public enum Interpolation {
         return x
     }
 
-    private static func mergeVariations(_ a: [Variation], _ b: [Variation], _ t: Float) -> [Variation] {
-        var byName = [String: Float]()
+    private static func mergeVariations(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
+        var byName = [String: Double]()
         for v in a { byName[v.name, default: 0] += (1 - t) * v.weight }
         for v in b { byName[v.name, default: 0] += t * v.weight }
         return byName
@@ -60,14 +60,14 @@ public enum Interpolation {
             .map { Variation(name: $0.key, weight: $0.value) }
     }
 
-    private static func lerp(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ t: Float) -> SIMD2<Float> {
+    private static func lerp(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ t: Double) -> SIMD2<Double> {
         a * (1 - t) + b * t
     }
-    private static func lerpAffine(_ a: AffineTransform, _ b: AffineTransform, _ t: Float) -> AffineTransform {
+    private static func lerpAffine(_ a: AffineTransform, _ b: AffineTransform, _ t: Double) -> AffineTransform {
         AffineTransform(a: (1-t)*a.a + t*b.a, b: (1-t)*a.b + t*b.b, c: (1-t)*a.c + t*b.c,
                         d: (1-t)*a.d + t*b.d, e: (1-t)*a.e + t*b.e, f: (1-t)*a.f + t*b.f)
     }
-    private static func blendPalette(_ a: Palette, _ b: Palette, _ t: Float) -> Palette {
+    private static func blendPalette(_ a: Palette, _ b: Palette, _ t: Double) -> Palette {
         Palette(colors: zip(a.colors, b.colors).map { $0 * (1 - t) + $1 * t })
     }
 }

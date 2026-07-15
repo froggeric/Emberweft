@@ -17,8 +17,13 @@ final class ToneMappingTests: XCTestCase {
     }
     func testHotWhiteBinBright() {
         var h = Histogram(gridWidth: 4, gridHeight: 4)
-        // colors accumulate per-hit (see ChaosGame); avg color = colors/counts, so use 100 to get white avg
-        for i in 0..<h.counts.count { h.counts[i] = 100; h.colors[i] = SIMD3(100, 100, 100) }
+        // ChaosGame accumulates pre-scaled values: colors = palette*255 per hit,
+        // alpha = 255 per hit. 100 hits of white (1,1,1):
+        for i in 0..<h.counts.count {
+            h.counts[i] = 100
+            h.colors[i] = SIMD3(100 * 255, 100 * 255, 100 * 255)
+            h.alpha[i] = 100 * 255
+        }
         let img = ToneMapping.render(histogram: h, width: 4, height: 4, oversample: 1,
                                      gamma: 2.2, gammaThreshold: 0.01, vibrancy: 1,
                                      sampleDensity: 100, pixelsPerUnit: 100)

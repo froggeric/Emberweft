@@ -18,7 +18,7 @@ final class RendererDeterminismTests: XCTestCase {
                                 Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: 0.4, f: 0),
                                      color: 1, variations: [Variation(name: "swirl", weight: 0.5),
                                                             Variation(name: "linear", weight: 0.5)])],
-                      palette: Palette(colors: (0..<256).map { SIMD3(Float($0)/255, 0, 1 - Float($0)/255) }))
+                      palette: Palette(colors: (0..<256).map { SIMD3(Double($0)/255, 0, 1 - Double($0)/255) }))
         let p = RenderParams(seed: 99, width: 32, height: 32, oversample: 1, samplesPerPixel: 200)
         let a = ReferenceRenderer.render(flame: f, params: p)
         let b = ReferenceRenderer.render(flame: f, params: p)

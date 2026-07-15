@@ -10,13 +10,13 @@ final class GenomeTests: XCTestCase {
         //   x' = 1·10 + 3·100 + 5 = 315
         //   y' = 2·10 + 4·100 + 6 = 426
         let t = AffineTransform(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6)
-        let r = t.apply(SIMD2<Float>(10, 100))
+        let r = t.apply(SIMD2<Double>(10, 100))
         XCTAssertEqual(r.x, 315, accuracy: 1e-6)
         XCTAssertEqual(r.y, 426, accuracy: 1e-6)
     }
 
     func testAffineTransformIdentity() {
-        let p = SIMD2<Float>(1.234, -5.678)
+        let p = SIMD2<Double>(1.234, -5.678)
         XCTAssertEqual(AffineTransform.identity.apply(p), p)
     }
 

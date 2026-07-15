@@ -28,11 +28,10 @@ final class GoldenParityTests: XCTestCase {
             throw XCTSkip("No frozen genomes found")
         }
 
-        // Partition into deterministic (gated) and julia-containing (pending
-        // ISAAC wiring — the julia variation draws a per-iteration random bit;
-        // until ISAAC replaces PCG32 in the chaos game these cannot pixel-parity).
-        var deterministic: [(name: String, flame: Flame, goldenURL: URL)] = []
-        var skippedJulia: [String] = []
+        // ALL 6 frozen genomes are asserted strict ≥30 dB AND ≥0.95 SSIM.
+        // The julia-containing genomes (final_warp, rich, julia_bubbles) are
+        // no longer excluded — Double-precision iteration closes the chaotic-
+        // trajectory divergence gap that Float caused.
         for g in genomes {
             let name = g.deletingPathExtension().lastPathComponent
             let goldenURL = refDir.appendingPathComponent("\(name).png")
@@ -40,34 +39,15 @@ final class GoldenParityTests: XCTestCase {
                 throw XCTSkip("golden \(name).png missing — run make regen-goldens")
             }
             let flame = try Flam3Parser.parse(Data(contentsOf: g))[0]
-            let usesJulia = flame.xforms.contains { xf in
-                xf.variations.contains { $0.name == "julia" }
-            } || (flame.finalXform?.variations.contains { $0.name == "julia" } ?? false)
-            if usesJulia {
-                skippedJulia.append(name)
-            } else {
-                deterministic.append((name, flame, goldenURL))
-            }
-        }
-
-        guard !deterministic.isEmpty else {
-            throw XCTSkip("No deterministic (non-julia) frozen genomes to test")
-        }
-
-        for (name, flame, goldenURL) in deterministic {
             let params = RenderParams(seed: 0, width: 320, height: 200, oversample: 1, samplesPerPixel: 100)
             let rendered = ReferenceRenderer.render(flame: flame, params: params)
             let golden = try RGBA8Image.readPNG(from: goldenURL)
             let p = ImageComparison.psnr(rendered, golden)
             let s = ImageComparison.ssim(rendered, golden)
+            let pStr = p.isInfinite ? "inf" : String(format: "%.2f", p)
+            print("[GoldenParity] \(name): PSNR=\(pStr) dB, SSIM=\(String(format: "%.4f", s))")
             XCTAssertGreaterThanOrEqual(p, 30, "PSNR too low for \(name): \(p)")
             XCTAssertGreaterThanOrEqual(s, 0.95, "SSIM too low for \(name): \(s)")
-        }
-
-        if !skippedJulia.isEmpty {
-            // Attach context so the skip is visible without failing the test.
-            // The deterministic genomes above MUST pass; julia genomes are excluded.
-            print("[GoldenParity] skipped julia genomes (pending ISAAC): \(skippedJulia.joined(separator: ", "))")
         }
     }
 }
