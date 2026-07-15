@@ -11,13 +11,13 @@ public enum Interpolation {
         let tf = Float(t)
         var f = Flame()
         f.name = t < 0.5 ? a.name : b.name
-        f.size = a.size
+        f.size = t < 0.5 ? a.size : b.size
         f.camera = Camera(
             center: lerp(a.camera.center, b.camera.center, tf),
             scale: pow(a.camera.scale, 1 - tf) * pow(b.camera.scale, tf),   // log-space
             zoom: (1 - tf) * a.camera.zoom + tf * b.camera.zoom,
             rotation: (1 - tf) * a.camera.rotation + tf * b.camera.rotation)
-        f.quality = a.quality
+        f.quality = t < 0.5 ? a.quality : b.quality
         f.hueShift = (1 - tf) * a.hueShift + tf * b.hueShift
         f.time = (1 - t) * a.time + t * b.time
         f.palette = blendPalette(a.palette, b.palette, tf)
@@ -54,7 +54,10 @@ public enum Interpolation {
         var byName = [String: Float]()
         for v in a { byName[v.name, default: 0] += (1 - t) * v.weight }
         for v in b { byName[v.name, default: 0] += t * v.weight }
-        return byName.filter { $0.value != 0 }.map { Variation(name: $0.key, weight: $0.value) }
+        return byName
+            .filter { $0.value != 0 }
+            .sorted { $0.key < $1.key }
+            .map { Variation(name: $0.key, weight: $0.value) }
     }
 
     private static func lerp(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ t: Float) -> SIMD2<Float> {

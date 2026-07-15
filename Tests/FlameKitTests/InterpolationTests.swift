@@ -28,4 +28,39 @@ final class InterpolationTests: XCTestCase {
         let m = Interpolation.interpolate(a, b, at: 0.5)
         XCTAssertEqual(m.xforms.count, 2)
     }
+    func testExtraXformTakenUnchanged() {
+        // Unequal counts: the extra xform must come through UNCHANGED from the longer side.
+        let extra = Xform(affine: AffineTransform(a: 9, b: 0, c: 0, d: 0, e: 9, f: 0),
+                          variations: [Variation(name: "spherical", weight: 2)])
+        let a = flame(1, 200, xformCount: 1)
+        var b = flame(2, 200, xformCount: 2)
+        b.xforms[1] = extra
+        let m = Interpolation.interpolate(a, b, at: 0.5)
+        XCTAssertEqual(m.xforms.count, 2)
+        XCTAssertEqual(m.xforms[1], extra)              // unchanged
+    }
+    func testEndpointsDifferInSizeAndQuality() {
+        // Proves the Important fix: at t=1, size & quality come from b, not a.
+        var a = flame(1, 200)
+        var b = flame(2, 400)
+        a.size = SIMD2<Int>(640, 480)
+        b.size = SIMD2<Int>(320, 240)
+        a.quality.samplesPerPixel = 10
+        b.quality.samplesPerPixel = 90
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 0).size, a.size)
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 0).quality, a.quality)
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 1).size, b.size)
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 1).quality, b.quality)
+    }
+    func testFinalXformAsymmetric() {
+        var a = flame(1, 200)
+        a.finalXform = Xform(variations: [Variation(name: "linear", weight: 1)])
+        let b = flame(2, 400)
+        // a has finalXform, b does not -> carried through (a.finalXform ?? b.finalXform).
+        XCTAssertNotNil(Interpolation.interpolate(a, b, at: 0.5).finalXform)
+        // b has none, a has one -> still carried through (b.finalXform ?? a.finalXform).
+        XCTAssertNotNil(Interpolation.interpolate(b, a, at: 0.5).finalXform)
+        // neither has one -> nil
+        XCTAssertNil(Interpolation.interpolate(flame(1, 200), flame(2, 400), at: 0.5).finalXform)
+    }
 }
