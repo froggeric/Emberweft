@@ -57,6 +57,11 @@ let package = Package(
             name: "FlameKitTests",
             dependencies: ["FlameKit"],
             path: "Tests/FlameKitTests"
+        ),
+        .testTarget(
+            name: "FlameReferenceTests",
+            dependencies: ["FlameReference", "FlameKit"],
+            path: "Tests/FlameReferenceTests"
         )
     ]
 )
