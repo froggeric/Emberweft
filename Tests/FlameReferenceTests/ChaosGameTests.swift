@@ -4,14 +4,22 @@ import FlameKit
 
 final class ChaosGameTests: XCTestCase {
     private func sierpinski() -> Flame {
+        // Sierpinski triangle: each xform moves the point halfway toward a vertex.
+        // Vertices chosen to fit inside the 64×64 / scale=64 / center=(0,0) view
+        // (world span ≈ [-0.5, 0.5]) and keep the image corners outside the hull.
+        // Under the flam3 convention x'=a·x+c·y+e, y'=b·x+d·y+f, a "move halfway
+        // toward vertex V" map is a=0.5, d=0.5, (e,f)=0.5·V.
         Flame(size: SIMD2(64, 64),
               camera: Camera(scale: 64),
               xforms: [
-                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0, e: 0.5, f: 0), color: 0,
+                // vertex (-0.3, -0.2)
+                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: -0.15, f: -0.1), color: 0,
                       variations: [Variation(name: "linear", weight: 1)]),
-                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0.5, d: 0, e: 0.5, f: 0), color: 0.5,
+                // vertex (0.3, -0.2)
+                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: 0.15, f: -0.1), color: 0.5,
                       variations: [Variation(name: "linear", weight: 1)]),
-                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0.25, d: 0, e: 0.5, f: 0.43), color: 1,
+                // vertex (0, 0.35)
+                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0.175), color: 1,
                       variations: [Variation(name: "linear", weight: 1)]),
               ])
     }
@@ -49,7 +57,7 @@ final class ChaosGameTests: XCTestCase {
         // A single xform with scale > 1 diverges to infinity; the engine must
         // still terminate via the safety cap rather than spinning forever.
         let diverging = Flame(size: SIMD2(16, 16), camera: Camera(scale: 16),
-            xforms: [Xform(affine: AffineTransform(a: 3, b: 0, c: 0, d: 0, e: 3, f: 0),
+            xforms: [Xform(affine: AffineTransform(a: 3, b: 0, c: 0, d: 3, e: 0, f: 0),
                            variations: [Variation(name: "linear", weight: 1)])])
         let p = RenderParams(seed: 1, width: 16, height: 16, oversample: 1, samplesPerPixel: 50)
         let h = ChaosGame.iterate(flame: diverging, params: p)

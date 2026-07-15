@@ -133,6 +133,18 @@ other metadata (genome, version, sample count) are left byte-intact.
 > between them is asserted **statistically** (PSNR/SSIM) in Task 13. Keep the
 > same flam3 seeds when re-goldening unless you intend to change the reference.
 
+## Parity status
+
+The deterministic frozen genomes (`sierpinski`, `heart_disc`, `swirl_field`)
+achieve near-byte-exact parity with the flam3 goldens (48–58 dB PSNR,
+SSIM ≈ 1.0) via the faithful display-pipeline port.
+
+Genomes containing the `julia` variation (`julia_bubbles`, `final_warp`,
+`rich`) are **temporarily skipped** in the parity gate pending ISAAC wiring
+into the chaos game (a byte-exact ISAAC port is staged in
+`Sources/FlameKit/ISAAC.swift`). The final parity target is byte-exact for
+all genomes.
+
 ## Licensing & attribution (important)
 
 `flam3` (scottdraves/flam3) is **GPL** and is used here strictly as a

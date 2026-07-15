@@ -18,6 +18,8 @@ public enum ReferenceRenderer {
         return ToneMapping.render(histogram: hist,
             width: params.width, height: params.height, oversample: params.oversample,
             gamma: flame.quality.gamma, gammaThreshold: flame.quality.gammaThreshold,
-            vibrancy: flame.quality.vibrancy)
+            vibrancy: flame.quality.vibrancy,
+            sampleDensity: Float(params.samplesPerPixel),
+            pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom))
     }
 }

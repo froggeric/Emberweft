@@ -57,12 +57,12 @@ public enum Variations {
         return acc
     }
 
-    /// flam3 `var13_julia`: r_out = (x²+y²)^¼, a = θ/2 + (bit ? π : 0).
-    /// `precalc_atan` in flam3 is atan2(y, x) (see `precalc_atanyx`).
+    /// flam3 `var13_julia`: r_out = (x²+y²)^¼, a = atan2(x,y)/2 + (bit ? π : 0).
+    /// Note flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y) (line 2159).
     private static func julia(_ p: SIMD2<Float>, rng: inout PCG32) -> SIMD2<Float> {
         let r2 = p.x*p.x + p.y*p.y
         let r = r2.squareRoot().squareRoot()      // (x²+y²)^¼
-        var a = atan2(p.y, p.x) * 0.5
+        var a = atan2(p.x, p.y) * 0.5
         if (rng.next() & 1) != 0 { a += .pi }
         return SIMD2(r * cos(a), r * sin(a))
     }
@@ -77,7 +77,8 @@ public enum Variations {
             return p
         }
         // Each formula below is a line-for-line port of flam3 variations.c
-        // (varN_*), using θ = atan2(y, x) and r = √(x²+y²). Constants are NOT
+        // (varN_*), using flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y)
+        // (NOT the textbook atan2(y,x)) and r = √(x²+y²). Constants are NOT
         // invented: variations that need the affine coefs (waves/popcorn/…) are
         // omitted entirely rather than given wrong hard-coded constants.
         t["linear"]      = { safe($0) }
@@ -98,47 +99,47 @@ public enum Variations {
             let inv = 1 / r
             return SIMD2((p.x - p.y) * (p.x + p.y) * inv, 2 * p.x * p.y * inv)
         }
-        t["polar"]       = { p in                      // var5: (θ/π, r-1)
+        t["polar"]       = { p in                      // var5: flam3 θ=atan2(tx,ty)=atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            return SIMD2(atan2(p.y, p.x) / .pi, r - 1)
+            return SIMD2(atan2(p.x, p.y) / .pi, r - 1)
         }
-        t["handkerchief"] = { p in                      // var6: (r·sin(θ+r), r·cos(θ-r))
+        t["handkerchief"] = { p in                      // var6: a=atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = atan2(p.y, p.x)
+            let a = atan2(p.x, p.y)
             return SIMD2(r * sin(a + r), r * cos(a - r))
         }
-        t["heart"]       = { p in                      // var7: a=r·θ; (r·sin a, -r·cos a)
+        t["heart"]       = { p in                      // var7: a=r·atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = r * atan2(p.y, p.x)
+            let a = r * atan2(p.x, p.y)
             return SIMD2(r * sin(a), -r * cos(a))
         }
-        t["disc"]        = { p in                      // var8: a=θ/π, rr=π·r; (a·sin rr, a·cos rr)
+        t["disc"]        = { p in                      // var8: a=atan2(x,y)/π
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = atan2(p.y, p.x) / .pi
+            let a = atan2(p.x, p.y) / .pi
             let rr = .pi * r
             return SIMD2(a * sin(rr), a * cos(rr))
         }
-        t["spiral"]      = { p in                      // var9
+        t["spiral"]      = { p in                      // var9: a=atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
             guard r > 1e-12 else { return .zero }
-            let a = atan2(p.y, p.x)
+            let a = atan2(p.x, p.y)
             let inv = 1 / r
             return SIMD2((cos(a) + sin(r)) * inv, (sin(a) - cos(r)) * inv)
         }
-        t["hyperbolic"]  = { p in                      // var10: (sin θ / r, r·cos θ)
+        t["hyperbolic"]  = { p in                      // var10: a=atan2(x,y); (sin a/r, r·cos a)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
             guard r > 1e-12 else { return .zero }
-            let a = atan2(p.y, p.x)
+            let a = atan2(p.x, p.y)
             return SIMD2(sin(a) / r, r * cos(a))
         }
-        t["diamond"]     = { p in                      // var11: (sinθ·cos r, cosθ·sin r)
+        t["diamond"]     = { p in                      // var11: a=atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = atan2(p.y, p.x)
+            let a = atan2(p.x, p.y)
             return SIMD2(sin(a) * cos(r), cos(a) * sin(r))
         }
-        t["ex"]          = { p in                      // var12: n0=sin(θ+r), n1=cos(θ-r)
+        t["ex"]          = { p in                      // var12: a=atan2(x,y)
             let r = (p.x*p.x + p.y*p.y).squareRoot()
-            let a = atan2(p.y, p.x)
+            let a = atan2(p.x, p.y)
             let n0 = sin(a + r)
             let n1 = cos(a - r)
             let m0 = n0*n0*n0 * r

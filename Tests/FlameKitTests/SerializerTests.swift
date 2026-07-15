@@ -37,13 +37,13 @@ final class SerializerTests: XCTestCase {
         var xf = Xform(weight: 1.2, color: 0.4, colorSpeed: 0.8,
                        variations: [Variation(name: "spherical", weight: 1),
                                     Variation(name: "swirl", weight: 0.5)])
-        xf.affine = AffineTransform(a: 0.9, b: 0.0, c: 0.1, d: 0.0, e: 0.9, f: 0.2)
-        xf.postAffine = AffineTransform(a: 1, b: 0, c: 0.1, d: 0, e: 1, f: 0)
+        xf.affine = AffineTransform(a: 0.9, b: 0.05, c: -0.05, d: 0.9, e: 0.1, f: 0.2)
+        xf.postAffine = AffineTransform(a: 1, b: 0, c: 0, d: 1, e: 0.1, f: 0)
         xf.chaos = [1, 2, 3]
         xf.opacity = 0.9
         f.xforms = [xf]
         var fin = Xform(variations: [Variation(name: "linear", weight: 1)])
-        fin.affine = AffineTransform(a: 1, b: 0, c: 0, d: 0, e: 1, f: 0)
+        fin.affine = .identity
         f.finalXform = fin
         var pal = Palette.black
         pal.colors[0] = SIMD3<Float>(1, 0, 0)

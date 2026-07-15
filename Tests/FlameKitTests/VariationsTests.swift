@@ -26,7 +26,8 @@ final class VariationsTests: XCTestCase {
     func testDiscMatchesFlam3() {
         let p = SIMD2<Float>(0.3, 0.4)
         let r = (p.x*p.x + p.y*p.y).squareRoot()
-        let a = atan2(p.y, p.x) / .pi
+        // flam3 precalc_atan = atan2(tx, ty) = atan2(x, y) (variations.c:2159)
+        let a = atan2(p.x, p.y) / .pi
         XCTAssertEqual(eval("disc", p), SIMD2<Float>(a*sin(.pi*r), a*cos(.pi*r)), accuracy: 1e-6)
     }
     func testBentMatchesFlam3() {

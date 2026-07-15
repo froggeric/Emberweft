@@ -2,11 +2,14 @@ import Foundation
 
 /// A 2D affine transform matching flam3's coefficient convention.
 ///
-/// `coefs = "a b c d e f"` is applied as:
+/// The `coefs = "a b c d e f"` string is parsed into `c[3][2]` row-major
+/// (`c[k][j] = v[k*2+j]`, flam3 `parser.c:974`) and applied as the matrix
+/// `| a c e |`
+/// `| b d f |` (flam3 `variations.c:2145-2146`):
 ///
 /// ```
-/// x' = a·x + b·y + c
-/// y' = d·x + e·y + f
+/// x' = a·x + c·y + e
+/// y' = b·x + d·y + f
 /// ```
 public struct AffineTransform: Sendable, Equatable {
     public var a, b, c, d, e, f: Float
@@ -14,12 +17,12 @@ public struct AffineTransform: Sendable, Equatable {
         (self.a, self.b, self.c, self.d, self.e, self.f) = (a, b, c, d, e, f)
     }
 
-    /// Identity transform: maps every point to itself.
-    public static let identity = AffineTransform(a: 1, b: 0, c: 0, d: 0, e: 1, f: 0)
+    /// Identity transform: maps every point to itself (a=1, d=1).
+    public static let identity = AffineTransform(a: 1, b: 0, c: 0, d: 1, e: 0, f: 0)
 
     /// Apply the transform to a 2D point using the flam3 convention.
     public func apply(_ p: SIMD2<Float>) -> SIMD2<Float> {
-        SIMD2<Float>(a * p.x + b * p.y + c, d * p.x + e * p.y + f)
+        SIMD2<Float>(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
     }
 }
 

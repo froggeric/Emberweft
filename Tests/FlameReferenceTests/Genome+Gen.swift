@@ -25,9 +25,15 @@ enum GenomeGen {
                 if !picked.contains(idx) { picked.append(idx) }
             }
             let vars = picked.map { Variation(name: names[$0], weight: rng.nextFloat()) }
-            return Xform(affine: AffineTransform(a: s, b: rng.nextFloat()*0.2 - 0.1,
-                                          c: rng.nextFloat() - 0.5, d: rng.nextFloat()*0.2 - 0.1,
-                                          e: s, f: rng.nextFloat() - 0.5),
+            // Diagonal-dominant contractive affine under the flam3 convention
+            // (matrix | a c e | / | b d f |): a and d are the diagonal scales (= s),
+            // b,c are small off-diagonals, e,f are translations. Draw into locals so
+            // the RNG sequence is order-independent and stays deterministic.
+            let offB = rng.nextFloat()*0.2 - 0.1
+            let offC = rng.nextFloat()*0.2 - 0.1
+            let tx = rng.nextFloat() - 0.5
+            let ty = rng.nextFloat() - 0.5
+            return Xform(affine: AffineTransform(a: s, b: offB, c: offC, d: s, e: tx, f: ty),
                   color: rng.nextFloat(), colorSpeed: 0.5,
                   variations: vars)
         }

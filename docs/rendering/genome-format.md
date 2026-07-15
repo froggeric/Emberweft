@@ -139,25 +139,27 @@ Each transform (also called "xform") defines one function in the IFS.
 coefs="a b c d e f"
 ```
 
-Represents the 2×3 affine matrix:
+Represents the 2×3 affine matrix (matching flam3's `c[3][2]` row-major
+layout — `parser.c:974`, applied at `variations.c:2145`):
 
 ```
-| a  b  c |
-| d  e  f |
+| a  c  e |
+| b  d  f |
 | 0  0  1 |
 ```
 
 Mapping:
 ```
-x' = a·x + b·y + c
-y' = d·x + e·y + f
+x' = a·x + c·y + e
+y' = b·x + d·y + f
 ```
 
 **Example:**
 ```
 coefs="0.866025 -0.5 0.5 0.866025 0 0"
 ```
-This is a 30° rotation (cos 30° ≈ 0.866, sin 30° = 0.5).
+This is a 30° rotation (cos 30° ≈ 0.866, sin 30° = 0.5): a=cos, b=-sin,
+c=sin, d=cos.
 
 ### Post-Transform
 

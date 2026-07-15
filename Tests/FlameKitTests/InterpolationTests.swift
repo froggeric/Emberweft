@@ -5,7 +5,7 @@ final class InterpolationTests: XCTestCase {
     private func flame(_ c: Float, _ scale: Float, xformCount: Int = 1) -> Flame {
         Flame(camera: Camera(scale: scale),
               xforms: (0..<xformCount).map { _ in
-                  Xform(affine: AffineTransform(a: c, b: 0, c: 0, d: 0, e: c, f: 0),
+                  Xform(affine: AffineTransform(a: c, b: 0, c: 0, d: c, e: 0, f: 0),
                         variations: [Variation(name: "linear", weight: 1)]) })
     }
     func testEndpoints() {
@@ -30,7 +30,7 @@ final class InterpolationTests: XCTestCase {
     }
     func testExtraXformTakenUnchanged() {
         // Unequal counts: the extra xform must come through UNCHANGED from the longer side.
-        let extra = Xform(affine: AffineTransform(a: 9, b: 0, c: 0, d: 0, e: 9, f: 0),
+        let extra = Xform(affine: AffineTransform(a: 9, b: 0, c: 0, d: 9, e: 0, f: 0),
                           variations: [Variation(name: "spherical", weight: 2)])
         let a = flame(1, 200, xformCount: 1)
         var b = flame(2, 200, xformCount: 2)

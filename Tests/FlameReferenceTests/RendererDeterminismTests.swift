@@ -13,9 +13,9 @@ final class RendererDeterminismTests: XCTestCase {
 
     func testRenderIsDeterministic() {
         let f = Flame(size: SIMD2(32, 32), camera: Camera(scale: 32),
-                      xforms: [Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0, e: 0.5, f: 0),
+                      xforms: [Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0),
                                      color: 0, variations: [Variation(name: "linear", weight: 1)]),
-                                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0.4, d: 0, e: 0.5, f: 0),
+                                Xform(affine: AffineTransform(a: 0.5, b: 0, c: 0, d: 0.5, e: 0.4, f: 0),
                                      color: 1, variations: [Variation(name: "swirl", weight: 0.5),
                                                             Variation(name: "linear", weight: 0.5)])],
                       palette: Palette(colors: (0..<256).map { SIMD3(Float($0)/255, 0, 1 - Float($0)/255) }))
