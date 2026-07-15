@@ -92,12 +92,46 @@ PATH="$HOME/flam3-oracle/bin:$PATH" make regen-goldens
 invokes:
 
 ```sh
-env format=png transparency=0 in="Tests/Goldens/genomes/<name>.flam3" \
+env format=png transparency=0 \
+    seed=42 isaac_seed=emberweftgoldens \
+    in="Tests/Goldens/genomes/<name>.flam3" \
     out="Tests/Goldens/reference/<name>.png" flam3-render
 ```
 
 `flam3-render` takes **all** parameters as environment variables (there are no
 `--` flags, and no width/height/quality env var — those come from the genome).
+
+## Reproducibility — pinned seeds & metadata normalization
+
+`flam3-render` is **non-deterministic by default**: it has two independent RNGs
+that both seed from wall-clock time:
+
+| RNG                | env var      | default              | used for                  |
+|--------------------|--------------|----------------------|---------------------------|
+| libc `srandom`     | `seed`       | `time(0)+getpid()`   | misc randomness           |
+| ISAAC chaos-game   | `isaac_seed` | `time(0)` (string)   | the iteration loop        |
+
+The harness **pins both** so goldens are byte-reproducible across runs and
+machines. The defaults are constants, but each can be overridden from the
+environment to intentionally re-seed:
+
+```
+FLAM3_SEED=42
+FLAM3_ISAAC_SEED=emberweftgoldens
+```
+
+flam3 also embeds a `flam3_time` PNG `tEXt` chunk recording the render's
+**elapsed seconds** (e.g. `"0"` vs `"1"`) — pixel-independent, but it breaks
+raw-file `cmp` under varying machine load. The harness strips just that one
+metadata chunk post-render (stdlib Python), so committed PNGs are
+byte-identical regardless of host speed. The pixel data (PNG `IDAT`) and all
+other metadata (genome, version, sample count) are left byte-intact.
+
+> **Note:** Emberweft's own CPU render (`FlameReference`) uses its own
+> independent PCG32 seed (see `FlameKit/RNG.swift`); the flam3 RNGs need not
+> match Emberweft's. Each side is merely internally deterministic, and parity
+> between them is asserted **statistically** (PSNR/SSIM) in Task 13. Keep the
+> same flam3 seeds when re-goldening unless you intend to change the reference.
 
 ## Licensing & attribution (important)
 
