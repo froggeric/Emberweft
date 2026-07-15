@@ -3,7 +3,7 @@
 
 SWIFT   := swift
 
-.PHONY: build release test run cli clean format lint bootstrap-oracle help
+.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens help
 
 build:        ## Build (debug)
 	$(SWIFT) build
@@ -24,8 +24,18 @@ format:       ## Format sources with swift-format
 lint:         ## Lint sources with swift-format
 	swift format lint --recursive Sources Tests
 
-bootstrap-oracle:  ## Install dev-only flam3 oracle (Homebrew)
-	brew install flam3
+bootstrap-oracle:  ## Build dev-only GPL flam3 oracle from source into $(HOME)/flam3-oracle
+	@echo "Building dev-only flam3 oracle (GPL) from source into $$HOME/flam3-oracle"
+	@mkdir -p "$$HOME/flam3-oracle-src" && cd "$$HOME/flam3-oracle-src" && \
+	  git clone --depth 1 https://github.com/scottdraves/flam3.git && \
+	  cd flam3 && \
+	  CPPFLAGS="-I$$(brew --prefix)/include" LDFLAGS="-L$$(brew --prefix)/lib" \
+	  ./configure --prefix="$$HOME/flam3-oracle" && \
+	  make -j8 && make install
+	@echo "Done. flam3-render is at $$HOME/flam3-oracle/bin/flam3-render (dev-only; never linked/bundled)."
+
+regen-goldens:                      ## (dev) regenerate flam3 golden reference PNGs
+	bash Tools/regen_goldens.sh
 
 clean:        ## Remove build artifacts
 	$(SWIFT) package clean
