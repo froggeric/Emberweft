@@ -142,15 +142,15 @@ coefs="a b c d e f"
 Represents the 2×3 affine matrix:
 
 ```
-| a  c  e |
-| b  d  f |
+| a  b  c |
+| d  e  f |
 | 0  0  1 |
 ```
 
 Mapping:
 ```
-x' = a·x + c·y + e
-y' = b·x + d·y + f
+x' = a·x + b·y + c
+y' = d·x + e·y + f
 ```
 
 **Example:**
