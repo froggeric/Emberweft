@@ -39,15 +39,20 @@ public enum Variations {
         var acc = SIMD2<Float>.zero
         for v in variations {
             guard v.weight != 0 else { continue }
+            let term: SIMD2<Float>
             if let fn = table[v.name] {
-                acc += v.weight * fn(p)
+                term = v.weight * fn(p)
             } else if v.name == "julia" {
-                acc += v.weight * julia(p, rng: &rng)
+                term = v.weight * julia(p, rng: &rng)
             } else {
                 warnUnknown(v.name)
+                continue
             }
+            // Per-variation guard: a single overflowing variation must not poison
+            // valid sibling contributions — drop only the offending term.
+            if term.x.isFinite && term.y.isFinite { acc += term }
         }
-        // Last-line guard: any NaN/Inf contribution is dropped.
+        // Defense-in-depth backstop (should be unreachable given the per-term guard).
         if !acc.x.isFinite || !acc.y.isFinite { return .zero }
         return acc
     }

@@ -61,6 +61,17 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(Variations.evaluate([Variation(name: "not_a_real_variation", weight: 5)], at: SIMD2(1, 1), rng: &rng), .zero)
         XCTAssertTrue(Variations.warnings.contains("not_a_real_variation"))
     }
+    func testOverflowingVariationDoesNotZeroSiblings() {
+        // cosine overflows at large y (cosh(1e9)=inf); linear must survive.
+        // At (1, 1e9): linear term = 0.5*(1, 1e9) = (0.5, 5e8); cosine term = inf → dropped.
+        var rng = PCG32(seed: 1, stream: 1)
+        let r = Variations.evaluate(
+            [Variation(name: "linear", weight: 0.5),
+             Variation(name: "cosine", weight: 0.5)],
+            at: SIMD2<Float>(1, 1e9), rng: &rng)
+        XCTAssertEqual(r.x, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(r.y, 5e8, accuracy: 1.0)
+    }
 }
 
 // SIMD2<Float> accuracy helper for the tests above. Defined as a free function
