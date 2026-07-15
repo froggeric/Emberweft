@@ -6,13 +6,13 @@
 
 ## Current Status
 
-**Current milestone:** M0 — Docs + repo scaffold
+**Current milestone:** M2 — Metal compute renderer · **M0 and M1 complete** (see [CHANGELOG.md](../../CHANGELOG.md))
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
 
 ## Milestones
 
-### M0 — Docs + Repo Scaffold
+### M0 — Docs + Repo Scaffold ✅
 
 **Goal:** Establish project foundation with comprehensive documentation and repository structure. (Slice S0.)
 
@@ -35,7 +35,7 @@
 - README provides clear build/run instructions
 - Documentation cross-references are complete and accurate
 
-### M1 — CPU Reference Renderer + CLI
+### M1 — CPU Reference Renderer + CLI ✅
 
 **Goal:** A correct, usable CPU renderer and CLI that produces a single still image from a `.flam3` file, validated against `flam3`. (Slices S1–S4.) This is a complete, shippable product slice on its own.
 
