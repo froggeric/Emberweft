@@ -25,11 +25,14 @@ public extension RGBA8Image {
         guard CGImageDestinationFinalize(dest) else { throw NSError(domain: "RGBA8Image", code: 3) }
     }
 
-    /// Decode a PNG at `url` into a top-row-first `RGBA8Image`.
+    /// Reads a PNG into an `RGBA8Image` whose `pixels` row 0 is the PNG's visual top row.
     ///
-    /// A bitmap `CGContext` has a y-up origin while a CGImage's row 0 is its
-    /// top; drawing directly would vertically flip the bytes. A CTM flip is
-    /// applied so `pixels` ends up top-row-first (matching `writePNG`).
+    /// On macOS 26, drawing a `CGImage` upright into a `premultipliedLast` bitmap
+    /// `CGContext` of matching size already produces top-row-first output in the
+    /// data buffer, so NO CTM flip is applied. Applying the textbook
+    /// `translateBy(0, h) + scaleBy(1, -1)` flip here would DOUBLE-flip and
+    /// vertically mirror the bytes. (Verified empirically by decoding the written
+    /// PNG bytes with an independent zlib path.)
     static func readPNG(from url: URL) throws -> RGBA8Image {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
@@ -38,16 +41,13 @@ public extension RGBA8Image {
         let w = cg.width, h = cg.height
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
         let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        // See header doc: NO CTM flip — drawing upright into this premultipliedLast
+        // context already yields top-row-first output on macOS 26.
         guard let ctx = CGContext(data: &pixels, width: w, height: h,
                                   bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: cs,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue))
         else { throw NSError(domain: "RGBA8Image", code: 5) }
-        // A bitmap CGContext's data pointer starts at the row the image's row 0
-        // maps to under the default y-up CTM when drawing a CGImage upright, so
-        // `pixels` already ends up top-row-first (matching `writePNG`). Do NOT
-        // apply a CTM flip — doing so double-flips and vertically mirrors the
-        // decoded bytes (verified empirically on macOS 26 / Swift 6.2).
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
         return RGBA8Image(width: w, height: h, pixels: pixels)
     }
