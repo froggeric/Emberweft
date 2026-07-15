@@ -32,10 +32,13 @@ public enum Variations {
     ///
     /// `rng` is threaded so variations that consume randomness (notably
     /// `julia`, which adds π with probability ½ per flam3 `var13_julia`) draw
-    /// from the single deterministic stream. Pure variations ignore it. M2
-    /// will widen this to a full affine+RNG context for dependent variations.
+    /// from the single deterministic ISAAC stream — the SAME stream the chaos
+    /// game uses for xform selection, matching flam3's consumption order
+    /// (variations.c:364 draws `flam3_random_isaac_bit(f->rc)`).
+    /// Pure variations ignore it. M2 will widen this to a full affine+RNG
+    /// context for dependent variations.
     public static func evaluate(_ variations: [Variation], at p: SIMD2<Float>,
-                                rng: inout PCG32) -> SIMD2<Float> {
+                                rng: inout ISAAC) -> SIMD2<Float> {
         var acc = SIMD2<Float>.zero
         for v in variations {
             guard v.weight != 0 else { continue }
@@ -57,13 +60,16 @@ public enum Variations {
         return acc
     }
 
-    /// flam3 `var13_julia`: r_out = (x²+y²)^¼, a = atan2(x,y)/2 + (bit ? π : 0).
+    /// flam3 `var13_julia` (variations.c:350-368):
+    /// `r = weight · √(x²+y²)`, `a = atan2(x,y)/2 + (bit ? π : 0)`.
+    /// The π-bit is `flam3_random_isaac_bit(f->rc)` = `irand() & 1` — one full
+    /// ISAAC word consumed per call (NOT libc `random()`).
     /// Note flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y) (line 2159).
-    private static func julia(_ p: SIMD2<Float>, rng: inout PCG32) -> SIMD2<Float> {
+    private static func julia(_ p: SIMD2<Float>, rng: inout ISAAC) -> SIMD2<Float> {
         let r2 = p.x*p.x + p.y*p.y
         let r = r2.squareRoot().squareRoot()      // (x²+y²)^¼
         var a = atan2(p.x, p.y) * 0.5
-        if (rng.next() & 1) != 0 { a += .pi }
+        if rng.bit() { a += .pi }
         return SIMD2(r * cos(a), r * sin(a))
     }
 

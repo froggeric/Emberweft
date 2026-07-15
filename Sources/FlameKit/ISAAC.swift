@@ -90,6 +90,26 @@ public struct ISAAC: Sendable {
         self.randinit(flag: true)
     }
 
+    /// Seed directly from a 16-word `randrsl` buffer, mirroring flam3's
+    /// per-thread ISAAC seeding (rect.c:862-865): the render loop draws
+    /// `RANDSIZ` words from the frame-level ("parent") ISAAC and uses them
+    /// to `irandinit(child, 1)` a thread-local ISAAC. This initializer
+    /// reproduces that path so the chaos-game stream matches flam3's exactly.
+    ///
+    /// Each word is treated as a 32-bit value in a 64-bit slot (high 32 bits
+    /// ignored), matching `ub4` on macOS LP64.
+    public init(randrsl: [UInt64]) {
+        precondition(randrsl.count == ISAAC_RANDSIZ,
+                     "randrsl must have exactly \(ISAAC_RANDSIZ) words")
+        self.randrsl = randrsl.map { $0 & 0xffffffff }
+        self.mm = [UInt64](repeating: 0, count: ISAAC_RANDSIZ)
+        self.aa = 0
+        self.bb = 0
+        self.cc = 0
+        self.randcnt = UInt64(ISAAC_RANDSIZ)
+        self.randinit(flag: true)
+    }
+
     /// Lay a seed string into a 128-byte buffer exactly like flam3's
     /// `memset` + `strncpy`, then read it back as 16 little-endian `UInt64`s.
     ///
@@ -140,6 +160,34 @@ public struct ISAAC: Sendable {
         // randrsl values are always masked to 32 bits by `isaac()`, so this
         // truncation is lossless and exact.
         return UInt32(truncatingIfNeeded: randrsl[Int(randcnt)])
+    }
+
+    /// `flam3_random_isaac_bit` (flam3.c:2541-2544): one full ISAAC word
+    /// consumed, lowest bit returned. This is the per-iteration π-bit used by
+    /// the julia variation (variations.c:364).
+    @inlinable
+    public mutating func bit() -> Bool {
+        (next() & 1) != 0
+    }
+
+    /// `flam3_random_isaac_01` (flam3.c:2519-2521):
+    /// `((int)irand(ct) & 0xfffffff) / (double)0xfffffff` → uniform in [0, 1].
+    /// The `(int)` cast is a no-op for the 28-bit masked value. Returns Float
+    /// (Emberweft iterates in Float; the cast matches storing flam3's double
+    /// result into a Float).
+    @inlinable
+    public mutating func isaac01() -> Float {
+        let v = UInt32(next() & 0xfffffff)
+        return Float(Double(v) / Double(UInt32(0xfffffff)))
+    }
+
+    /// `flam3_random_isaac_11` (flam3.c:2523-2525):
+    /// `(((int)irand(ct) & 0xfffffff) - 0x7ffffff) / (double)0x7ffffff`
+    /// → uniform in [-1, 1].
+    @inlinable
+    public mutating func isaac11() -> Float {
+        let v = UInt32(next() & 0xfffffff)
+        return Float((Double(v) - Double(UInt32(0x7ffffff))) / Double(UInt32(0x7ffffff)))
     }
 
     // MARK: - `randinit` / `irandinit`

@@ -3,7 +3,7 @@ import XCTest
 
 final class VariationsTests: XCTestCase {
     private func eval(_ name: String, _ p: SIMD2<Float>, weight: Float = 1) -> SIMD2<Float> {
-        var rng = PCG32(seed: 1, stream: 1)
+        var rng = ISAAC(isaacSeed: "variations-test")
         return Variations.evaluate([Variation(name: name, weight: weight)], at: p, rng: &rng)
     }
     func testLinearIsIdentity() {
@@ -34,8 +34,8 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(eval("bent", SIMD2(-1, -4)), SIMD2<Float>(-2, -2), accuracy: 1e-6)
     }
     func testJuliaUsesRngAndDeterministic() {
-        var r1 = PCG32(seed: 7, stream: 1)
-        var r2 = PCG32(seed: 7, stream: 1)
+        var r1 = ISAAC(isaacSeed: "julia-determinism")
+        var r2 = ISAAC(isaacSeed: "julia-determinism")
         let p = SIMD2<Float>(0.5, 0.5)
         let a = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, rng: &r1)
         let b = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, rng: &r2)
@@ -49,7 +49,7 @@ final class VariationsTests: XCTestCase {
         let points: [SIMD2<Float>] = [.zero, SIMD2(1e9, 1e9), SIMD2(-1e9, 1e9)]
         for name in Variations.knownNames {
             for p in points {
-                var rng = PCG32(seed: 0, stream: 0)
+                var rng = ISAAC(isaacSeed: "finiteness")
                 let r = Variations.evaluate([Variation(name: name, weight: 1)], at: p, rng: &rng)
                 XCTAssertTrue(r.x.isFinite, "\(name) at \(p) x not finite")
                 XCTAssertTrue(r.y.isFinite, "\(name) at \(p) y not finite")
@@ -58,14 +58,14 @@ final class VariationsTests: XCTestCase {
     }
     func testUnknownVariationIsZero() {
         Variations.resetWarnings()
-        var rng = PCG32(seed: 1, stream: 1)
+        var rng = ISAAC(isaacSeed: "unknown-var")
         XCTAssertEqual(Variations.evaluate([Variation(name: "not_a_real_variation", weight: 5)], at: SIMD2(1, 1), rng: &rng), .zero)
         XCTAssertTrue(Variations.warnings.contains("not_a_real_variation"))
     }
     func testOverflowingVariationDoesNotZeroSiblings() {
         // cosine overflows at large y (cosh(1e9)=inf); linear must survive.
         // At (1, 1e9): linear term = 0.5*(1, 1e9) = (0.5, 5e8); cosine term = inf → dropped.
-        var rng = PCG32(seed: 1, stream: 1)
+        var rng = ISAAC(isaacSeed: "overflow")
         let r = Variations.evaluate(
             [Variation(name: "linear", weight: 0.5),
              Variation(name: "cosine", weight: 0.5)],
