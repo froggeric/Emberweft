@@ -6,7 +6,7 @@
 
 ## Current Status
 
-**Current milestone:** M2 — Metal compute renderer · **M0 and M1 complete** (see [CHANGELOG.md](../../CHANGELOG.md))
+**Current milestone:** M3 — Animation and Realtime Pipeline · **M0, M1, and M2 complete** (see [CHANGELOG.md](../../CHANGELOG.md))
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
 
@@ -54,7 +54,7 @@
 - Same seed → identical frame (determinism)
 - Single-frame CPU performance baseline recorded
 
-### M2 — Metal Renderer + Parity
+### M2 — Metal Renderer + Parity ✅
 
 **Goal:** Port the renderer to Metal compute and prove it matches the CPU reference. (Slice S5.)
 

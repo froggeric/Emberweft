@@ -21,7 +21,7 @@ This document is the agreed development strategy. It governs *how* the project i
 - **Small conventional commits** (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `perf:`, `chore:`).
 - **Branch-per-feature / branch-per-slice**, PRs required, `main` always green.
 - **Code review** required on every PR before merge.
-- **CI gates** every PR: build, unit tests, golden-image tests, parity tests, performance-bench check, and `swift-format` lint.
+- **Local pre-merge gate** on every PR: build (debug + release), unit tests, golden-image tests, parity tests, performance-bench check, and `swift-format` lint. GitHub is a plain git mirror; the local gate run is the source of truth.
 - **Determinism is mandatory.** Same genome + seed + params → identical frame, offline and realtime. This is a hard requirement, not a nice-to-have.
 
 ## Build order — vertical slices
@@ -50,7 +50,7 @@ S0–S6 are the **core**: a correct, oracle-validated, Metal-accelerated rendere
 
 Emberweft renders with **Metal compute shaders** (`MTLComputeCommandEncoder` + `.metal` kernels). The pipeline is three compute passes:
 
-1. **Chaos-game / histogram accumulation.** GPU threads iterate the iterated-function-system, atomically accumulating (count + accumulated color) into a histogram buffer. Per-thread RNG is a fixed-seed PCG / wang-hash so output is deterministic.
+1. **Chaos-game / histogram accumulation.** GPU threads iterate the iterated-function-system, atomically accumulating (count + accumulated color) into a histogram buffer. Per-thread RNG is a faithful MSL port of flam3 ISAAC, seeded per-thread via flam3's parent→child mechanism; the CPU and Metal backends agree within PSNR ≥ 38 dB (statistical, not byte-exact).
 2. **Density-estimation filter.** A compute kernel applies an adaptive kernel whose radius grows where samples are sparse and shrinks where they are dense — removing noise without blurring detail.
 3. **Palette + log-density + gamma.** Maps the filtered histogram through the palette LUT, applies log-density alpha and tone-mapping/gamma, writes the output texture (half-float, HDR-capable).
 
@@ -104,7 +104,7 @@ Full detail in [testing.md](testing.md). In brief:
 
 ## Quality infrastructure
 
-- **CI:** GitHub Actions macOS runner — build + unit + golden + parity + bench + `swift-format` lint on every PR. `main` stays green. Golden regressions block merge with an explicit, documented re-golden path.
+- **Local pre-merge gate:** run on a developer machine (GitHub is a plain git mirror; no CI workflow runs). Build (debug + release) + unit + golden + parity + finiteness + determinism + bench + `swift-format` lint. `main` stays green. Golden regressions block merge with an explicit, documented re-golden path. See [testing.md](testing.md) for the exact commands.
 - **Formatting/linting:** Apple `swift-format` (format + lint). Pre-commit hook.
 - **Profiling:** Xcode GPU capture, Instruments (Time Profiler, Metal System Trace, Energy Log).
 - **Versioning:** semantic versioning + tags (once S5 ships a usable renderer).

@@ -28,6 +28,11 @@ public enum Variations {
     public static func resetWarnings() { lock.withLock { _warnings.removeAll() } }
     static func warnUnknown(_ name: String) { _ = lock.withLock { _warnings.insert(name) } }
 
+    // Fixed canonical slot order for the Metal kernel's variation table. Only
+    // `julia` consumes the RNG; with a single RNG-consuming variation,
+    // canonical-order iteration is RNG-equivalent to CPU genome-order. See the
+    // full assumptions block on `Variations.canonicalOrder` below.
+
     /// Sum of variations over the given list, matching flam3 `apply_xform`
     /// (variations.c:2129-2381). Each variation applies its `weight` internally
     /// in flam3's EXACT arithmetic order (e.g. spherical computes
@@ -194,4 +199,30 @@ public enum Variations {
         t["cylinder"]    = { p, w in SIMD2(w * sin(p.x), w * p.y) }
         return t
     }()
+}
+
+public extension Variations {
+    /// Fixed canonical slot order for the Metal kernel's variation table.
+    /// Only `julia` consumes the RNG; with a single RNG-consuming variation,
+    /// canonical-order iteration is RNG-equivalent to CPU genome-order.
+    ///
+    /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
+    /// revisit if a future genome violates them):
+    /// (1) Each xform has AT MOST ONE variation of each name. The Metal host
+    ///     folds repeated names into one canonical slot by summing weights
+    ///     (`base[slot] += weight`), which is algebraically identical for
+    ///     non-RNG variations but changes RNG consumption for `julia`: two
+    ///     julia entries on the CPU consume TWO ISAAC words and produce two
+    ///     terms, whereas Metal would consume ONE word and produce one summed
+    ///     term. No frozen/fuzz genome has repeated names, so this is safe.
+    /// (2) Each xform has ≤2 active variations. With ≤2 nonzero terms the
+    ///     float sum is bit-identical regardless of summation order (float
+    ///     addition is commutative; zero terms contribute exactly). Genomes
+    ///     with ≥3 active variations would diverge from CPU by FP-associativity
+    ///     ULPs — still inside the statistical-parity envelope, not a bug.
+    public static let canonicalOrder: [String] = [
+        "bent", "cosine", "cylinder", "diamond", "disc", "ex", "exponential",
+        "fisheye", "handkerchief", "heart", "horseshoe", "hyperbolic", "julia",
+        "linear", "polar", "sinusoidal", "spherical", "spiral", "swirl"
+    ]
 }

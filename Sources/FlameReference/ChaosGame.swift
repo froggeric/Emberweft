@@ -26,10 +26,10 @@ public enum ChaosGame {
 
     // MARK: - flam3 constants (flam3.c:70, rect.c:36-37, flam3-render.c:134)
 
-    /// `CHOOSE_XFORM_GRAIN` (flam3.c:70) — width of the precomputed weighted
-    /// xform-selection table. An ISAAC draw masked to 14 bits indexes it.
-    private static let chooseXformGrain = 16384
-    private static let chooseXformGrainM1 = UInt32(16383)
+    /// `CHOOSE_XFORM_GRAIN` (flam3.c:70) — the canonical grain now lives in
+    /// `Flam3XformDistrib.grain` (FlameKit); the draw mask is derived from it
+    /// so the chaos game and the distrib table stay in lockstep.
+    private static let chooseXformGrainM1 = UInt32(Flam3XformDistrib.grain - 1)
 
     /// `FUSE_27` (rect.c:36) — burn-in iterations discarded before
     /// accumulation when `earlyclip` is off (the frozen goldens' default).
@@ -60,7 +60,7 @@ public enum ChaosGame {
         // final xform is present (that would drop the last real xform).
         let weights = flame.xforms.map { max(0, $0.weight) }
         guard weights.reduce(0, +) > 0 else { return hist }
-        let distrib = buildXformDistrib(weights)
+        let distrib = Flam3XformDistrib.build(weights)
         let stdXforms = flame.xforms
         let finalXf = flame.finalXform
 
@@ -94,8 +94,8 @@ public enum ChaosGame {
         // nthreads=1 for the goldens (single-threaded render), so exactly one
         // child is created and consumed for the whole frame.
         var parent = ISAAC(isaacSeed: goldenIsaacSeed)
-        var childSeed = [UInt64](repeating: 0, count: ISAAC_RANDSIZ_WORDS)
-        for i in 0..<ISAAC_RANDSIZ_WORDS { childSeed[i] = UInt64(parent.next()) }
+        var childSeed = [UInt64](repeating: 0, count: ISAAC.randsizWords)
+        for i in 0..<ISAAC.randsizWords { childSeed[i] = UInt64(parent.next()) }
         var rng = ISAAC(randrsl: childSeed)
 
         // `stdXforms` (all of flame.xforms) and `finalXf` are set above.
@@ -277,50 +277,9 @@ public enum ChaosGame {
     }
 
     // MARK: - xform_distrib table (flam3.c:165 `flam3_create_chaos_distrib`)
-
-    /// Build the `CHOOSE_XFORM_GRAIN`-entry weighted selection table. A masked
-    /// 14-bit ISAAC draw indexes it directly (flam3.c:255), producing a
-    /// uniform draw over xforms weighted by `density` (xform weight). This is
-    /// mathematically equivalent to a CDF binary search but matches flam3's
-    /// exact word→index mapping, which is load-bearing for stream parity.
-    static func buildXformDistrib(_ weights: [Double]) -> [Int] {
-        let n = weights.count
-        precondition(n > 0)
-        let total = weights.reduce(0, +)
-        precondition(total > 0)
-        let dr = total / Double(chooseXformGrain)
-        var table = [Int](repeating: 0, count: chooseXformGrain)
-        var j = 0
-        var t = weights[0]
-        var r: Double = 0
-        for i in 0..<chooseXformGrain {
-            while r >= t {
-                j += 1
-                if j < n { t += weights[j] } else { break }
-            }
-            table[i] = min(j, n - 1)
-            r += dr
-        }
-        return table
-    }
+    //
+    // `buildXformDistrib`/`Flam3XformDistrib.build`, `buildDmap`, and
+    // `ISAAC_RANDSIZ_WORDS`/`ISAAC.randsizWords` now live in `FlameKit`
+    // (RenderTypes.swift / ISAAC.swift), lifted so `FlameRenderer` can depend on
+    // `FlameKit` only. The chaos game calls the `FlameKit` versions directly.
 }
-
-/// Build the pre-scaled colormap (dmap) matching flam3 rect.c:778-782.
-/// Each entry = `palette[j].color[k] * WHITE_LEVEL * color_scalar` (RGB).
-/// `CMAP_SIZE = 256` and `(j*256)/CMAP_SIZE == j`, so dmap[j] ↔ palette[j].
-@inline(__always)
-func buildDmap(_ palette: Palette, whiteLevel: Double, colorScalar: Double) -> [SIMD3<Double>] {
-    var dmap = [SIMD3<Double>](repeating: .zero, count: 256)
-    let scale = whiteLevel * colorScalar
-    for j in 0..<256 {
-        let c = palette.colors[j]
-        dmap[j] = SIMD3<Double>(c.x * scale, c.y * scale, c.z * scale)
-    }
-    return dmap
-}
-
-/// `RANDSIZ` (isaac.h: `1<<RANDSIZL` = 1<<4 = 16) — the ISAAC results/seed
-/// table width. Re-exposed here as a small named constant for the parent→child
-/// seeding draw.
-@usableFromInline
-internal let ISAAC_RANDSIZ_WORDS: Int = 1 << 4

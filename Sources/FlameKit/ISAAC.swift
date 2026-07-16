@@ -355,3 +355,11 @@ public struct ISAAC: Sendable {
         h ^= (a >> 9);  c = c &+ h; a = a &+ b
     }
 }
+
+public extension ISAAC {
+    /// `RANDSIZ` (isaac.h: `1<<RANDSIZL` = 1<<4 = 16) — number of words per
+    /// ISAAC results/seed table. Re-exposed as a small named constant for the
+    /// parent→child seeding draw (rect.c:862-865), shared by the CPU chaos game
+    /// and the Metal host.
+    static let randsizWords: Int = 1 << ISAAC_RANDSIZL
+}

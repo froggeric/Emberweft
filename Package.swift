@@ -29,11 +29,14 @@ let package = Package(
             dependencies: ["FlameKit"],
             path: "Sources/FlameReference"
         ),
-        // Metal compute renderer (chaos game -> histogram -> density filter -> palette).
+        // Metal compute renderer (chaos game -> histogram -> density filter ->
+        // display pipeline). Production path depends on FlameKit only.
         .target(
             name: "FlameRenderer",
             dependencies: ["FlameKit"],
-            path: "Sources/FlameRenderer"
+            path: "Sources/FlameRenderer",
+            exclude: ["Metal"],
+            resources: [.copy("Metal")]
         ),
         // Realtime adaptive playback engine.
         .target(
@@ -70,8 +73,13 @@ let package = Package(
             path: "Tests/FlameReferenceTests"
         ),
         .testTarget(
+            name: "FlameRendererTests",
+            dependencies: ["FlameRenderer", "FlameReference", "FlameKit"],
+            path: "Tests/FlameRendererTests"
+        ),
+        .testTarget(
             name: "EmberweftCLITests",
-            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference"],
+            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference", "FlameRenderer"],
             path: "Tests/EmberweftCLITests"
         )
     ]
