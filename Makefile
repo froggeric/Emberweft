@@ -3,7 +3,7 @@
 
 SWIFT   := swift
 
-.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep help
+.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep help
 
 build:        ## Build (debug)
 	$(SWIFT) build
@@ -40,6 +40,9 @@ regen-goldens:                      ## (dev) regenerate flam3 golden reference P
 
 fetch-sheep:                        ## Fetch Electric Sheep .flam3 genomes into genomes/
 	bash Tools/fetch-sheep-genomes.sh
+
+sync-sheep:                         ## Sync NEW genomes from the live flock (gen 248)
+	bash Tools/sync-live-flock.sh
 
 clean:        ## Remove build artifacts
 	$(SWIFT) package clean
