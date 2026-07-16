@@ -129,9 +129,11 @@ Commit: `feat(renderer): MetalRenderer skeleton with SwiftPM-bundled MSL library
   #include <metal_stdlib>
   using namespace metal;
 
-  constant uint ISAAC_RANDSIZL_MS  = 4;
-  constant uint ISAAC_RANDSIZ_MS   = 1u << ISAAC_RANDSIZL_MS;   // 16
-  constant uint ISAAC_RANDSIZ_M1   = ISAAC_RANDSIZ_MS - 1u;
+  // File-scope `constant uint` globals are NOT guaranteed usable as array-size
+  // constant expressions across MSL revisions; `#define` is universally accepted.
+  #define ISAAC_RANDSIZL_MS  4
+  #define ISAAC_RANDSIZ_MS   (1u << ISAAC_RANDSIZL_MS)   // 16
+  #define ISAAC_RANDSIZ_M1   (ISAAC_RANDSIZ_MS - 1u)
 
   // Faithful port of flam3's ISAAC (isaac.c). State is held in `ulong` to match
   // `unsigned long int` (8 bytes) on macOS LP64; the mix() macro runs WITHOUT
@@ -498,6 +500,21 @@ Per-hit uint contribution for a dmap-channel value `v ∈ [0,255]` is `UInt32((v
       /// Fixed canonical slot order for the Metal kernel's variation table.
       /// Only `julia` consumes the RNG; with a single RNG-consuming variation,
       /// canonical-order iteration is RNG-equivalent to CPU genome-order.
+      ///
+      /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
+      /// revisit if a future genome violates them):
+      /// (1) Each xform has AT MOST ONE variation of each name. The Metal host
+      ///     folds repeated names into one canonical slot by summing weights
+      ///     (`base[slot] += weight`), which is algebraically identical for
+      ///     non-RNG variations but changes RNG consumption for `julia`: two
+      ///     julia entries on the CPU consume TWO ISAAC words and produce two
+      ///     terms, whereas Metal would consume ONE word and produce one summed
+      ///     term. No frozen/fuzz genome has repeated names, so this is safe.
+      /// (2) Each xform has ≤2 active variations. With ≤2 nonzero terms the
+      ///     float sum is bit-identical regardless of summation order (float
+      ///     addition is commutative; zero terms contribute exactly). Genomes
+      ///     with ≥3 active variations would diverge from CPU by FP-associativity
+      ///     ULPs — still inside the statistical-parity envelope, not a bug.
       public static let canonicalOrder: [String] = [
           "bent", "cosine", "cylinder", "diamond", "disc", "ex", "exponential",
           "fisheye", "handkerchief", "heart", "horseshoe", "hyperbolic", "julia",
@@ -515,6 +532,18 @@ Per-hit uint contribution for a dmap-channel value `v ∈ [0,255]` is `UInt32((v
   // Field order and types MUST match exactly; both align `float` to 4 bytes.)
 
   /// One IFS transform, device layout. 19-slot variation table.
+  ///
+  /// LAYOUT CONTRACT: this struct crosses the Swift→MSL boundary as raw bytes,
+  /// so its in-memory layout MUST match `struct GPUXform` in Kernels.metal
+  /// field-for-field. Both sides are all-`float` (4-byte align), 6+6+3+19 = 34
+  /// floats = 136 bytes, stride 136. Swift does not formally guarantee struct
+  /// field order or homogeneous-tuple contiguity in the language spec, but the
+  /// ABI lays out trivial structs of `Float` fields sequentially with no
+  /// padding. `buildGPUXforms` asserts the stride at runtime so any future ABI
+  /// drift fails loudly instead of silently corrupting the device buffer. If
+  /// the assertion ever fires on a new toolchain, switch `varWeights` to a
+  /// `withUnsafeMutablePointer`-filled `[Float]` of count 19 copied into the
+  /// device buffer (or 4×`SIMD4<Float>`), which is fully layout-defined.
   public struct GPUXform {
       public var a: Float = 0, b: Float = 0, c: Float = 0, d: Float = 0, e: Float = 0, f: Float = 0
       public var pa: Float = 0, pb: Float = 0, pc: Float = 0, pd: Float = 0, pe: Float = 0, pf: Float = 0
@@ -567,6 +596,9 @@ Per-hit uint contribution for a dmap-channel value `v ∈ [0,255]` is `UInt32((v
       /// variation table (summing weights of repeated names, which is algebraically
       /// identical to CPU's array-order sum because variation terms commute).
       static func buildGPUXforms(_ flame: Flame) -> [GPUXform] {
+          // Layout-contract guard: see GPUXform doc comment. 34 Floats == 136 B.
+          precondition(MemoryLayout<GPUXform>.stride == 136,
+                       "GPUXform stride drifted from MSL mirror (136 bytes); Metal buffer would be misread")
           let slots = Variations.canonicalOrder
           var idxMap = [String: Int]()
           for (i, n) in slots.enumerated() { idxMap[n] = i }
@@ -796,31 +828,39 @@ Commit: `feat(renderer): Metal host plumbing — buffers, seeding, fixed-point e
   }
 
   // Sum the 19 canonical slots. Only `julia` consumes the RNG.
+  // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
+  // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
+  // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
+  // |p.y|>710, exp in `exponential` for |p.x|>710) yields `0.0f * Inf == NaN`,
+  // which contaminates `acc`, trips `badvalue_ms`, and diverges both the
+  // trajectory and the RNG stream from the CPU. Chaotic maps (julia/spherical)
+  // reach |p|∈(710,1e10) routinely, so this is load-bearing.
   static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
       float2 pre = apply_affine(x, p);
       float2 acc = float2(0.0f);
       float w[19];
       for (int i = 0; i < 19; i++) w[i] = x.varWeights[i];
       // Canonical slot order MUST match Variations.canonicalOrder exactly.
-      acc += v_bent(pre, w[0]);
-      acc += v_cosine(pre, w[1]);
-      acc += v_cylinder(pre, w[2]);
-      acc += v_diamond(pre, w[3]);
-      acc += v_disc(pre, w[4]);
-      acc += v_ex(pre, w[5]);
-      acc += v_exponential(pre, w[6]);
-      acc += v_fisheye(pre, w[7]);
-      acc += v_handkerchief(pre, w[8]);
-      acc += v_heart(pre, w[9]);
-      acc += v_horseshoe(pre, w[10]);
-      acc += v_hyperbolic(pre, w[11]);
-      acc += v_julia(pre, w[12], rng);
-      acc += v_linear(pre, w[13]);
-      acc += v_polar(pre, w[14]);
-      acc += v_sinusoidal(pre, w[15]);
-      acc += v_spherical(pre, w[16]);
-      acc += v_spiral(pre, w[17]);
-      acc += v_swirl(pre, w[18]);
+      if (w[0]  != 0.0f) acc += v_bent(pre, w[0]);
+      if (w[1]  != 0.0f) acc += v_cosine(pre, w[1]);
+      if (w[2]  != 0.0f) acc += v_cylinder(pre, w[2]);
+      if (w[3]  != 0.0f) acc += v_diamond(pre, w[3]);
+      if (w[4]  != 0.0f) acc += v_disc(pre, w[4]);
+      if (w[5]  != 0.0f) acc += v_ex(pre, w[5]);
+      if (w[6]  != 0.0f) acc += v_exponential(pre, w[6]);
+      if (w[7]  != 0.0f) acc += v_fisheye(pre, w[7]);
+      if (w[8]  != 0.0f) acc += v_handkerchief(pre, w[8]);
+      if (w[9]  != 0.0f) acc += v_heart(pre, w[9]);
+      if (w[10] != 0.0f) acc += v_horseshoe(pre, w[10]);
+      if (w[11] != 0.0f) acc += v_hyperbolic(pre, w[11]);
+      // julia is the only RNG consumer; guard still required for NaN safety.
+      if (w[12] != 0.0f) acc += v_julia(pre, w[12], rng);
+      if (w[13] != 0.0f) acc += v_linear(pre, w[13]);
+      if (w[14] != 0.0f) acc += v_polar(pre, w[14]);
+      if (w[15] != 0.0f) acc += v_sinusoidal(pre, w[15]);
+      if (w[16] != 0.0f) acc += v_spherical(pre, w[16]);
+      if (w[17] != 0.0f) acc += v_spiral(pre, w[17]);
+      if (w[18] != 0.0f) acc += v_swirl(pre, w[18]);
       return apply_post(x, acc);
   }
 
@@ -876,7 +916,18 @@ Commit: `feat(renderer): Metal host plumbing — buffers, seeding, fixed-point e
       bool hasFinal = (fp->hasFinal != 0u);
       GPUXform fin = hasFinal ? finalXf[0] : GPUXform{};
 
-      for (uint j = 0; j < total; j++) {
+      // CRITICAL: this MUST be a `while` loop with an explicit `j += 1` at the
+      // bottom, NOT a C `for`. The CPU oracle (ChaosGame.swift) uses `while j <
+      // total { ...; j += 1 }` where `continue` (badvalue retry) SKIPS `j += 1`,
+      // re-running the same slot with a fresh point without consuming an
+      // iteration. In a C `for` loop, `continue` runs the increment expression,
+      // which would (a) burn a post-fuse slot on every retry so Metal emits
+      // FEWER than `totalSamples` samples (breaking the `sampleSum ==
+      // totalSamples` assertion), and (b) structurally diverge the trajectory
+      // from CPU. The `while` form makes `continue` jump to the condition,
+      // leaving `j` unchanged — matching the oracle exactly.
+      uint j = 0;
+      while (j < total) {
           // distrib values are precomputed on the host as valid xform indices in [0, n).
           uint xfIdx = distrib[isaac_next(rng) & CHAOS_GRAIN_M1];
           GPUXform xf = xforms[xfIdx];
@@ -886,7 +937,7 @@ Commit: `feat(renderer): Metal host plumbing — buffers, seeding, fixed-point e
           if (badvalue_ms(q.x) || badvalue_ms(q.y)) {
               float rx = isaac_11(rng), ry = isaac_11(rng);
               consec += 1u;
-              if (consec < 5u) { p = float2(rx, ry); continue; }
+              if (consec < 5u) { p = float2(rx, ry); continue; }   // retry slot; j NOT advanced
               q = float2(rx, ry); consec = 0u;
           } else { consec = 0u; }
 
@@ -914,6 +965,7 @@ Commit: `feat(renderer): Metal host plumbing — buffers, seeding, fixed-point e
                   }
               }
           }
+          j += 1;
       }
   }
   ```
@@ -1042,7 +1094,7 @@ swift build
 (Task 6 supplies the runtime parity test.)
 
 **Steps:**
-- [ ] Append the chaos-kernel MSL (variations, helpers, `chaosGame`) to `Kernels.metal`. Delete the two dead "placeholder" lines, keeping only `uint xfIdx = distrib[draw];`.
+- [ ] Append the chaos-kernel MSL (variation functions, affine/blend helpers, `chaosGame`) to `Kernels.metal`. Keep the per-slot `if (w[i] != 0.0f)` guards and the `while` (not `for`) iteration loop exactly as written — both are load-bearing (see inline comments).
 - [ ] Create `Sources/FlameRenderer/ChaosGameMetal.swift`.
 - [ ] Build; commit.
 
@@ -1518,13 +1570,18 @@ Commit: `feat(renderer): Metal Stage-2 density-estimation kernel (twin of CPU ap
                               uint2 tid [[thread_position_in_grid]]) {
       if (tid.x >= dp->width || tid.y >= dp->height) return;
       uint ox = tid.x, oy = tid.y;
-      uint gx0 = ox * dp->oversample + dp->gutter;
-      uint gy0 = oy * dp->oversample + dp->gutter;
+      // CRITICAL: the gather origin is `ox*oversample` with NO gutter added —
+      // this matches CPU ToneMapping which hardcodes `deOffset = 0` (rect.c's
+      // de_offset is 0 when estimator_radius==0) and gathers `x = gx0 + ii`.
+      // The gutter ring lives at the grid border; border taps simply reach into
+      // it. Adding `+ gutter` here (as an earlier draft did) shifts every tap by
+      // `gutter` cells relative to CPU for oversample>1 (e.g. oversample=2 →
+      // fw=4, gutter=1 → a 1-cell shift), which breaks the Stage-3a ≥ 50 dB
+      // same-histogram gate. `dp->gutter` is kept in the struct only because the
+      // host computes it; this kernel MUST NOT add it to the origin.
       float3 tRGB = 0.0f; float tA = 0.0f;
       for (uint jj = 0; jj < dp->fw; jj++) {
           for (uint ii = 0; ii < dp->fw; ii++) {
-              // CPU: gx0 = ox*oversample + deOffset (deOffset=0 for goldens); taps
-              // x = gx0 + ii, y = gy0 + jj (rect.c:1138-1150).
               int xx = int(ox * dp->oversample) + int(ii);
               int yy = int(oy * dp->oversample) + int(jj);
               if (xx < 0 || xx >= int(dp->gw) || yy < 0 || yy >= int(dp->gh)) continue;
@@ -1554,7 +1611,7 @@ Commit: `feat(renderer): Metal Stage-2 density-estimation kernel (twin of CPU ap
       }
   }
   ```
-  (The `displayPipeline` body contains a harmless leftover local `x`/`y` pair from an aborted formulation; the implementing worker keeps only the `xx`/`yy` form and removes the dead `int x = …` / `int y = …` lines. Replace the inner-loop preamble with just the `xx`/`yy` computation shown.)
+  (The `displayPipeline` inner loop uses ONLY the `xx`/`yy` form computed from `ox*oversample`; there are no other local gather-origin variables. Do not reintroduce a `gx0`/`gy0` with `+ gutter` — see the inline comment above.)
 - Create `Sources/FlameRenderer/DisplayPipelineMetal.swift` — host that builds `DisplayParams` + spatial kernel (reusing `flam3SpatialFilterWidth` from FlameKit), dispatches both kernels, reads back an `RGBA8Image`:
   ```swift
   import Foundation
@@ -1623,28 +1680,40 @@ Commit: `feat(renderer): Metal Stage-2 density-estimation kernel (twin of CPU ap
           let rgbaBuf = device.makeBuffer(length: width*height*4, options: .storageModeShared)!
           memset(rgbaBuf.contents(), 0, width*height*4)
 
+          // Two passes in SEPARATE compute encoders within one command buffer.
+          // Metal guarantees encoders execute in enqueue order and that writes
+          // from one encoder are fully visible to the next — this is the
+          // portable, API-stable way to order the log-density write before the
+          // display-pipeline read (avoiding the version-specific
+          // `memoryBarrier(withScope:)` varargs spelling, which is not stable
+          // across Metal revisions).
           let cb = queue.makeCommandBuffer()!
-          let enc = cb.makeComputeCommandEncoder()!
-          // Pass 1: logDensity.
-          let pso1 = try library.makeFunction("logDensity")!.makeComputePipelineState()
-          enc.setComputePipelineState(pso1)
-          enc.setBuffer(rawBuf, offset: 0, index: 0)
-          enc.setBuffer(accumRGB, offset: 0, index: 1)
-          enc.setBuffer(accumA, offset: 0, index: 2)
-          enc.setBuffer(dpExact, offset: 0, index: 3)
           let tpg = MTLSize(width: 16, height: 16, depth: 1)
-          enc.dispatchThreadgroups(MTLSize(width: (gw+15)/16, height: (gh+15)/16, depth: 1), threadsPerThreadgroup: tpg)
-          // Pass 2: displayPipeline (resource hazard between passes → encode barrier).
-          enc.memoryBarrier(withScope: .device, .device)
+
+          // Pass 1: logDensity.
+          let enc1 = cb.makeComputeCommandEncoder()!
+          let pso1 = try library.makeFunction("logDensity")!.makeComputePipelineState()
+          enc1.setComputePipelineState(pso1)
+          enc1.setBuffer(rawBuf, offset: 0, index: 0)
+          enc1.setBuffer(accumRGB, offset: 0, index: 1)
+          enc1.setBuffer(accumA, offset: 0, index: 2)
+          enc1.setBuffer(dpExact, offset: 0, index: 3)
+          enc1.dispatchThreadgroups(MTLSize(width: (gw+15)/16, height: (gh+15)/16, depth: 1), threadsPerThreadgroup: tpg)
+          enc1.endEncoding()
+
+          // Pass 2: displayPipeline.
+          let enc2 = cb.makeComputeCommandEncoder()!
           let pso2 = try library.makeFunction("displayPipeline")!.makeComputePipelineState()
-          enc.setComputePipelineState(pso2)
-          enc.setBuffer(accumRGB, offset: 0, index: 0)
-          enc.setBuffer(accumA, offset: 0, index: 1)
-          enc.setBuffer(kernBuf, offset: 0, index: 2)
-          enc.setBuffer(dpExact, offset: 0, index: 3)
-          enc.setBuffer(rgbaBuf, offset: 0, index: 4)
-          enc.dispatchThreadgroups(MTLSize(width: (width+15)/16, height: (height+15)/16, depth: 1), threadsPerThreadgroup: tpg)
-          enc.endEncoding(); cb.commit(); cb.waitUntilCompleted()
+          enc2.setComputePipelineState(pso2)
+          enc2.setBuffer(accumRGB, offset: 0, index: 0)
+          enc2.setBuffer(accumA, offset: 0, index: 1)
+          enc2.setBuffer(kernBuf, offset: 0, index: 2)
+          enc2.setBuffer(dpExact, offset: 0, index: 3)
+          enc2.setBuffer(rgbaBuf, offset: 0, index: 4)
+          enc2.dispatchThreadgroups(MTLSize(width: (width+15)/16, height: (height+15)/16, depth: 1), threadsPerThreadgroup: tpg)
+          enc2.endEncoding()
+
+          cb.commit(); cb.waitUntilCompleted()
 
           let ptr = rgbaBuf.contents().assumingMemoryBound(to: UInt8.self)
           return RGBA8Image(width: width, height: height, pixels: Array(UnsafeBufferPointer(start: ptr, count: width*height*4)))
