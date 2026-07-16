@@ -4,6 +4,25 @@
 
 > **Status:** preliminary — for review · Emberweft
 
+## Measured results (M2)
+
+Recorded on the dev machine (Apple Silicon) via `EMBERWEFT_PERF=1 swift test --filter PerformanceBaselineTests`. Single-frame render at 100 samples/pixel, oversample 1. CPU is single-threaded (`ReferenceRenderer`); Metal is `MetalRenderer`.
+
+**Metal vs CPU — single-frame speedup:**
+
+| Genome | 720p CPU / Metal | 1080p CPU / Metal | 1080p speedup |
+|--------|------------------|-------------------|---------------|
+| final_warp | 75.6s / 4.3s | 169.5s / 9.5s | **17.8×** |
+| rich | 70.6s / 4.3s | 157.8s / 9.6s | 16.5× |
+| julia_bubbles | 69.0s / 4.3s | 156.1s / 9.7s | 16.2× |
+| heart_disc | 66.7s / 4.3s | 150.4s / 9.5s | 15.8× |
+| swirl_field | 63.5s / 4.2s | 142.3s / 9.6s | 14.9× |
+| sierpinski | 49.1s / 4.2s | 110.5s / 9.5s | 11.6× |
+
+Metal clears the 1.0× sanity floor on every genome with large headroom. The targets below (60 fps @ 1080p) are for M3 once the three stages are fused into one command buffer and the histogram stays on-GPU — the headline M3 optimization (today the histogram round-trips through CPU between stages).
+
+**Correctness-at-speed is proven:** at these frame times Metal still matches the CPU reference at 39–60 dB PSNR / SSIM ≥ 0.95 (see [testing.md](testing.md)). Faster rendering did not cost parity.
+
 ## Realtime Performance Targets
 
 The renderer targets smooth playback at common resolutions and frame rates on Apple Silicon hardware. Performance is GPU-bound, with the chaos-game iteration kernel consuming the majority of frame time.
@@ -65,11 +84,11 @@ GPU memory is dominated by the histogram buffer and accumulation buffer. Careful
 **Buffer sizing (preliminary):**
 
 **Histogram buffer:**
-- Format: 32-bit float RGBA (16 bytes per bin)
-- 64×64 grid: 64 × 64 × 16 = 64 KB
-- 128×128 grid: 128 × 128 × 16 = 256 KB
-- 256×256 grid: 256 × 256 × 16 = 1 MB
-- 512×512 grid: 512 × 512 × 16 = 4 MB
+- Format: 5×`uint32` fixed-point per bin (`count, R, G, B, A`; 20 bytes/bin)
+- 64×64 grid: 64 × 64 × 20 = 80 KB
+- 128×128 grid: 128 × 128 × 20 = 320 KB
+- 256×256 grid: 256 × 256 × 20 = 1.3 MB
+- 512×512 grid: 512 × 512 × 20 = 5 MB
 
 **Accumulation buffer:**
 - Format: 32-bit float RGBA (16 bytes per pixel)
@@ -180,22 +199,16 @@ Performance is validated through a combination of real-time monitoring and offli
 4. **Battery mode**: Reduced quality on battery power
 5. **Thermal stress**: Sustained playback to trigger thermal throttling
 
-## Determinism Requirements
+## Determinism
 
-For export and offline rendering, determinism is critical: the same genome seed must produce identical frames every time, regardless of machine or timing.
+Determinism is mandatory (CLAUDE.md rule #2): the same genome + seed + params yields an identical frame **within a backend**, run after run and machine to machine. CPU and Metal are independent deterministic backends that agree within the parity threshold (PSNR ≥ 38 dB); they are not byte-identical to each other.
 
-**Determinism strategies:**
-- **Fixed random seed**: Chaos-game uses a seeded RNG for reproducibility
-- **Integer coordinates**: Histogram bins use integer indices to avoid floating-point drift
-- **No frame-skipping**: Export mode never skips frames, even if slow
-- **Consistent precision**: Use 32-bit float consistently (no 16-bit half-float in iteration)
+**How it holds on Metal:**
+- **Faithful ISAAC**, ported to MSL byte-exact and seeded per-thread via flam3's parent→child mechanism.
+- **`uint32` fixed-point atomic histogram** — integer addition is associative, so the accumulated sum is independent of thread scheduling (float atomics would be order-dependent and are not used).
+- **Pinned thread geometry** derived from params, not from device caps.
 
-**Verification:**
-- **Snapshot tests**: Compare rendered frames against golden images
-- **Hash verification**: Hash output frames and compare to known values
-- **Cross-platform verification**: Ensure same output on different Apple Silicon models
-
-Determinism is only required for export. Realtime playback may skip frames or vary slightly based on performance.
+**Verification:** byte-identical-output tests across repeated runs (both backends); MSL ISAAC byte-equality vs the Swift ISAAC; golden-image parity vs `flam3` and vs the CPU reference. See [testing.md](testing.md).
 
 ## Performance Regression Prevention
 

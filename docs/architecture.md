@@ -53,28 +53,28 @@ FlameKit has no Metal dependencies and can be used in headless tools or tests.
 
 FlameReference is a **permanent, shippable module** with three roles:
 
-1. **Parity oracle** — the source of truth that `FlameRenderer` (Metal) is validated against in CI (see [testing.md](engineering/testing.md)).
+1. **Parity oracle** — the source of truth that `FlameRenderer` (Metal) is validated against under the local pre-merge gate (see [testing.md](engineering/testing.md)).
 2. **Deterministic offline renderer** — verifies export reproducibility and renders in environments without a usable GPU.
 3. **Algorithm laboratory** — the easiest place to unit-test variations, filters, and interpolation with per-function tests.
 
-It implements the same pipeline as FlameRenderer (chaos game → histogram → log-density → density-estimation filter → palette/gamma) in pure Swift using Accelerate/vDSP. Maintaining two renderers is deliberate: algorithm bugs and GPU bugs localize instantly (CPU-passes-`flam3`-but-Metal-doesn't ⇒ GPU bug; CPU-fails-`flam3` ⇒ algorithm bug).
+It is a faithful Swift port of `flam3`'s algorithms (affine convention, variation formulas, ISAAC RNG, density estimation, display pipeline) in pure Swift, Double precision. Maintaining two renderers is deliberate: algorithm bugs and GPU bugs localize instantly (CPU-passes-`flam3`-but-Metal-doesn't ⇒ GPU bug; CPU-fails-`flam3` ⇒ algorithm bug).
 
 ### FlameRenderer (Metal Compute Pipeline)
 
 **Purpose:** GPU-accelerated fractal flame rendering
 
-FlameRenderer implements the three-stage Metal compute pipeline:
+FlameRenderer implements the three-stage Metal compute pipeline (as built in M2):
 
-1. **Chaos Game / Histogram Accumulation** — Iterates the IFS, accumulating point samples into a spatial histogram
-2. **Density Estimation Filter** — Adaptive kernel that removes noise while preserving detail
-3. **Palette + Tone Mapping** — Log-density alpha, palette lookup, gamma correction, HDR tone-map to output texture
+1. **Chaos Game / Histogram Accumulation** — a per-thread faithful ISAAC iterates the IFS, accumulating into a `uint32` fixed-point atomic histogram (count + RGB + alpha per bin)
+2. **Density Estimation Filter** — adaptive kernel, a twin of the CPU approximation (a passthrough when `estimator_radius == 0`)
+3. **Display Pipeline** — log-density, Gaussian spatial filter, palette, gamma, vibrancy → 8-bit RGBA
 
 Key implementation details:
-- Separate compute kernels for each stage, chained via `MTLCommandBuffer`
-- Histogram buffer with per-bin atomic accumulation (count, RGB sums)
-- Variation functions implemented as MSL functions with function-constant specialization
-- Iteration budget controls quality (default **(preliminary)**: 100-500 iterations per pixel)
-- Output texture format: 16-bit half-float for HDR capability
+- One MSL kernel per stage; a faithful ISAAC port (byte-equal to the Swift ISAAC) drives the chaos game
+- Per-thread ISAAC seeded via flam3's parent→child mechanism; thread geometry pinned from params → deterministic
+- `uint32` fixed-point accumulation is associative, so the histogram sum is independent of thread scheduling
+- Production `FlameRenderer` depends on `FlameKit` only; MSL source is bundled as a SwiftPM resource and compiled at runtime via `makeLibrary(source:)`
+- Statistical twin of `FlameReference` (PSNR ≥ 38 dB), not byte-identical — see [metal-pipeline.md](../rendering/metal-pipeline.md)
 
 ### FlamePlayer (Playback Engine)
 

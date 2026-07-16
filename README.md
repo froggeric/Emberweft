@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · docs-only · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · CPU + Metal renderers and the `emberweft` CLI are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -16,18 +16,20 @@ Emberweft is an independent re-implementation of Scott Draves' **fractal flame**
 
 It reads the standard `.flam3` genome format while remaining entirely independent of the Electric Sheep / Infinidream codebase and servers.
 
-## Planned highlights
+## Features
 
-> Everything below is **on the roadmap** — Emberweft is pre-alpha and ships no runnable code yet. See [Status & Roadmap](#status--roadmap).
+**Works now (M0–M2):**
+- `emberweft` CLI — `render`, `validate`, `info` — parses standard `.flam3` genomes into still PNGs
+- CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity)
+- Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
+- `--backend cpu|metal` switch; byte-deterministic within each backend
 
-- Per-sheep video generation with local save (MP4/MOV)
-- Endless playback with smooth [sheep transitions](docs/rendering/transitions.md) between genomes
-- Realtime GPU generation or cached playback
-- Long-form export for music videos and installations
+**Planned (M3+):**
+- Realtime playback with smooth [sheep transitions](docs/rendering/transitions.md)
+- Long-form export (MP4/MOV) for music videos and installations
 - Music-video mode: offline + realtime audio-reactive
 - macOS screensaver
-- Multi-resolution: 720p / 1080p / 1440p / 4K
-- Landscape & vertical formats for social media
+- Multi-resolution: 720p / 1080p / 1440p / 4K; landscape & vertical
 - Curated seed library of hand-picked genomes
 
 <!-- Screenshots placeholder: app window, screensaver preview, export dialog -->
@@ -40,10 +42,10 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 
 | Milestone | Status | Description |
 |-----------|--------|-------------|
-| M0 | **Current** | Docs + repo scaffold |
-| M1 | Planned | CPU reference renderer + `emberweft` CLI (validated vs `flam3`) |
-| M2 | Planned | Metal compute renderer + Metal↔CPU parity |
-| M3 | Planned | Animation (transitions) + realtime adaptive pipeline |
+| M0 | ✅ Done | Docs + repo scaffold |
+| M1 | ✅ Done | CPU reference renderer + `emberweft` CLI (validated vs `flam3`) |
+| M2 | ✅ Done | Metal compute renderer + Metal↔CPU parity |
+| M3 | **Current** | Animation (transitions) + realtime adaptive pipeline |
 | M4 | Planned | SwiftUI app + player + library browser |
 | M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
@@ -51,6 +53,35 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
 
 See full details in [docs/engineering/roadmap.md](docs/engineering/roadmap.md).
+
+## Build & run
+
+Requires macOS 26 on Apple Silicon (M1+) and Swift 6.2.
+
+```
+swift build                  # build
+swift run emberweft render Tests/Goldens/genomes/sierpinski.flam3 -o out.png
+swift run emberweft render Tests/Goldens/genomes/sierpinski.flam3 -o out.png --backend metal --size 160x100
+swift run emberweft --list-backends
+```
+
+`--backend cpu` is the default. `metal` is used when a Metal device is available (check with `--list-backends`).
+
+## Validation
+
+Emberweft is built test-first against two oracles: the CPU reference matches `flam3`, and Metal matches the CPU reference.
+
+| Gate | Result |
+|------|--------|
+| CPU reference vs `flam3` goldens | 51–72 dB PSNR, SSIM ≈ 1.0 |
+| Metal vs CPU (end-to-end) | 39–60 dB / SSIM ≥ 0.95 over 6 frozen genomes + fuzz |
+| Metal display vs CPU tone-map (same histogram) | byte-exact (inf dB) |
+| Metal chaos histogram vs CPU | count correlation > 0.999 |
+| MSL ISAAC vs Swift ISAAC | byte-identical stream |
+| Within-backend determinism | byte-identical output across runs |
+| Metal speedup vs single-threaded CPU (1080p) | 12–18× |
+
+The local test suite is the source of truth (80 tests, all green). GitHub is a plain git mirror; see [testing.md](docs/engineering/testing.md).
 
 ## Documentation
 
@@ -85,7 +116,7 @@ See full details in [docs/engineering/roadmap.md](docs/engineering/roadmap.md).
 
 ### Engineering
 - [Development Approach](docs/engineering/development-approach.md) — methodology, build order, GPU strategy, testing
-- [Testing](docs/engineering/testing.md) — test methodology, oracles, and CI gates
+- [Testing](docs/engineering/testing.md) — test methodology, oracles, and the local pre-merge gate
 - [Tech Stack](docs/engineering/tech-stack.md) — Swift 6, Metal 4, AVFoundation, dependencies
 - [Project Layout](docs/engineering/project-layout.md) — source organization and conventions
 - [Performance](docs/engineering/performance.md) — benchmarks, profiling, and optimization targets
@@ -135,4 +166,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**No code yet — this repository currently contains design and specification documents only.** First usable build is expected at milestone **M1** (CPU reference renderer + `emberweft` CLI).
+**M0–M2 are complete:** the CPU reference renderer, the Metal compute renderer, and the `emberweft` CLI all work today. M3 (animation + realtime playback) is next — see the [roadmap](docs/engineering/roadmap.md).
