@@ -122,3 +122,26 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 kernel void noop_kernel(device uint* out [[buffer(0)]], uint gid [[thread_position_in_grid]]) {
     if (gid == 0) { out[0] = 0x4d657461; }  // "Meta"
 }
+
+// ---- Device mirrors of Swift GPUXform / GPUFrameParams (field order identical) ----
+//
+// These cross the Swift→MSL boundary as raw bytes, so field order, types, and
+// sizes MUST match the Swift structs in MetalHost.swift exactly. Both sides are
+// all-`float`/`uint` (4-byte aligned); GPUXform is 6+6+3+19 = 34 floats = 136 B.
+
+struct GPUXform {
+    float a, b, c, d, e, f;
+    float pa, pb, pc, pd, pe, pf;
+    float color, colorSpeed, opacity;
+    float varWeights[19];
+};
+
+struct GPUFrameParams {
+    uint gridWidth, gridHeight, gutter;
+    float oversample, cosR, sinR, pixelsPerUnit, centerX, centerY;
+    uint iterationsPerThread, remainder, threadCount, fuse, cmapSize, cmapSizeM1;
+    float colorScale;
+    uint hasFinal;
+};
+
+// Palette: 256 pre-scaled RGB entries (dmap), passed as a flat float3 array.
