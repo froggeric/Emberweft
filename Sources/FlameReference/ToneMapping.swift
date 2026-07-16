@@ -1,14 +1,11 @@
 import Foundation
 import FlameKit
 
-public struct RGBA8Image: Sendable, Equatable {
-    public let width: Int
-    public let height: Int
-    public var pixels: [UInt8]    // RGBA, row-major
-    public init(width: Int, height: Int, pixels: [UInt8]) {
-        self.width = width; self.height = height; self.pixels = pixels
-    }
-}
+// `RGBA8Image` and `flam3SpatialFilterWidth` now live in `FlameKit`
+// (RenderTypes.swift), lifted so `FlameRenderer` can depend on `FlameKit` only.
+// They are re-exported here via `@_exported import FlameKit`, so all existing
+// `FlameReference.RGBA8Image` / `flam3SpatialFilterWidth` references resolve
+// unchanged.
 
 /// Display pipeline matching flam3's `render_rectangle` (rect.c + palettes.c).
 ///
@@ -183,18 +180,8 @@ public enum ToneMapping {
 }
 
 // MARK: - Spatial filter kernel (filters.c)
-
-/// flam3's spatial-filter kernel width (filters.c:217-269, `flam3_create_spatial_filter`).
-/// `fwRaw = 2·support·oversample·radius`; rounded up to even parity with oversample.
-/// Shared between the grid-gutter calculation (RenderParams) and the kernel build so
-/// both reference one identical `filter_width` (rect.c:656,685-686).
-func flam3SpatialFilterWidth(oversample: Int, radius: Double) -> Int {
-    let support: Double = 1.5       // flam3_spatial_support[gaussian] (filters.c:31)
-    let fwRaw = 2.0 * support * Double(oversample) * radius
-    var fwidth = Int(fwRaw) + 1
-    if ((fwidth ^ oversample) & 1) != 0 { fwidth += 1 }
-    return fwidth
-}
+//
+// `flam3SpatialFilterWidth` now lives in `FlameKit` (RenderTypes.swift).
 
 private func makeSpatialKernel(oversample: Int, radius: Double) -> (width: Int, coeffs: [Double]) {
     let support: Double = 1.5       // flam3_spatial_support[gaussian] (filters.c:31)
