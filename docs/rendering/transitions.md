@@ -277,12 +277,14 @@ loop(sheep_0) → transition(0→1) → loop(sheep_1) → transition(1→2) → 
 
 ### Segment Length
 
-**(preliminary default):**
-- Loop duration: 5.0 seconds (the sheep's own keyframe cycle, time-scaled to fit)
-- Transition duration: 3.0 seconds
-- Total cycle: 8.0 seconds per sheep
+- **Loop duration = the sheep's natural keyframe extent**, not a fixed value. A sheep's `[Flame]` keyframes carry `time` values that define its intrinsic loop length (in the archive, commonly `time="0"` → `time="160"`, i.e. ~160 frames). Play each sheep at its natural rate; optionally apply a uniform time-scale. (An earlier "5 s loop" here was a placeholder, not derived from the genome.)
+- **Transition duration:** **(preliminary default)** 3.0 seconds, configurable.
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
+
+### Stills (single-keyframe sheep)
+
+A single-keyframe sheep has no intrinsic motion. It is **not shown as a static hold**; instead it is **filtered out of the playback/sequencing pool** (while remaining in the archive). Optionally a still can be salvaged with **synthetic motion** — a slow camera drift (pan/zoom/rotate) or palette/hue rotation — which gives subtle motion, though it cannot become a true multi-keyframe IFS loop. Default behavior: discard from use.
 
 ### Schedule Computation
 

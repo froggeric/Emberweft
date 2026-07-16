@@ -76,7 +76,7 @@
 **Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
 
 **Two segment kinds (mirrors the original Electric Sheep):**
-- **Loop** — a single sheep played through its *own* temporal keyframes (`[Flame]` in a `.flam3`), interpolated into a seamless loop. A single-keyframe sheep is a degenerate (still) loop. This is the sheep's intrinsic motion, independent of any other genome.
+- **Loop** — a single sheep played through its *own* temporal keyframes (`[Flame]` in a `.flam3`), interpolated into a seamless loop; loop length is the sheep's natural keyframe extent (not a fixed value). This is the sheep's intrinsic motion, independent of any other genome. Single-keyframe (still) sheep have no motion and are filtered out of the playback pool (kept in the archive).
 - **Transition** — a morph from genome A's parameters to genome B's over a short segment.
 
 **Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.

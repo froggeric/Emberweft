@@ -165,10 +165,11 @@ class SegmentScheduler {
 ```
 
 **Segment Timing:**
-- Default loop length: **(preliminary)** 5 seconds (the sheep's own keyframe cycle)
-- Default transition length: **(preliminary)** 3 seconds
-- Minimum loop before next transition: 4 seconds
+- Loop length: each sheep's natural keyframe extent (archive sheep are commonly ~160 frames), optionally time-scaled — **not** a fixed value.
+- Default transition length: **(preliminary)** 3 seconds (configurable)
 - Maximum transition for slow-morph aesthetic: 30 seconds
+
+**Stills:** single-keyframe sheep are filtered out of the playback pool (kept in the archive); they are not shown as static holds. See [transitions.md](../rendering/transitions.md#stills-single-keyframe-sheep).
 
 ## Frame Pacing
 
