@@ -28,6 +28,7 @@ Read these before making non-trivial changes. They override any generic assumpti
 - **Formatting:** `swift-format` (config in `.swift-format`).
 - **Code identifiers** use the neutral `Flame` prefix (`FlameKit`, `FlameRenderer`, …); the **brand name Emberweft** is used only for user-facing artifacts (app bundle `EmberweftApp`, screensaver `EmberweftScreenSaver`, the `emberweft` CLI).
 - **Deployment target:** macOS 26 (Metal 4), Apple Silicon (M1+). Intel unsupported.
+- **`genomes/`** is an intentional ~1.6 GB data-preservation archive of ~123k Electric Sheep `.flam3` genomes (gens 165–248) — do not gitignore or remove. Gen 248 is a live flock (a local launchd job, `com.emberweft.sheep-sync`, syncs it daily). See `genomes/README.md`.
 
 ### Metal & Swift 6 gotchas
 - **`.metal` files:** SwiftPM does not compile them. Bundle as `resources: [.copy("Metal")]` + `exclude: ["Metal"]`, load at runtime via `Bundle.module` + `MTLDevice.makeLibrary(source:)`.
@@ -43,6 +44,8 @@ swift build               # build
 swift test                # run tests
 swift run emberweft       # run the CLI
 make build / make test    # convenience wrappers
+make fetch-sheep          # archive Electric Sheep .flam3 genomes (idempotent; see genomes/README.md)
+make sync-sheep           # sync NEW genomes from the live flock (gen 248)
 ```
 
 ## Module map (dependency direction: down)
