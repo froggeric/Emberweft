@@ -145,3 +145,252 @@ struct GPUFrameParams {
 };
 
 // Palette: 256 pre-scaled RGB entries (dmap), passed as a flat float3 array.
+
+// MARK: - Stage-1 chaos-game kernel
+//
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 19 variation
+// formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
+// flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
+// first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
+// camera projection, final-xform SEPARATE binning point, and badvalue retry
+// (5-consecutive limit, `continue` without advancing `j`) all match the CPU
+// oracle. Float (not Double) math — accepted by the statistical-parity model.
+
+constant float EPS_MS  = 1e-10f;
+constant float BAD_MS  = 1e10f;
+constant uint CHAOS_GRAIN_M1 = 16383u;
+
+struct AtomicBin {
+    atomic_uint count;
+    atomic_uint r, g, b, a;
+};
+
+static inline bool badvalue_ms(float x) { return (x != x) || (x > BAD_MS) || (x < -BAD_MS); }
+
+static inline float2 apply_affine(GPUXform x, float2 p) {
+    return float2(x.a*p.x + x.c*p.y + x.e, x.b*p.x + x.d*p.y + x.f);
+}
+static inline float2 apply_post(GPUXform x, float2 p) {
+    return float2(x.pa*p.x + x.pc*p.y + x.pe, x.pb*p.x + x.pd*p.y + x.pf);
+}
+static inline float blend_color(GPUXform x, float ct) {
+    return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
+}
+
+// 19 variation terms (canonical slot order). Each returns the term that CPU
+// `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
+// position. Float (not Double) — accepted by the statistical-parity model.
+static inline float2 v_bent(float2 p, float w) {
+    return float2(w * (p.x < 0 ? 2.0f*p.x : p.x), w * (p.y < 0 ? 0.5f*p.y : p.y));
+}
+static inline float2 v_cosine(float2 p, float w) {
+    return float2(w * cos(p.x * M_PI_F) * cosh(p.y), w * (-sin(p.x * M_PI_F)) * sinh(p.y));
+}
+static inline float2 v_cylinder(float2 p, float w) { return float2(w * sin(p.x), w * p.y); }
+static inline float2 v_diamond(float2 p, float w) {
+    float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
+    return float2(w * sin(a) * cos(r), w * cos(a) * sin(r));
+}
+static inline float2 v_disc(float2 p, float w) {
+    float a = atan2(p.x, p.y) / M_PI_F; float r = M_PI_F * sqrt(p.x*p.x + p.y*p.y);
+    return float2(w * sin(r) * a, w * cos(r) * a);
+}
+static inline float2 v_ex(float2 p, float w) {
+    float a = atan2(p.x, p.y); float r = sqrt(p.x*p.x + p.y*p.y);
+    float n0 = sin(a + r); float n1 = cos(a - r);
+    float m0 = n0*n0*n0 * r; float m1 = n1*n1*n1 * r;
+    return float2(w * (m0 + m1), w * (m0 - m1));
+}
+static inline float2 v_exponential(float2 p, float w) {
+    float e = exp(p.x - 1.0f);
+    return float2(w * e * cos(M_PI_F * p.y), w * e * sin(M_PI_F * p.y));
+}
+static inline float2 v_fisheye(float2 p, float w) {
+    float r = 2.0f / (sqrt(p.x*p.x + p.y*p.y) + 1.0f);
+    return float2(w * r * p.y, w * r * p.x);
+}
+static inline float2 v_handkerchief(float2 p, float w) {
+    float a = atan2(p.x, p.y); float r = sqrt(p.x*p.x + p.y*p.y);
+    return float2(w * r * sin(a + r), w * r * cos(a - r));
+}
+static inline float2 v_heart(float2 p, float w) {
+    float ps = sqrt(p.x*p.x + p.y*p.y); float a = ps * atan2(p.x, p.y); float r = w * ps;
+    return float2(r * sin(a), (-r) * cos(a));
+}
+static inline float2 v_horseshoe(float2 p, float w) {
+    float r = w / (sqrt(p.x*p.x + p.y*p.y) + EPS_MS);
+    return float2((p.x - p.y) * (p.x + p.y) * r, 2.0f * p.x * p.y * r);
+}
+static inline float2 v_hyperbolic(float2 p, float w) {
+    float r = sqrt(p.x*p.x + p.y*p.y) + EPS_MS; float a = atan2(p.x, p.y);
+    return float2(w * sin(a) / r, w * cos(a) * r);
+}
+// julia — consumes one ISAAC word (lowest bit), exactly like CPU `rng.bit()`.
+static inline float2 v_julia(float2 p, float w, thread IsaacState& rng) {
+    float sumsq = p.x*p.x + p.y*p.y;
+    float ps = sqrt(sumsq);
+    float a = 0.5f * atan2(p.x, p.y);
+    float r = w * sqrt(ps);
+    if ((isaac_next(rng) & 1u) != 0u) { a += M_PI_F; }
+    return float2(r * cos(a), r * sin(a));
+}
+static inline float2 v_linear(float2 p, float w) { return float2(w * p.x, w * p.y); }
+static inline float2 v_polar(float2 p, float w) {
+    float nx = atan2(p.x, p.y) / M_PI_F; float ny = sqrt(p.x*p.x + p.y*p.y) - 1.0f;
+    return float2(w * nx, w * ny);
+}
+static inline float2 v_sinusoidal(float2 p, float w) { return float2(w * sin(p.x), w * sin(p.y)); }
+static inline float2 v_spherical(float2 p, float w) {
+    float r2 = w / (p.x*p.x + p.y*p.y + EPS_MS); return float2(r2 * p.x, r2 * p.y);
+}
+static inline float2 v_spiral(float2 p, float w) {
+    float r = sqrt(p.x*p.x + p.y*p.y) + EPS_MS; float r1 = w / r; float a = atan2(p.x, p.y);
+    return float2(r1 * (cos(a) + sin(r)), r1 * (sin(a) - cos(r)));
+}
+static inline float2 v_swirl(float2 p, float w) {
+    float r2 = p.x*p.x + p.y*p.y; float c1 = sin(r2); float c2 = cos(r2);
+    return float2(w * (c1*p.x - c2*p.y), w * (c2*p.x + c1*p.y));
+}
+
+// Sum the 19 canonical slots. Only `julia` consumes the RNG.
+// CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
+// (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
+// variation whose internals overflow to Inf (cosh/sinh in `cosine` for
+// |p.y|>710, exp in `exponential` for |p.x|>710) yields `0.0f * Inf == NaN`,
+// which contaminates `acc`, trips `badvalue_ms`, and diverges both the
+// trajectory and the RNG stream from the CPU.
+static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
+    float2 pre = apply_affine(x, p);
+    float2 acc = float2(0.0f);
+    float w[19];
+    for (int i = 0; i < 19; i++) w[i] = x.varWeights[i];
+    if (w[0]  != 0.0f) acc += v_bent(pre, w[0]);
+    if (w[1]  != 0.0f) acc += v_cosine(pre, w[1]);
+    if (w[2]  != 0.0f) acc += v_cylinder(pre, w[2]);
+    if (w[3]  != 0.0f) acc += v_diamond(pre, w[3]);
+    if (w[4]  != 0.0f) acc += v_disc(pre, w[4]);
+    if (w[5]  != 0.0f) acc += v_ex(pre, w[5]);
+    if (w[6]  != 0.0f) acc += v_exponential(pre, w[6]);
+    if (w[7]  != 0.0f) acc += v_fisheye(pre, w[7]);
+    if (w[8]  != 0.0f) acc += v_handkerchief(pre, w[8]);
+    if (w[9]  != 0.0f) acc += v_heart(pre, w[9]);
+    if (w[10] != 0.0f) acc += v_horseshoe(pre, w[10]);
+    if (w[11] != 0.0f) acc += v_hyperbolic(pre, w[11]);
+    if (w[12] != 0.0f) acc += v_julia(pre, w[12], rng);
+    if (w[13] != 0.0f) acc += v_linear(pre, w[13]);
+    if (w[14] != 0.0f) acc += v_polar(pre, w[14]);
+    if (w[15] != 0.0f) acc += v_sinusoidal(pre, w[15]);
+    if (w[16] != 0.0f) acc += v_spherical(pre, w[16]);
+    if (w[17] != 0.0f) acc += v_spiral(pre, w[17]);
+    if (w[18] != 0.0f) acc += v_swirl(pre, w[18]);
+    return apply_post(x, acc);
+}
+
+static inline float isaac_01(thread IsaacState& s) {
+    return float(isaac_next(s) & 0x0fffffffu) * (1.0f / float(0x0fffffffu));
+}
+static inline float isaac_11(thread IsaacState& s) {
+    return (float(isaac_next(s) & 0x0fffffffu) - float(0x07ffffffu)) * (1.0f / float(0x07ffffffu));
+}
+
+static inline void accumulate(device AtomicBin* hist, int u, int v, GPUFrameParams fp,
+                              constant float3* dmap, constant float* dmapAlpha,
+                              float binColor) {
+    float dblIndex0 = binColor * float(fp.cmapSize);
+    int ci0 = int(dblIndex0);
+    float frac;
+    if (ci0 >= int(fp.cmapSizeM1)) { ci0 = int(fp.cmapSizeM1) - 1; frac = 1.0f; }
+    else { frac = dblIndex0 - float(ci0); }
+    float m0 = 1.0f - frac;
+    float3 interp = dmap[ci0] * m0 + dmap[ci0 + 1] * frac;
+    float interpA = dmapAlpha[ci0] * m0 + dmapAlpha[ci0 + 1] * frac;
+    float sc = fp.colorScale;
+    auto q = [](float v, float s) -> uint { return uint(clamp(v, 0.0f, 255.0f) * s + 0.5f); };
+    uint idx = uint(u) + uint(v) * fp.gridWidth;
+    atomic_fetch_add_explicit(&hist[idx].count, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&hist[idx].r, q(interp.x, sc), memory_order_relaxed);
+    atomic_fetch_add_explicit(&hist[idx].g, q(interp.y, sc), memory_order_relaxed);
+    atomic_fetch_add_explicit(&hist[idx].b, q(interp.z, sc), memory_order_relaxed);
+    atomic_fetch_add_explicit(&hist[idx].a, q(interpA,  sc), memory_order_relaxed);
+}
+
+kernel void chaosGame(device GPUXform* xforms        [[buffer(0)]],
+                      device GPUXform* finalXf        [[buffer(1)]],
+                      constant uint*   distrib        [[buffer(2)]],
+                      constant float3* dmap           [[buffer(3)]],
+                      constant float*  dmapAlpha      [[buffer(4)]],
+                      constant GPUFrameParams* fp     [[buffer(5)]],
+                      constant ulong*  threadSeeds    [[buffer(6)]],
+                      device AtomicBin* hist          [[buffer(7)]],
+                      uint gid [[thread_position_in_grid]]) {
+    if (gid >= fp->threadCount) return;
+    IsaacState rng;
+    isaac_init(rng, &threadSeeds[ulong(gid) * ISAAC_RANDSIZ_MS]);
+
+    // Sub-batch seed draws (mirror CPU rect.c:393-396): p, colorT, vis(discarded).
+    // NOTE: RNG draws are issued via explicit ordered temporaries (NOT as
+    // float2-constructor arguments) because C++ function-argument evaluation
+    // order is UNSPECIFIED — constructor args could swap the x/y draws and
+    // diverge the ISAAC stream from the CPU oracle, which draws p[0] then p[1].
+    float px = isaac_11(rng);
+    float py = isaac_11(rng);
+    float2 p = float2(px, py);
+    float colorT = isaac_01(rng);
+    (void)isaac_01(rng);
+
+    uint iterThisThread = fp->iterationsPerThread + (gid < fp->remainder ? 1u : 0u);
+    uint total = fp->fuse + iterThisThread;
+    uint consec = 0;
+    bool hasFinal = (fp->hasFinal != 0u);
+    GPUXform fin = hasFinal ? finalXf[0] : GPUXform{};
+
+    // CRITICAL: this MUST be a `while` loop with an explicit `j += 1` at the
+    // bottom, NOT a C `for`. The CPU oracle uses `while j < total { ...; j += 1 }`
+    // where `continue` (badvalue retry) SKIPS `j += 1`, re-running the same slot.
+    // A C `for`'s `continue` runs the increment, burning a post-fuse slot on
+    // every retry so Metal emits FEWER than `totalSamples` samples and diverges.
+    uint j = 0;
+    while (j < total) {
+        uint xfIdx = distrib[isaac_next(rng) & CHAOS_GRAIN_M1];
+        GPUXform xf = xforms[xfIdx];
+        float2 q = apply_xform_body(xf, p, rng);
+        float qColor = blend_color(xf, colorT);
+
+        if (badvalue_ms(q.x) || badvalue_ms(q.y)) {
+            // Init-declarators in a declaration are sequenced left-to-right
+            // (C++17 [dcl.decl]); rx draws before ry, matching CPU.
+            float rx = isaac_11(rng), ry = isaac_11(rng);
+            consec += 1u;
+            if (consec < 5u) { p = float2(rx, ry); continue; }   // retry slot; j NOT advanced
+            q = float2(rx, ry); consec = 0u;
+        } else {
+            consec = 0u;
+        }
+
+        p = q; colorT = qColor;   // iteration point carries ONLY the main xform
+
+        float2 binP = p; float binColor = colorT;
+        if (hasFinal) {
+            bool apply;
+            if (fin.opacity >= 1.0f) apply = true;
+            else if (fin.opacity > 0.0f) apply = (isaac_01(rng) < fin.opacity);
+            else apply = false;
+            if (apply) { binP = apply_xform_body(fin, p, rng); binColor = blend_color(fin, colorT); }
+        }
+
+        if (j >= fp->fuse) {
+            if (binP.x == binP.x && binP.y == binP.y) {   // NaN check
+                float dx = binP.x - fp->centerX, dy = binP.y - fp->centerY;
+                float rxs = dx * fp->cosR - dy * fp->sinR;
+                float rys = dx * fp->sinR + dy * fp->cosR;
+                float gx = rxs * fp->pixelsPerUnit + float(fp->gridWidth) * 0.5f;
+                float gy = rys * fp->pixelsPerUnit + float(fp->gridHeight) * 0.5f;
+                int u = int(floor(gx)); int v = int(floor(gy));
+                if (u >= 0 && u < int(fp->gridWidth) && v >= 0 && v < int(fp->gridHeight)) {
+                    accumulate(hist, u, v, fp[0], dmap, dmapAlpha, binColor);
+                }
+            }
+        }
+        j += 1;
+    }
+}
