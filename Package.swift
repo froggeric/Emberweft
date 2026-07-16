@@ -33,7 +33,9 @@ let package = Package(
         .target(
             name: "FlameRenderer",
             dependencies: ["FlameKit"],
-            path: "Sources/FlameRenderer"
+            path: "Sources/FlameRenderer",
+            exclude: ["Metal"],
+            resources: [.copy("Metal")]
         ),
         // Realtime adaptive playback engine.
         .target(
@@ -68,6 +70,11 @@ let package = Package(
             name: "FlameReferenceTests",
             dependencies: ["FlameReference", "FlameKit"],
             path: "Tests/FlameReferenceTests"
+        ),
+        .testTarget(
+            name: "FlameRendererTests",
+            dependencies: ["FlameRenderer", "FlameReference", "FlameKit"],
+            path: "Tests/FlameRendererTests"
         ),
         .testTarget(
             name: "EmberweftCLITests",
