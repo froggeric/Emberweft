@@ -1,0 +1,18 @@
+<flame time="0" palette="67" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="25220">
+   <xform weight="0.5" color="0" sinusoidal="0.86" waves="0.14" coefs="1.11732 0.642723 -0.642723 1.11732 -0.513145 0.604059"/>
+   <xform weight="0.5" color="1" sinusoidal="0.86" waves="0.14" coefs="-1.11732 -0.642723 0.642723 -1.11732 -5.44977 -3.49211"/>
+</flame>
+<flame time="128" palette="32" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.01" color="0" julia="0.82" waves="0.18" coefs="-0.709879 -0.573009 -0.151037 0.075549 -0.349157 0.642261"/>
+   <xform weight="0.032" color="0.13" linear="0.03" polar="0.97" coefs="0.339444 0.015205 -0.227386 0.553651 -0.909581 -0.991459"/>
+   <xform weight="0.022" color="0.25" diamond="0.84" waves="0.16" coefs="-0.328558 -0.825171 0.361722 -0.119277 -0.338489 0.49118"/>
+   <xform weight="0.052" color="0.38" ex="0.64" waves="0.36" coefs="0.200345 -0.020491 -0.206194 0.915556 -0.524044 0.024671"/>
+   <xform weight="0.003" color="0.5" horseshoe="0.46" julia="0.54" coefs="0.738121 -0.01893 -0.000659 -0.049452 0.657131 -0.255736"/>
+   <xform weight="0.046" color="0.63" linear="0.74" spiral="0.26" coefs="-0.068413 0.577473 0.620627 0.498974 -0.394772 0.581887"/>
+   <xform weight="0.054" color="0.75" polar="0.2" julia="0.8" coefs="-0.340065 0.180969 0.293742 0.896148 -0.325208 -0.920376"/>
+   <xform weight="0.017" color="0.88" linear="0.91" waves="0.09" coefs="0.013089 0.242069 -0.305045 -0.19183 -0.867062 -0.987201"/>
+   <xform weight="0.015" color="1" horseshoe="0.79" ex="0.21" coefs="0.546287 0.766232 -0.309752 0.002222 0.776398 0.963524"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

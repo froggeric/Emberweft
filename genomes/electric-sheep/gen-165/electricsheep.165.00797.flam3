@@ -1,0 +1,13 @@
+<flame time="0" palette="63" size="640 480" scale="240" oversample="3" filter="1" quality="800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.976222" >
+   <xform weight="0.333333" color="0" linear="1" coefs="-0.968576 0.573234 -0.0672524 0.436961 0.0447036 0.0652305"/>
+   <xform weight="0.333333" color="0.5" linear="1" coefs="0.94178 -0.0899386 0.509534 0.0941487 -0.130539 0.89326"/>
+   <xform weight="0.333333" color="1" linear="1" coefs="-0.877546 -0.693948 0.820444 -0.693063 0.554631 -0.459433"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.09" url="www.hallucinaut.com" nick="Hallucinaut">
+   <xform weight="0.245" color="0" linear="0.09" horseshoe="0.12" hyperbolic="0.03" waves="0.76" coefs="-0.225408 -0.407963 -0.316517 -0.567036 0.406949 0.219776"/>
+   <xform weight="0.21" color="0.2" horseshoe="0.06" diamond="0.05" waves="0.76" fisheye="0.12" coefs="-0.20806 -0.207536 -0.057335 0.22337 -0.14838 -0.051583"/>
+   <xform weight="0.155" color="0.4" symmetry="0.91" linear="1" coefs="-0.973567 -0.039083 -0.04049 0.979512 -1.6e-05 0.000195"/>
+   <xform weight="0.13" color="0.6" symmetry="0.91" linear="1" coefs="0.092193 0.907807 -0.907807 0.092193 0 0"/>
+   <xform weight="0.13" color="0.8" symmetry="0.91" linear="1" coefs="-0.815615 0 0 -0.815615 0 0"/>
+   <xform weight="0.13" color="1" symmetry="0.91" linear="1" coefs="0.092193 -0.907807 0.907807 0.092193 0.693013 0.546258"/>
+</flame>

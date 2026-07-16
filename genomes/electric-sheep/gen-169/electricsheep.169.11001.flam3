@@ -1,0 +1,15 @@
+<flame time="0" palette="2" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.lunacie.com" nick="lunacie">
+   <xform weight="0.25" color="0" linear="0.87" julia="0.13" coefs="0.433259 0.395584 -0.290042 0.407627 0.793576 0.42725"/>
+   <xform weight="0.25" color="0.33" sinusoidal="0.61" ex="0.39" coefs="0.075865 -0.745107 0.745107 0.075865 0.775104 1.5091"/>
+   <xform weight="0.25" color="0.67" handkerchief="0.37" waves="0.63" coefs="-0.885356 1.21501 -0.54089 0.278284 1.97284 -1.02322"/>
+   <xform weight="0.25" color="1" handkerchief="0.6" waves="0.4" coefs="0.122443 -0.42384 0.22733 -0.047034 -0.004097 0.338481"/>
+</flame>
+<flame time="128" palette="9" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.172" color="0.05" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="0.181008 0.323822 0.529741 -0.263712 -1.00496 -0.530101"/>
+   <xform weight="0.172" color="0.4" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="0.829822 0.777948 1.58277 -0.9436 28.2351 3.12042"/>
+   <xform weight="0.114" color="0.39" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="-0.472721 0.188678 -0.733891 1.01656 0.780514 -0.993929"/>
+   <xform weight="0.107" color="0.59" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="0.057089 0.051077 0.208704 -0.001284 0.704647 0.207471"/>
+   <xform weight="0.068" color="0.44" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="0.587728 -0.041873 0.161142 0.315867 0.017634 0.26762"/>
+   <xform weight="0.067" color="0.56" linear="0.19" julia="0.42" bent="0.14" fisheye="0.25" coefs="0.228426 -0.212413 0.000388 0.130199 -0.109239 -0.725754"/>
+   <xform weight="0.3" color="1" symmetry="1" julia="1" coefs="-0.728966 0.68454 0.68454 0.728966 -0.260706 -0.615347"/>
+</flame>

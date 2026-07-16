@@ -1,0 +1,11 @@
+<flame time="0" palette="79" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.maltaannon.com" nick="maltaannon">
+   <xform weight="0.251" color="0" handkerchief="1" coefs="1.26743 0.141609 0.189149 0.25611 -1.62235 -1.71655"/>
+   <xform weight="0.465" color="0.5" handkerchief="1" coefs="-0.74063 0.250384 -0.400912 0.880451 -0.653499 0.399744"/>
+   <xform weight="0.284" color="1" handkerchief="1" coefs="-0.018336 0.397941 0.821167 0.019861 -1.87799 -0.691823"/>
+</flame>
+<flame time="128" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.2" parents="17175 16904">
+   <xform weight="0.31" color="0" swirl="0.33" horseshoe="0.02" spiral="0.32" ex="0.25" fisheye="0.08" coefs="0.263355 -0.071462 0.213782 -0.208965 -0.202284 0.392645"/>
+   <xform weight="0.75" color="0.25" swirl="0.04" julia="0.96" coefs="0.283362 0.690691 -0.561071 0.092972 0.233814 0.004026"/>
+   <xform weight="0.082" color="0.5" symmetry="1" linear="1" coefs="0.845723 -0.307818 0.307818 0.845723 0 0"/>
+   <xform weight="0.367" color="1" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>

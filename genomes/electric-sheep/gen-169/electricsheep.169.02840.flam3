@@ -1,0 +1,11 @@
+<flame time="0" palette="28" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.470773" >
+   <xform weight="0.333333" color="1" julia="1" coefs="0.920586 -0.238244 0.855298 -0.493426 -0.0601933 -0.367527"/>
+   <xform weight="0.333333" color="0" julia="1" coefs="-0.312177 0.543576 -0.980956 -0.0127482 0.228639 0.495871"/>
+   <xform weight="0.333333" color="0.5" julia="1" coefs="0.196147 -0.838184 0.697282 0.424848 -0.494134 0.639925"/>
+</flame>
+<flame time="128" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="2466 133">
+   <xform weight="0.315409" color="0" linear="0.433169" waves="0.487474" popcorn="0.0793563" coefs="0.220102 -0.180432 0.143583 0.321043 -0.0207308 -0.150513"/>
+   <xform weight="0.0953639" color="0.333333" linear="0.0259902" sinusoidal="0.398516" spherical="0.226732" spiral="0.00433169" bent="0.340098" waves="0.00433169" coefs="0.358498 0.798068 -3.70946 0.276324 2.33994 0.143151"/>
+   <xform weight="0.395938" color="0.666667" symmetry="1" linear="1" coefs="0.057088 0.651794 -0.348183 -0.618831 0.138495 0.100649"/>
+   <xform weight="0.08049" color="1" symmetry="0.566831" linear="1" coefs="0.741809 -0.534579 0.534579 0.741809 0 0"/>
+</flame>

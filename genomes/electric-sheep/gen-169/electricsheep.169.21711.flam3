@@ -1,0 +1,17 @@
+<flame time="0" palette="204" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.no.webby.com" nick="Don Ten">
+   <xform weight="0.071" color="0" spherical="0.5" horseshoe="0.5" coefs="-0.356829 -0.342463 -0.478904 -0.465087 0.228007 0.227869"/>
+   <xform weight="0.132" color="0.09" sinusoidal="0.92" spherical="0.08" coefs="-1.28897 -0.888384 -0.51573 -0.358146 1.89042 0.175102"/>
+   <xform weight="0.107" color="0.18" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.107" color="0.27" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.069" color="0.64" linear="1" coefs="0.35 0.606218 -0.606218 0.35 0 0"/>
+   <xform weight="0.061" color="0.73" linear="1" coefs="0.104189 0.590885 -0.590885 0.104189 0 0"/>
+   <xform weight="0.055" color="0.82" linear="1" coefs="-0.086824 0.492404 -0.492404 -0.086824 0 0"/>
+   <xform weight="0.05" color="0.91" linear="1" coefs="-0.2 0.34641 -0.34641 -0.2 0 0"/>
+   <xform weight="0.046" color="1" linear="1" coefs="-0.229813 0.192836 -0.192836 -0.229813 0 0"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="2956 1108">
+   <xform weight="0.872" color="0" linear="0.79" sinusoidal="0.19" fisheye="0.02" coefs="-0.930372 0.157143 -0.229908 -0.856556 0.0744309 0.250807"/>
+   <xform weight="0.256" color="0.333333" linear="0.75" spherical="0.01" hyperbolic="0.05" bent="0.08" waves="0.12" coefs="0.01888 1.57222 -0.013328 -1.40174 0.153717 0.741898"/>
+   <xform weight="0.064" color="0.666667" sinusoidal="0.98" fisheye="0.02" coefs="3.45242 3.78067 2.3026 7.51419 1.06963e+15 -1.74016e+15"/>
+   <xform weight="0.244" color="1" symmetry="1" linear="1" coefs="0.612836 -0.51423 0.51423 0.612836 0 0"/>
+</flame>

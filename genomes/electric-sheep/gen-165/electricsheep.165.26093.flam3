@@ -1,0 +1,18 @@
+<flame time="0" palette="70" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.577306" >
+   <symmetry kind="-3"/>
+   <xform weight="0.2" color="0.25" julia="1" coefs="0.9637 -0.274747 -0.270501 -0.850927 -0.0780073 0.388861"/>
+   <xform weight="0.2" color="1" spherical="1" coefs="0.781276 0.962067 0.830097 0.0870534 0.525364 0.809945"/>
+   <xform weight="0.2" color="0.5" swirl="1" coefs="-0.418717 -0.169168 -0.296942 0.572122 -0.706642 -0.113553"/>
+   <xform weight="0.2" color="0" ex="1" coefs="0.305777 0.563297 0.979848 0.912865 0.390669 -0.696972"/>
+   <xform weight="0.2" color="0.75" spiral="1" coefs="0.0238847 -0.472118 0.645715 -0.0358951 -0.166152 -0.58391"/>
+</flame>
+<flame time="128" palette="51" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.67" url="http://www.HilltopDesign.Com" nick="HILLTOPDESIGN.COM">
+   <xform weight="0.048" color="0" symmetry="1" heart="0.46" disc="0.19" hyperbolic="0.17" coefs="-0.612088 -0.700905 0.700905 -0.612088 -0.85137 0.637428"/>
+   <xform weight="0.192" color="0.24" symmetry="0.01" linear="0.01" polar="0.01" bent="0.98" coefs="0.034231 -0.14424 -0.130456 0.121116 -0.694088 -1.39126"/>
+   <xform weight="0.048" color="0.29" symmetry="1" linear="1" coefs="-0.989395 0.03455 -0.03455 -0.989395 -0.56 0.12"/>
+   <xform weight="0.048" color="0.43" symmetry="1" linear="1" coefs="-0.815923 0.329654 -0.329654 -0.815923 1.61 0.3"/>
+   <xform weight="0.089" color="0.57" linear="0.02" bent="0.98" coefs="0.184467 -0.137447 -0.194266 0.214239 -0.035825 -0.303109"/>
+   <xform weight="0.192" color="0.71" symmetry="1" linear="1" coefs="1.04616 0.339919 0.339919 -1.04616 0.7 -0.3"/>
+   <xform weight="0.019" color="0.49" linear="0.06" bent="0.95" coefs="0.482989 0.269666 -0.403643 0.455423 -1.29735 0.885937"/>
+   <xform weight="0.421" color="1" symmetry="1" linear="1" coefs="0.266114 1.06733 1.06733 -0.266114 1.26 -1.62"/>
+</flame>

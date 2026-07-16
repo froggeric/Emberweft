@@ -1,0 +1,12 @@
+<flame time="0" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.hilltopdesign.com" nick="AURELL">
+   <xform weight="0.144" color="0" sinusoidal="0.79" diamond="0.21" coefs="0.189887 0.597669 -0.58553 0.244574 -0.163194 -0.078542"/>
+   <xform weight="0.144" color="0.9" sinusoidal="0.15" horseshoe="0.21" heart="0.64" coefs="-0.382029 0.017555 -0.071369 -0.416824 0.396272 -0.080412"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.25" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://vaharoni.com" nick="falczx">
+   <xform weight="0.387" color="0" julia="0.68" fisheye="0.32" coefs="-0.531579 -0.235804 -0.008093 0.117245 -0.498303 -0.843274"/>
+   <xform weight="0.387" color="0.66" julia="0.68" fisheye="0.32" coefs="-0.721876 -0.148599 0.387837 -0.311356 0.175377 -0.505067"/>
+   <xform weight="0.226" color="0.68" julia="0.68" fisheye="0.32" coefs="-0.38547 0.260486 0.550927 0.58434 0.453957 -0.548391"/>
+</flame>

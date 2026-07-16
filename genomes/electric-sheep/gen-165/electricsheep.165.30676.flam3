@@ -1,0 +1,12 @@
+<flame time="0" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.44" url="http://www.livejournal.com/users/yhancik/" nick="yhancik">
+   <xform weight="0.467" color="0" sinusoidal="0.1" horseshoe="0.1" handkerchief="0.1" disc="0.2" fisheye="0.4" popcorn="0.1" coefs="0.689827 0.02396 0.938209 1.26063 2.9874 2.65555"/>
+   <xform weight="0.266" color="0.5" symmetry="1" linear="1" coefs="1.01186 -1.06152 -0.367925 -0.361351 6.57699 -1.77571"/>
+   <xform weight="0.266" color="0.5" linear="1" coefs="1.01186 -1.06152 -0.367925 -0.361351 5.64135 -2.39947"/>
+</flame>
+<flame time="128" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="29800 30249">
+   <xform weight="1" color="0" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.132" color="0.25" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" julia="0.22" coefs="-0.046213 0.018072 -1.3415 0.311431 0.619702 0.077162"/>
+   <xform weight="1" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.237" color="0.75" symmetry="1" linear="1" coefs="-0.809017 0.587785 -0.587785 -0.809017 0 0"/>
+   <xform weight="0.333" color="1" spherical="1" coefs="-0.249884 0.432813 -0.432813 -0.249884 0 1"/>
+</flame>

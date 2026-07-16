@@ -1,0 +1,12 @@
+<flame time="0" palette="15" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.458" color="0" horseshoe="0.71" disc="0.25" fisheye="0.05" coefs="-0.444045 -0.327218 0.400135 -0.445812 -0.122962 0.30874"/>
+   <xform weight="0.458" color="0.88" disc="0.25" julia="0.13" bent="0.62" coefs="-0.292169 0.823882 -0.588036 0.101539 -0.541182 0.448524"/>
+   <xform weight="0.083" color="0.25" linear="0.75" disc="0.25" coefs="0.948581 -0.231195 0.184148 0.994719 -0.189126 -0.367299"/>
+</flame>
+<flame time="128" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=KITCHAOS" nick="Kit Chaos">
+   <xform weight="0.166" color="0" linear="0.14" sinusoidal="0.32" handkerchief="0.25" diamond="0.29" coefs="-0.184624 0.169136 0.264233 -0.000701 0.8922 0.350778"/>
+   <xform weight="0.166" color="0.57" linear="0.14" horseshoe="0.11" handkerchief="0.25" heart="0.32" diamond="0.19" coefs="-0.001042 -0.143902 -0.03135 -0.258211 -0.112298 0.900974"/>
+   <xform weight="0.241" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 -0.115756 0.121848"/>
+   <xform weight="0.241" color="0.5" symmetry="1" linear="1" coefs="-1 0 -0.000421 -0.992892 0.000421 -0.007108"/>
+   <xform weight="0.241" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>

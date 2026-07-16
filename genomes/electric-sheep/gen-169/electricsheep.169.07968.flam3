@@ -1,0 +1,15 @@
+<flame time="0" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="7719 7739">
+   <xform weight="0.779" color="0" linear="0.7" sinusoidal="0.05" bent="0.25" coefs="0.957205 0.057131 -0.048648 0.736059 0.085388 0.151804"/>
+   <xform weight="0.25" color="0.333333" fisheye="1" coefs="-0.960666 -0.637552 -0.00495186 0.305117 0.123427 0.208385"/>
+   <xform weight="0.25" color="1" fisheye="1" coefs="0.277079 -0.958544 0.62628 0.318915 0.786796 0.979512"/>
+</flame>
+<flame time="128" palette="69" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.0158602" parents="1830 1496">
+   <xform weight="0.872" color="0" linear="0.79" sinusoidal="0.19" fisheye="0.02" coefs="-0.838682 0.0717274 -0.305713 -0.902587 -0.0192489 0.157616"/>
+   <xform weight="0.094904" color="0.0909091" linear="0.00206183" sinusoidal="0.236194" spherical="0.000475807" handkerchief="0.0787312" heart="0.434132" disc="0.00872314" spiral="0.13778" ex="0.108255" julia="0.00348925" coefs="-0.0562424 -0.104025 -0.174909 0.235901 -0.404606 -0.147068"/>
+   <xform weight="0.064" color="0.181818" sinusoidal="0.98" fisheye="0.02" coefs="3.45242 3.78067 2.3026 7.51419 1.06963e+15 -1.74016e+15"/>
+   <xform weight="0.0511753" color="0.272727" linear="0.0158602" heart="0.472387" disc="0.275559" spiral="0.13778" ex="0.108255" coefs="-0.0443278 0.080291 -0.0329569 0.577335 0.551742 0.717804"/>
+   <xform weight="0.0511753" color="0.454545" linear="0.0158602" heart="0.433021" spiral="0.13778" hyperbolic="0.0590484" ex="0.108255" fisheye="0.255876" coefs="-0.0418546 -0.103464 -0.240587 -0.173044 0.317226 -0.453819"/>
+   <xform weight="0.112192" color="0.636364" symmetry="0.98414" linear="1" coefs="0.629462 0.769431 -0.769431 0.629462 0 0"/>
+   <xform weight="0.112192" color="0.818182" symmetry="0.98414" linear="1" coefs="-0.870819 0.427002 -0.427002 -0.870819 0 0"/>
+   <xform weight="0.112192" color="1" symmetry="0.98414" linear="1" coefs="-0.203132 -0.959465 0.959465 -0.203132 0 0"/>
+</flame>

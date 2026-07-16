@@ -1,0 +1,20 @@
+<flame time="0" palette="37" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="AURELL">
+   <xform weight="0.031" color="0" diamond="0.57" ex="0.43" coefs="-0.453721 -0.471887 0.658822 -0.601505 -0.542695 -0.847637"/>
+   <xform weight="0.031" color="0.33" spherical="0.06" bent="0.94" coefs="-0.540158 -0.155023 0.155023 -0.540158 -0.314979 -0.657747"/>
+   <xform weight="0.031" color="0.67" ex="0.75" fisheye="0.25" coefs="-0.714566 0.559751 -0.422361 -0.658689 0.488674 0.622088"/>
+   <xform weight="0.031" color="1" handkerchief="0.77" julia="0.23" coefs="-0.106027 0.196406 -0.196406 -0.106027 -0.882669 0.427008"/>
+   <xform weight="0.125" color="0" symmetry="1" linear="1" coefs="0.707107 0.707107 -0.707107 0.707107 0 0"/>
+   <xform weight="0.125" color="0.17" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.125" color="0.33" symmetry="1" linear="1" coefs="-0.707107 0.707107 -0.707107 -0.707107 0 0"/>
+   <xform weight="0.125" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.125" color="0.67" symmetry="1" linear="1" coefs="-0.707107 -0.707107 0.707107 -0.707107 0 0"/>
+   <xform weight="0.125" color="0.83" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+   <xform weight="0.125" color="1" symmetry="1" linear="1" coefs="0.707107 -0.707107 0.707107 0.707107 0 0"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="24791">
+   <xform weight="0.125" color="0" sinusoidal="0.75" diamond="0.25" coefs="0.388015 0.626969 -0.484201 0.233532 -0.0938505 -0.318633"/>
+   <xform weight="0.125" color="1" horseshoe="0.25" heart="0.75" coefs="-0.353401 -0.061001 0.061001 -0.353401 0.259488 0.046721"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.25" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>

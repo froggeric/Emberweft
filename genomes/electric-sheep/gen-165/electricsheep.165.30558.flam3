@@ -1,0 +1,18 @@
+<flame time="0" palette="65" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.392442">
+   <symmetry kind="-10"/>
+   <xform weight="0.25" color="0.333333" disc="1" coefs="0.276644 0.0470334 -0.260875 0.0353441 0.814923 0.40767"/>
+   <xform weight="0.25" color="0" disc="1" coefs="0.480151 0.743797 0.4382 0.938694 0.981098 -0.709182"/>
+   <xform weight="0.25" color="0.666667" disc="1" coefs="0.868062 -0.0223853 -0.706844 0.173444 -0.987567 -0.0425949"/>
+   <xform weight="0.25" color="1" disc="1" coefs="0.769775 -0.674937 -0.0975834 0.835172 -0.333404 -0.804031"/>
+</flame>
+<flame time="128" palette="18" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.phidelity.com" nick="phidelity">
+   <xform weight="0.099" color="0" linear="0.1" sinusoidal="0.14" polar="0.29" heart="0.05" ex="0.04" coefs="0.307906 -0.102377 1.23778 -0.598538 1.12863 0.229078"/>
+   <xform weight="0.106" color="0.24" swirl="0.37" polar="0.11" handkerchief="0.21" diamond="0.11" ex="0.04" fisheye="0.18" coefs="-0.531539 -0.263238 -0.214491 -0.051633 0.010306 0.609223"/>
+   <xform weight="0.106" color="0.48" swirl="0.37" polar="0.11" ex="0.22" waves="0.12" fisheye="0.18" coefs="-0.286642 0.403671 -0.272425 0.436613 -0.071177 -1.04023"/>
+   <xform weight="0.115" color="1" symmetry="1" linear="1" coefs="-0.809022 -0.587781 -0.587781 0.809022 0 0"/>
+   <xform weight="0.115" color="0" symmetry="1" linear="1" coefs="0.5 0.866025 -0.866025 0.5 0 0"/>
+   <xform weight="0.115" color="0.25" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.115" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.115" color="0.75" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+   <xform weight="0.115" color="1" symmetry="1" linear="1" coefs="0.5 -0.866025 0.866025 0.5 0 0"/>
+</flame>

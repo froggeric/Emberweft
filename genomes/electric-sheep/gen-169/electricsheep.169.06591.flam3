@@ -1,0 +1,13 @@
+<flame time="0" palette="47" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.5" url="http://v2d5.sheepserver.net/cgi/status.cgi" nick="Deltaway">
+   <xform weight="0.078" color="0.5" heart="0.63" fisheye="0.37" coefs="0.851296 -0.180516 0.502245 -0.143368 0.49446 0.039576"/>
+   <xform weight="0.231" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.231" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.231" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.231" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 -0.045608"/>
+</flame>
+<flame time="128" palette="41" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="5242">
+   <xform weight="0.25" color="0" spiral="0.64" diamond="0.36" coefs="0.153276 0.786509 -0.935552 0.244532 -0.365883 -0.0527387"/>
+   <xform weight="0.25" color="0.33" swirl="0.58" hyperbolic="0.42" coefs="0.223623 -0.479803 -0.395692 -0.197057 0.269577 0.882172"/>
+   <xform weight="0.25" color="0.67" swirl="0.55" ex="0.45" coefs="0.111568 -0.276757 0.378574 0.200028 0.435836 -0.652936"/>
+   <xform weight="0.25" color="1" sinusoidal="0.99" hyperbolic="0.01" coefs="0.338864 0.753105 -0.753105 0.338864 -0.931755 0.850207"/>
+</flame>

@@ -1,0 +1,13 @@
+<flame time="0" palette="25" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="croidin">
+   <xform weight="0.395" color="0" hyperbolic="0.31" fisheye="0.69" coefs="-0.265335 0.663668 -0.645745 -0.233724 0.942932 -0.05704"/>
+   <xform weight="0.14" color="0.5" spiral="0.88" ex="0.12" coefs="-0.252173 -0.149051 0.142257 -0.250884 -0.68055 0.495102"/>
+   <xform weight="0.465" color="1" linear="0.68" spiral="0.32" coefs="0.670905 -0.521752 0.357357 0.609824 -0.412444 0.120542"/>
+</flame>
+<flame time="128" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.64" parents="11616">
+   <xform weight="0.18" color="0" linear="0.75" horseshoe="0.25" coefs="-0.194809 0.255791 0.449759 -0.752182 0.306747 0.090285"/>
+   <xform weight="0.202" color="0.2" linear="0.75" horseshoe="0.25" coefs="0.08637 -0.869899 0.113991 -0.256509 0.965911 0.555516"/>
+   <xform weight="0.117" color="0.4" linear="0.75" horseshoe="0.25" coefs="1.9826 0.349871 0.57152 -0.990985 -1.48259 0.633538"/>
+   <xform weight="0.162" color="0.6" linear="0.75" horseshoe="0.25" coefs="0.888151 0.653212 0.504046 -0.172905 -0.723628 -0.58299"/>
+   <xform weight="0.08" color="0.8" linear="0.75" horseshoe="0.25" coefs="-0.074187 0.057164 -0.368645 0.735492 -0.932165 -0.86445"/>
+   <xform weight="0.259" color="1" linear="0.75" horseshoe="0.25" coefs="-0.815261 -0.035273 0.388856 0.76704 0.064521 -0.882879"/>
+</flame>

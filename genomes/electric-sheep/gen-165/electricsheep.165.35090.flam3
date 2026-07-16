@@ -1,0 +1,19 @@
+<flame time="0" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Burger">
+   <xform weight="0.045" color="0" swirl="0.67" horseshoe="0.33" coefs="0.424446 0.576248 -0.576248 0.424446 -0.3438 0.443446"/>
+   <xform weight="0.045" color="1" horseshoe="0.06" bent="0.94" coefs="0.823088 0.068372 0.037839 0.858577 -0.209347 -0.477727"/>
+   <xform weight="0.091" color="0" symmetry="1" linear="1" coefs="0.92388 0.382683 -0.382683 0.92388 0 0"/>
+   <xform weight="0.091" color="0.07" symmetry="1" linear="1" coefs="0.707107 0.707107 -0.707107 0.707107 0 0"/>
+   <xform weight="0.091" color="0.14" symmetry="1" linear="1" coefs="0.382683 0.92388 -0.92388 0.382683 0 0"/>
+   <xform weight="0.091" color="0.21" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.091" color="0.29" symmetry="1" linear="1" coefs="-0.382683 0.92388 -0.92388 -0.382683 0 0"/>
+   <xform weight="0.091" color="0.36" symmetry="1" linear="1" coefs="-0.707107 0.707107 -0.707107 -0.707107 0 0"/>
+   <xform weight="0.091" color="0.43" symmetry="1" linear="1" coefs="-0.92388 0.382683 -0.382683 -0.92388 0 0"/>
+   <xform weight="0.091" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.091" color="0.57" symmetry="1" linear="1" coefs="-0.92388 -0.382683 0.382683 -0.92388 0 0"/>
+   <xform weight="0.091" color="0.64" symmetry="1" linear="1" coefs="-0.707107 -0.707107 0.707107 -0.707107 0 0"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Burger">
+   <xform weight="0.383" color="0" julia="1" coefs="0.598605 0.301099 -0.301099 0.598605 -0.149557 0.021042"/>
+   <xform weight="0.117" color="1" julia="1" coefs="0.144649 0.145586 -0.145586 0.144649 0.042058 -0.077628"/>
+   <xform weight="0.5" color="0" symmetry="1" julia="1" coefs="-0.967754 -0.25189 0.25189 -0.967754 -0.013861 0.529414"/>
+</flame>

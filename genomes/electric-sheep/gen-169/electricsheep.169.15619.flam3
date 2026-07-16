@@ -1,0 +1,15 @@
+<flame time="0" palette="20" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.431376" parents="15548 15462">
+   <xform weight="0.44196" color="0" symmetry="0.114306" linear="0.459588" spherical="0.11358" swirl="0.431376" coefs="0.65402 0.384976 -0.0470396 0.373646 0.00943386 0.256291"/>
+   <xform weight="0.155027" color="0.2" symmetry="0.00114306" linear="0.0491515" spherical="0.0160029" swirl="0.431376" horseshoe="0.454318" polar="0.0491515" coefs="-0.368615 0.360228 0.0229409 -0.667688 -0.0958348 -0.432205"/>
+   <xform weight="0.0591836" color="0.4" linear="0.739489" sinusoidal="0.0363455" spherical="0.129583" polar="0.0854972" coefs="0.669582 -0.0634784 -0.256963 0.514945 -0.218505 0.062506"/>
+   <xform weight="0.123539" color="0.6" symmetry="0.454318" linear="0.950849" polar="0.0491515" coefs="0.724401 0.381491 -0.428042 0.612442 0.188849 0.121906"/>
+   <xform weight="0.031348" color="0.8" linear="0.890963" spherical="0.11358" coefs="0.524296 -0.182168 -0.0675736 0.584719 -0.159212 0.0621614"/>
+   <xform weight="0.0222616" color="1" linear="0.890963" spherical="0.11358" coefs="0.603465 0.0334492 -0.085752 0.352544 0.0735777 0.0256754"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="15493 15128">
+   <xform weight="0.25" color="0" diamond="1" coefs="0.0169262 -0.789 -0.498317 -0.412886 -0.133156 -0.189648"/>
+   <xform weight="0.035" color="0.2" linear="1" coefs="-0.47907 0.500899 -0.013118 -0.950897 0.495183 -0.96517"/>
+   <xform weight="0.25" color="0.4" hyperbolic="1" coefs="-0.0796012 0.776678 0.232207 -0.176612 0.59074 -0.890675"/>
+   <xform weight="0.245" color="0.6" symmetry="1" linear="1" coefs="0.431696 0.902018 -0.902018 0.431696 0.400795 0.204853"/>
+   <xform weight="0.049" color="1" linear="1" coefs="0.127186 0.073625 -0.188748 -0.425114 0.161952 0.056514"/>
+</flame>

@@ -1,0 +1,16 @@
+<flame time="0" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.16" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.32" color="0" symmetry="1" linear="1" coefs="-0.464879 -0.184057 0.184057 -0.464879 0 0"/>
+   <xform weight="0.28" color="0.05" linear="0.75" julia="0.25" coefs="-0.50465 0.056565 -0.047284 -0.52788 0.674777 0.163399"/>
+   <xform weight="0.28" color="0.85" linear="0.75" julia="0.25" coefs="-0.259766 -0.063388 0.123505 -0.109 0.654483 -0.175643"/>
+   <xform weight="0.04" color="0.15" linear="0.75" julia="0.25" coefs="-0.327964 0.313917 -0.063613 0.489863 0.128538 -0.253233"/>
+   <xform weight="0.04" color="0.2" linear="0.75" julia="0.25" coefs="0.708334 0.09972 -0.175744 0.497216 -0.025683 0.346405"/>
+   <xform weight="0.04" color="0.25" linear="0.75" julia="0.25" coefs="0.706358 0.436433 -0.408582 0.34549 0.342843 0.426158"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="11311 11277">
+   <xform weight="0.720876" color="0" symmetry="0.54366" linear="0.976363" swirl="0.0236374" coefs="-0.698135 0.0445722 -0.00377874 0.766094 0.268927 0.0666087"/>
+   <xform weight="0.109455" color="0.2" linear="0.212087" sinusoidal="0.204857" swirl="0.0393957" polar="0.54366" spiral="0.0709122" diamond="0.0157583" ex="0.0787913" waves="0.330924" coefs="-1.18406 0.400608 -0.664908 -0.521174 1.75314 -0.905636"/>
+   <xform weight="0.0424174" color="0.4" symmetry="0.212087" linear="1" coefs="0.575826 0 0 1 0 0"/>
+   <xform weight="0.0424174" color="0.6" symmetry="0.212087" linear="1" coefs="0.787913 0.212087 -0.212087 0.787913 0 0"/>
+   <xform weight="0.0424174" color="0.8" symmetry="0.212087" linear="1" coefs="0.575826 0 0 0.575826 0 0"/>
+   <xform weight="0.0424174" color="1" symmetry="0.212087" linear="1" coefs="0.787913 -0.212087 0.212087 0.787913 0 0"/>
+</flame>

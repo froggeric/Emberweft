@@ -1,0 +1,13 @@
+<flame time="0" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="va@vaharoni.com" nick="falczx">
+   <xform weight="0.077" color="0" sinusoidal="1" coefs="0.632146 0.663992 0.049407 0.740729 -0.629851 -0.643993"/>
+   <xform weight="0.077" color="0.5" sinusoidal="1" coefs="-0.338749 0.48348 -0.310469 0.519025 -0.427552 -0.322925"/>
+   <xform weight="0.077" color="1" sinusoidal="1" coefs="-0.229923 -0.280472 -0.864974 0.101103 1.22243 -1.51096"/>
+   <xform weight="0.385" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.385" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>
+<flame time="128" palette="48" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.714746">
+   <symmetry kind="25"/>
+   <xform weight="0.333333" color="0" linear="1" coefs="-0.341234 0.938601 -0.49182 0.751252 0.113425 -0.46118"/>
+   <xform weight="0.333333" color="0.5" linear="1" coefs="-0.0820892 0.956509 -0.433604 0.660834 0.546226 -0.504443"/>
+   <xform weight="0.333333" color="1" linear="1" coefs="-0.849065 -0.635916 0.880909 -0.716487 0.779789 -0.325711"/>
+</flame>

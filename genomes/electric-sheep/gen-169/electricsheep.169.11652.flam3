@@ -1,0 +1,19 @@
+<flame time="0" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.44" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.18" color="0" linear="0.75" horseshoe="0.25" coefs="-0.405277 0.690928 -0.275652 0.392207 0.306747 0.090285"/>
+   <xform weight="0.202" color="0.2" linear="0.75" horseshoe="0.25" coefs="-0.128144 0.414968 0.063465 -0.806425 0.965911 0.555516"/>
+   <xform weight="0.117" color="0.4" linear="0.75" horseshoe="0.25" coefs="0.122446 0.841189 0.103666 0.207606 -0.178162 0.872506"/>
+   <xform weight="0.162" color="0.6" linear="0.75" horseshoe="0.25" coefs="0.322572 0.655803 0.244736 0.362427 0.371572 -0.178348"/>
+   <xform weight="0.08" color="0.8" linear="0.75" horseshoe="0.25" coefs="0.376017 -0.733189 -0.003794 -0.081665 -0.932165 -0.86445"/>
+   <xform weight="0.259" color="1" linear="0.75" horseshoe="0.25" coefs="-0.2292 -0.746836 -0.873685 -0.178379 0.064521 -0.882879"/>
+</flame>
+<flame time="128" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="11311 11487">
+   <xform weight="0.105" color="0" linear="1" coefs="-0.359857 -0.857426 -0.576248 0.411938 1.55165 6.32495"/>
+   <xform weight="0.1" color="0.1" linear="1" coefs="0.102072 0.429319 -0.378013 0.032247 0.204368 0.213425"/>
+   <xform weight="0.105" color="0.2" disc="0.95" julia="0.05" coefs="-0.548838 -1.39796 -0.422349 0.151722 1.60665 271.077"/>
+   <xform weight="0.2" color="0.3" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.093" color="0.4" linear="1" coefs="0.550742 0.509101 -0.509101 0.550742 0 0"/>
+   <xform weight="0.2" color="0.5" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+   <xform weight="0.081" color="0.6" linear="1" coefs="-0.506481 0.407403 -0.407403 -0.506481 0 0"/>
+   <xform weight="0.07" color="0.8" linear="1" coefs="0.301059 0.460286 -0.460286 0.301059 0 0"/>
+   <xform weight="0.058" color="1" linear="1" coefs="0.060288 0.445943 -0.445943 0.060288 0 0"/>
+</flame>

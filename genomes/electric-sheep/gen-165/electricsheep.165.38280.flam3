@@ -1,0 +1,16 @@
+<flame time="0" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="21531">
+   <xform weight="0.053" color="0" disc="0.89" popcorn="0.11" coefs="0.407853 0.224324 -0.445339 -0.459285 -0.474896 0.0701063"/>
+   <xform weight="0.132" color="0.2" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" julia="0.22" coefs="-0.0256337 -0.0263364 -1.4308 0.34706 0.595637 0.141781"/>
+   <xform weight="0.124" color="0.4" symmetry="1" linear="1" coefs="0.5445 0.943102 -0.943102 0.5445 0 0"/>
+   <xform weight="0.237" color="0.6" symmetry="1" linear="1" coefs="-0.809017 0.587785 -0.587785 -0.809017 0 0"/>
+   <xform weight="0.124" color="0.8" symmetry="1" linear="1" coefs="-1.089 0 0 -1.089 0 0"/>
+   <xform weight="0.119" color="1" symmetry="1" linear="1" coefs="-0.611827 -0.408683 -0.359236 0.962295 -0.136849 -0.372107"/>
+</flame>
+<flame time="128" palette="29" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://electricsheep.org/v2.5/" nick="stotty">
+   <xform weight="0.198" color="0" linear="0.06" sinusoidal="0.47" horseshoe="0.08" polar="0.01" handkerchief="0.01" heart="0.25" disc="0.04" ex="0.06" coefs="-0.068108 0.361806 0.16078 -0.010762 0.216921 -0.616166"/>
+   <xform weight="0.204" color="0.33" linear="0.11" sinusoidal="0.43" swirl="0.01" horseshoe="0.08" polar="0.01" heart="0.25" disc="0.04" ex="0.06" coefs="-0.254611 -0.135325 -0.197874 -0.295726 -0.389866 -0.077735"/>
+   <xform weight="0.19" color="0.56" linear="0.06" sinusoidal="0.47" horseshoe="0.08" polar="0.01" handkerchief="0.01" heart="0.25" disc="0.04" ex="0.06" coefs="0.428948 -0.088236 -0.269056 0.562986 0.269858 0.52469"/>
+   <xform weight="0.203" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.203" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.203" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

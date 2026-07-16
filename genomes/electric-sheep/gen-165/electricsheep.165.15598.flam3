@@ -1,0 +1,16 @@
+<flame time="0" palette="45" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.3" url="" nick="shagahs">
+   <xform weight="0.049" color="0" sinusoidal="1" coefs="0.05063 -0.414572 0.599765 -0.033258 -1.38694 -1.71869"/>
+   <xform weight="0.036" color="0.11" sinusoidal="1" coefs="-0.584557 0.014555 -0.144608 0.419243 -0.439728 -1.88971"/>
+   <xform weight="0.04" color="0.22" sinusoidal="1" coefs="0.717576 -0.417803 -0.545198 -0.664983 -0.903371 -1.12897"/>
+   <xform weight="0.125" color="0.33" symmetry="1" linear="1" coefs="0.51548 0.51548 -0.51548 0.51548 0 0"/>
+   <xform weight="0.125" color="0.44" symmetry="1" linear="1" coefs="0 0.729 -0.729 0 0 0"/>
+   <xform weight="0.125" color="0.56" symmetry="1" linear="1" coefs="-0.51548 0.51548 -0.51548 -0.51548 0 0"/>
+   <xform weight="0.125" color="0.67" symmetry="1" linear="1" coefs="-0.729 0 0 -0.729 0 0"/>
+   <xform weight="0.125" color="0.78" symmetry="1" linear="1" coefs="-0.51548 -0.51548 0.51548 -0.51548 0 0"/>
+   <xform weight="0.125" color="0.89" symmetry="1" linear="1" coefs="0 -0.729 0.729 0 0 0"/>
+   <xform weight="0.125" color="1" symmetry="1" linear="1" coefs="0.51548 -0.51548 0.51548 0.51548 0 0"/>
+</flame>
+<flame time="128" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Old Dog">
+   <xform weight="0.36" color="1" linear="1" coefs="0.495467 0.001733 -0.001733 0.495467 0.192133 0.242667"/>
+   <xform weight="0.64" color="0" linear="1" coefs="0.5672 -0.672533 0.672533 0.5672 1.984 -0.9128"/>
+</flame>

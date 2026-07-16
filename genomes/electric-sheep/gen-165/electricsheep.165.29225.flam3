@@ -1,0 +1,16 @@
+<flame time="0" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.268" color="0" linear="0.22" spherical="0.04" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.03" coefs="-0.149351 -0.262468 -0.018032 0.267974 1.0044 0.74096"/>
+   <xform weight="0.266" color="0.51" linear="0.23" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" diamond="0.02" fisheye="0.03" coefs="-0.406857 -0.176888 0.033617 -0.182246 0.344815 0.726649"/>
+   <xform weight="0.153" color="0.29" symmetry="1" linear="1" coefs="0 1.06733 -1.06733 0 0 0"/>
+   <xform weight="0.153" color="0.43" symmetry="1" linear="1" coefs="-1.06733 0 0 -1.06733 0 0"/>
+   <xform weight="0.153" color="0.57" symmetry="1" linear="1" coefs="0 -1.06733 1.06733 0 0 0"/>
+   <xform weight="0.002" color="0.06" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.917622 0.017772 -0.037829 0.890753 0.017704 0.056958"/>
+   <xform weight="0.002" color="0.07" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.919472 -0.050486 -0.018955 0.934938 0.016343 0.067751"/>
+   <xform weight="0.002" color="0.08" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.926066 -0.001903 -0.012154 0.879197 0.00463 0.088414"/>
+</flame>
+<flame time="128" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="1769 28914">
+   <xform weight="0.215" color="0" linear="0.25" waves="0.75" coefs="0.343746 -0.135888 -0.0709428 0.484665 0.658924 0.301718"/>
+   <xform weight="0.333" color="0.25" spherical="1" coefs="-0.249884 0.432813 -0.432813 -0.249884 -0.866025 -0.5"/>
+   <xform weight="0.171" color="0.5" symmetry="1" linear="1" coefs="1.07792 -0.00368756 0.075813 0.98358 -0.0498574 -0.272626"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="0.999962 -0.008727 0.008727 0.999962 0 0"/>
+</flame>

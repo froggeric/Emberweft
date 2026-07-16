@@ -1,0 +1,11 @@
+<flame time="0" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="Hilltop Design Dot Com">
+   <xform weight="0.333" color="0" linear="0.74" sinusoidal="0.26" coefs="0.180478 -0.612249 0.633917 -0.042175 0.318057 0.344447"/>
+   <xform weight="0.333" color="0.5" sinusoidal="1" coefs="-0.306509 0.196258 -0.196258 -0.306509 -0.613968 0.703254"/>
+   <xform weight="0.333" color="1" linear="0.01" spiral="0.99" coefs="-0.17959 0.350438 -0.350438 -0.17959 -0.580731 -0.288749"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="1119 163">
+   <xform weight="0.195385" color="0" symmetry="0.0325843" spherical="0.0362048" handkerchief="0.963795" coefs="0.570443 -0.228378 0.246292 0.426979 -0.893193 0.0505006"/>
+   <xform weight="0.162728" color="0.333333" polar="0.00398253" hyperbolic="0.0220849" julia="0.0674657" bent="0.00579277" waves="0.89633" coefs="0.14629 -0.397423 0.325519 0.14584 0.918758 -0.021711"/>
+   <xform weight="0.160954" color="0.666667" linear="0.0362048" diamond="0.607191" fisheye="0.356604" coefs="-0.506264 -0.274505 0.274505 -0.506264 -0.764649 -0.41385"/>
+   <xform weight="0.481898" color="1" symmetry="0.963795" linear="1" coefs="0.815932 0.566504 0.566504 -0.743522 0 0"/>
+</flame>

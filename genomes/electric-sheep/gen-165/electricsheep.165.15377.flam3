@@ -1,0 +1,17 @@
+<flame time="0" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hallucinaut.com" nick="Hallucinaut">
+   <xform weight="0.228" color="0" spherical="1" coefs="-0.598493 -0.956382 0.748743 0.195814 1.69216 -1.37775"/>
+   <xform weight="0.26" color="0.33" spherical="1" coefs="0.884387 -0.033612 0.308026 -0.799262 -0.536579 0.213505"/>
+   <xform weight="0.099" color="0.67" spherical="1" coefs="-0.847266 -0.019487 0.234809 -0.321489 -0.406924 1.97304"/>
+   <xform weight="0.144" color="1" spherical="1" coefs="0.673136 0.444495 0.376161 -0.291844 1.92142 -0.289625"/>
+   <xform weight="0.146" color="0" symmetry="1" linear="1" coefs="0.787846 -0.138919 0.138919 0.787846 0 0"/>
+   <xform weight="0.122" color="0" symmetry="1" linear="1" coefs="1.23784 0.173966 -0.173966 1.23784 0 0"/>
+</flame>
+<flame time="128" palette="62" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.992091" parents="14960 15236">
+   <xform weight="0.083" color="0" polar="0.1" ex="0.2" coefs="-0.213872 0.800871 -0.781361 -0.225489 1.83855 -0.659201"/>
+   <xform weight="0.211013" color="0.166667" linear="0.443507" sinusoidal="0.119486" swirl="0.348834" handkerchief="0.0532208" spiral="0.0532208" ex="0.0205979" julia="0.000899658" coefs="-0.256712 -0.117327 -0.17213 0.256968 -0.113294 0.726256"/>
+   <xform weight="0.167" color="0.333333" symmetry="1" linear="1" coefs="0.5 0.866025 -0.866025 0.5 0 0"/>
+   <xform weight="0.398313" color="0.5" symmetry="1" linear="1" coefs="0.733905 -0.0815407 0.0590939 0.801208 0.0147225 0.0441014"/>
+   <xform weight="0.167" color="0.666667" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.0188687" color="0.833333" symmetry="0.112986" linear="1" coefs="0.840517 -0.0978488 0.0978488 0.840517 0 0"/>
+   <xform weight="0.0171993" color="1" symmetry="0.10299" linear="1" coefs="0.948505 -0.0891918 0.0891918 0.948505 0 0"/>
+</flame>

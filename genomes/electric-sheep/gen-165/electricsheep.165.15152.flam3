@@ -1,0 +1,12 @@
+<flame time="0" palette="62" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.93" parents="14782">
+   <symmetry kind="-2"/>
+   <xform weight="0.083" color="0.2" sinusoidal="1.1" ex="0.2" coefs="0.342102 0.057054 0.057054 -0.342102 -2.39897 2.03556"/>
+   <xform weight="0.363" color="0.4" linear="0.5" waves="0.5" coefs="-0.031858 0.687956 0.34134 -0.181075 0.107311 -0.679805"/>
+</flame>
+<flame time="128" palette="10" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.0579739" >
+   <xform weight="0.2" color="0.5" julia="1" coefs="-0.861326 0.183323 0.43449 0.167298 0.141947 -0.306023"/>
+   <xform weight="0.2" color="1" disc="1" coefs="0.398009 -0.326916 0.0591595 -0.595058 0.501468 0.0126359"/>
+   <xform weight="0.2" color="0" bent="1" coefs="0.00693274 -0.171616 0.953476 0.0900215 0.231225 -0.405931"/>
+   <xform weight="0.2" color="0.75" horseshoe="1" coefs="0.0456099 0.19369 -0.703989 0.7378 0.141022 -0.98517"/>
+   <xform weight="0.2" color="0.25" spiral="1" coefs="0.0708451 0.85653 -0.75257 0.974444 0.852083 0.771817"/>
+</flame>

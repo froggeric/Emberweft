@@ -1,0 +1,17 @@
+<flame time="0" palette="109" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="Hilltop Design Dot Com">
+   <xform weight="0.145" color="0" bent="0.58" waves="0.42" coefs="0.039653 -0.953069 0.953069 0.039653 -0.843416 0.531808"/>
+   <xform weight="0.114" color="0.14" diamond="0.26" bent="0.74" coefs="-0.54472 -0.649364 0.649364 -0.54472 -0.074704 0.488752"/>
+   <xform weight="0.053" color="0.29" spherical="0.4" diamond="0.6" coefs="0.235266 -0.048668 0.048668 0.235266 -0.520788 -0.112593"/>
+   <xform weight="0.16" color="0.43" disc="0.48" fisheye="0.52" coefs="-0.661576 -0.282706 0.087628 -0.588875 0.027813 0.832369"/>
+   <xform weight="0.102" color="0.57" hyperbolic="0.93" fisheye="0.07" coefs="0.22019 0.523543 -0.892905 0.801677 0.096236 0.564438"/>
+   <xform weight="0.188" color="0.71" hyperbolic="1" coefs="0.371437 0.756944 -0.625101 0.026499 0.987807 0.256113"/>
+   <xform weight="0.163" color="0.86" hyperbolic="0.79" bent="0.21" coefs="1.08845 0.273711 0.05699 0.956875 -0.803522 0.060757"/>
+   <xform weight="0.075" color="1" linear="0.54" spiral="0.46" coefs="0.05082 0.332021 -0.332021 0.05082 -0.518049 -0.414533"/>
+</flame>
+<flame time="128" palette="41" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.0842777" parents="7768 4067">
+   <xform weight="0.912" color="0" horseshoe="0.44" bent="0.56" coefs="0.882752 0.249874 0.57101 -0.856575 0.36327 0.0692454"/>
+   <xform weight="0.089" color="0.2" spherical="0.73" ex="0.25" julia="0.01" coefs="-0.436341 0.175687 -0.059369 -0.097024 -0.18289 -0.56029"/>
+   <xform weight="0.354" color="0.4" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+   <xform weight="0.055" color="0.6" linear="0.08" disc="0.67" ex="0.25" coefs="0.147663 -0.240998 0.242767 0.002004 0.488268 -0.208915"/>
+   <xform weight="0.499" color="1" symmetry="1" linear="1" coefs="0.990009 4e-06 4e-06 -0.990009 0 0"/>
+</flame>

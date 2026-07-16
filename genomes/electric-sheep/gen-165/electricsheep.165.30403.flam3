@@ -1,0 +1,20 @@
+<flame time="0" palette="21" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.0899295" >
+   <symmetry kind="4"/>
+   <xform weight="0.333333" color="1" spiral="1" coefs="-0.675693 -0.895031 0.166024 0.851664 -0.320444 0.0159364"/>
+   <xform weight="0.333333" color="0.5" spiral="1" coefs="0.82074 0.174638 -0.967531 -0.365234 -0.351215 0.641185"/>
+   <xform weight="0.333333" color="0" spiral="1" coefs="-0.23125 0.0106474 -0.68825 -0.543338 -0.17204 0.267877"/>
+</flame>
+<flame time="128" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0" parents="27054">
+   <xform weight="0.14" color="0" linear="1" coefs="-0.71465 -0.14904 -0.097158 0.113768 -0.233228 -0.275993"/>
+   <xform weight="0.151" color="0.27" linear="1" coefs="-0.011287 -0.104035 0.091041 -0.235903 0.607579 -0.079118"/>
+   <xform weight="0.049" color="0.16" linear="1" coefs="-0.251929 0.180486 -0.148164 -0.130346 0.05361 -0.198837"/>
+   <xform weight="0.061" color="0.24" fisheye="1" coefs="-0.072294 0.139426 0.13608 -0.244006 0.009427 -0.238624"/>
+   <xform weight="0.071" color="0.32" fisheye="1" coefs="-0.00875 -0.20472 -0.289546 -0.380474 -0.266983 0.031115"/>
+   <xform weight="0.032" color="0.41" sinusoidal="1" coefs="0.19889 0.302178 -0.261592 0.093172 -0.109079 0.244615"/>
+   <xform weight="0.049" color="0.49" swirl="1" coefs="0.09695 -0.025509 0.257664 0.258471 0.894515 -0.256156"/>
+   <xform weight="0.041" color="0.56" polar="1" coefs="0.483622 0.168698 -0.006908 0.420208 0.158095 -0.067366"/>
+   <xform weight="0.035" color="0.65" spiral="1" coefs="-0.086466 -0.157913 -0.016459 0.132207 0.498321 -0.090101"/>
+   <xform weight="0.051" color="0.74" spiral="1" coefs="0.063806 -0.124011 0.295325 0.020895 -0.502137 -0.05076"/>
+   <xform weight="0.039" color="0.81" disc="1" coefs="0.626255 0.183183 -0.133702 0.045502 0.023874 0.356187"/>
+   <xform weight="0.5" color="1" symmetry="1" swirl="1" coefs="-1 0 0 1 0 0"/>
+</flame>

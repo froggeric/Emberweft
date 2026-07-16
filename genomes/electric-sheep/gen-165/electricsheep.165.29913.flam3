@@ -1,0 +1,13 @@
+<flame time="0" palette="27" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.143" color="0" swirl="0.25" horseshoe="0.42" heart="0.33" coefs="0.307931 0.655719 -0.652027 0.415091 -0.361922 0.923344"/>
+   <xform weight="0.143" color="0.5" swirl="0.28" fisheye="0.72" coefs="-0.45868 0.106373 0.129174 -0.066102 -0.224728 -0.023318"/>
+   <xform weight="0.143" color="1" swirl="0.25" horseshoe="0.38" julia="0.37" coefs="0.235135 -0.195885 0.286029 0.207518 0.703988 -0.286242"/>
+   <xform weight="0.285" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.285" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>
+<flame time="128" palette="65" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0" parents="29815">
+   <xform weight="0.234" color="0" spherical="0.01" swirl="0.01" horseshoe="0.01" spiral="0.58" hyperbolic="0.4" coefs="-1.79973 0.902066 -1.2543 0.476098 -1.22901 -0.416502"/>
+   <xform weight="0.232" color="0.33" linear="0.54" spherical="0.01" swirl="0.01" horseshoe="0.01" spiral="0.19" hyperbolic="0.26" coefs="-0.001438 0.632013 -0.44495 -0.179191 0.701881 0.693331"/>
+   <xform weight="0.264" color="0.67" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.298" color="1" symmetry="1" linear="1" coefs="-0.968127 -0.226791 -0.226791 0.968127 0 0"/>
+</flame>

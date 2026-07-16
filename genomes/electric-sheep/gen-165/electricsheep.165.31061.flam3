@@ -1,0 +1,24 @@
+<flame time="0" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=KITCHAOS" nick="Kit Chaos">
+   <xform weight="0.044" color="0.77" sinusoidal="0.23" swirl="0.06" horseshoe="0.19" disc="0.15" waves="0.08" fisheye="0.28" coefs="-0.135447 0.158752 -0.849194 1.04564 0.111843 0.184287"/>
+   <xform weight="0.044" color="0.66" sinusoidal="0.23" swirl="0.06" horseshoe="0.19" disc="0.15" waves="0.08" fisheye="0.28" coefs="0.522742 0.144524 0.939884 0.253854 0.238844 0.381262"/>
+   <xform weight="0.042" color="0.92" symmetry="1" fisheye="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.042" color="0.53" symmetry="1" fisheye="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.042" color="0.23" symmetry="1" fisheye="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.042" color="0.61" symmetry="1" fisheye="1" coefs="0 -1 1 0 0 0"/>
+   <xform weight="0.248" color="0.8" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.495" color="0.97" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>
+<flame time="128" palette="69" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="29800 739">
+   <xform weight="0.163184" color="0" linear="0.330626" julia="0.586717" coefs="-0.0260048 0.560647 0.152387 0.689418 -0.815427 0.0270546"/>
+   <xform weight="0.137867" color="0.0909091" linear="0.0537268" spherical="0.0123985" heart="0.0289298" disc="0.227306" julia="0.595499" waves="0.0821404" coefs="0.447442 0.242062 -1.09939 -0.231405 0.0922435 -0.258181"/>
+   <xform weight="0.313265" color="0.181818" symmetry="0.413283" linear="0.40915" spherical="0.586717" waves="0.00413283" coefs="0.522222 -0.0919274 -0.196999 0.0580209 0.35204 0.710006"/>
+   <xform weight="0.173048" color="0.272727" symmetry="0.413283" linear="0.413283" waves="0.586717" coefs="-0.903858 0.36189 -0.284179 -0.80892 0.713371 0.677359"/>
+   <xform weight="0.107266" color="0.363636" symmetry="0.413283" linear="1" coefs="0.243342 0.0117002 -0.329068 0.8939 -0.0565574 -0.153786"/>
+   <xform weight="0.0486975" color="0.454545" linear="1" coefs="0.772844 0.301707 -0.301707 0.772844 0 0"/>
+   <xform weight="0.0416569" color="0.545455" linear="1" coefs="0.618634 0.355678 -0.355678 0.618634 0 0"/>
+   <xform weight="0.0363764" color="0.636364" linear="1" coefs="0.474413 0.346682 -0.346682 0.474413 0 0"/>
+   <xform weight="0.0322694" color="0.727273" linear="1" coefs="0.362342 0.288902 -0.288902 0.362342 0 0"/>
+   <xform weight="0.0293358" color="0.818182" linear="1" coefs="0.29594 0.203245 -0.203245 0.29594 0 0"/>
+   <xform weight="0.0264023" color="0.909091" linear="1" coefs="0.278448 0.11314 -0.11314 0.278448 0 0"/>
+   <xform weight="0.0240554" color="1" linear="1" coefs="0.303016 0.0401338 -0.0401338 0.303016 0 0"/>
+</flame>

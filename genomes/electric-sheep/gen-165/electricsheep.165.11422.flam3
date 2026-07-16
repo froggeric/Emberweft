@@ -1,0 +1,13 @@
+<flame time="0" palette="14" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.35" url="http://www.renderosity.com/homepage.ez?Who=etomchek" nick="etomchek">
+   <xform weight="0.333" color="0.34" linear="0.57" sinusoidal="0.25" diamond="0.18" coefs="0.541691 0.502676 0.225813 -0.449973 0.021939 0.469076"/>
+   <xform weight="0.333" color="0.14" linear="0.75" sinusoidal="0.25" coefs="0.904333 0.283337 -0.611537 0.545892 -0.110816 -0.250854"/>
+   <xform weight="0.333" color="1" sinusoidal="0.25" diamond="0.75" coefs="0.026935 -1.13255 -0.537361 0.249935 1.18841 0.490442"/>
+</flame>
+<flame time="128" palette="63" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.48984" >
+   <symmetry kind="3"/>
+   <xform weight="0.2" color="0.75" hyperbolic="1" coefs="0.731066 0.723713 -0.607347 -0.952897 -0.551013 0.548358"/>
+   <xform weight="0.2" color="0" heart="1" coefs="-0.0887557 -0.243184 0.527377 0.722468 0.679185 -0.935869"/>
+   <xform weight="0.2" color="1" fisheye="1" coefs="0.198429 0.482909 -0.686668 -0.890327 -0.760276 0.840709"/>
+   <xform weight="0.2" color="0.25" waves="1" coefs="-0.524774 0.647823 0.173146 -0.874679 0.342093 0.672157"/>
+   <xform weight="0.2" color="0.5" julia="1" coefs="0.00222439 0.971548 -0.686274 0.682788 0.0244897 -0.305359"/>
+</flame>

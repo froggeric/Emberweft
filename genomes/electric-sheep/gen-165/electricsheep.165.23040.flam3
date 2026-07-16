@@ -1,0 +1,20 @@
+<flame time="0" palette="12" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="va@vaharoni.com" nick="falczx">
+   <xform weight="0.088" color="0" horseshoe="0.01" disc="0.44" julia="0.17" bent="0.38" coefs="0.248004 -0.266344 0.05402 -0.170059 -0.926372 0.296054"/>
+   <xform weight="0.115" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0.008494 -0.00766"/>
+   <xform weight="0.115" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.115" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.115" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.115" color="0" symmetry="1" linear="1" coefs="1 0 0 1 0 0"/>
+   <xform weight="0.061" color="0" symmetry="1" horseshoe="0.09" julia="0.91" coefs="-0.130338 -0.290503 0.304839 -0.162115 -0.719221 -0.17439"/>
+   <xform weight="0.098" color="0.64" linear="0.18" disc="0.44" bent="0.38" coefs="0.106267 -0.200969 -0.37376 -0.012522 -0.044323 0.499953"/>
+   <xform weight="0.088" color="0.72" horseshoe="0.01" disc="0.44" julia="0.17" bent="0.38" coefs="0.207781 0.136001 0.208012 0.315601 0.309243 -0.714572"/>
+   <xform weight="0.088" color="0.82" horseshoe="0.01" disc="0.44" julia="0.17" bent="0.38" coefs="-0.209484 0.263306 0.083657 -0.16035 -0.376745 -0.064103"/>
+</flame>
+<flame time="128" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.811511" >
+   <symmetry kind="4"/>
+   <xform weight="0.2" color="0.25" fisheye="1" coefs="-0.168224 0.103847 0.444322 0.116173 0.506579 -0.487206"/>
+   <xform weight="0.2" color="0.75" hyperbolic="1" coefs="-0.310051 -0.267772 0.744615 0.414418 0.80754 -0.753892"/>
+   <xform weight="0.2" color="0" polar="1" coefs="0.902591 -0.942123 -0.40554 0.528271 0.250376 -0.795377"/>
+   <xform weight="0.2" color="1" julia="1" coefs="-0.219242 -0.29191 0.645293 -0.31665 -0.234033 -0.760247"/>
+   <xform weight="0.2" color="0.5" handkerchief="1" coefs="0.556812 0.931724 -0.386039 0.875428 -0.361198 -0.0679324"/>
+</flame>

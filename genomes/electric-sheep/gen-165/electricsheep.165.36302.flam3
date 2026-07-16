@@ -1,0 +1,14 @@
+<flame time="0" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.45" parents="35513 35713">
+   <xform weight="0.14664" color="0" linear="0.458965" sinusoidal="0.384345" swirl="0.00679964" handkerchief="0.00906621" heart="0.0524292" spiral="0.0634633" hyperbolic="0.024932" coefs="-0.84127 0.383198 -0.637285 -0.433362 -0.34398 -0.209007"/>
+   <xform weight="0.167" color="0.2" linear="1" coefs="-0.149945 0.143041 -0.143041 -0.149945 -0.662686 -0.025809"/>
+   <xform weight="0.295367" color="0.4" symmetry="0.886673" linear="0.975068" sinusoidal="0.00906621" swirl="0.00679964" handkerchief="0.00906621" coefs="-0.121359 0.75021 -0.774791 -0.122844 -0.0413383 -0.000670558"/>
+   <xform weight="0.333" color="0.6" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+   <xform weight="0.0288361" color="0.8" symmetry="0.201651" linear="1" coefs="0.616668 0.087493 -0.087493 0.616668 0 0"/>
+   <xform weight="0.0288361" color="1" symmetry="0.201651" linear="1" coefs="0.753478 -0.196595 0.196595 0.753478 0 0"/>
+</flame>
+<flame time="128" palette="45" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://vaharoni.com" nick="falczx">
+   <xform weight="0.1" color="0" polar="0.32" diamond="0.68" coefs="-0.830216 0.250913 0.300607 -0.776997 0.95192 -0.143434"/>
+   <xform weight="0.1" color="1" disc="0.14" fisheye="0.86" coefs="0.33076 0.226694 -0.226694 0.33076 -0.291663 0.372687"/>
+   <xform weight="0.4" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.4" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>

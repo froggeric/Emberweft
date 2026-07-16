@@ -1,0 +1,17 @@
+<flame time="0" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.454563" >
+   <symmetry kind="-2"/>
+   <xform weight="0.25" color="1" ex="1" coefs="-0.511561 0.709966 0.181484 0.96384 -0.634979 -0.989545"/>
+   <xform weight="0.25" color="0.333333" ex="1" coefs="-0.699296 -0.461526 0.313546 0.572957 -0.421087 -0.448953"/>
+   <xform weight="0.25" color="0.666667" ex="1" coefs="-0.086093 -0.276351 -0.305458 -0.919792 0.684011 -0.14299"/>
+   <xform weight="0.25" color="0" ex="1" coefs="0.571033 -0.893431 0.368638 0.149199 -0.233219 -0.163344"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="235 17259">
+   <xform weight="0.407768" color="0" symmetry="0.111652" linear="0.111652" julia="0.888348" coefs="0.379826 0.423081 0.737703 -0.581184 0.252391 0.531171"/>
+   <xform weight="0.094" color="0.0909091" sinusoidal="0.24" handkerchief="0.08" heart="0.44" spiral="0.14" ex="0.11" coefs="-0.056404 -0.105993 -0.156108 0.234684 -0.421114 -0.150682"/>
+   <xform weight="0.407768" color="0.181818" symmetry="0.111652" linear="0.111652" julia="0.888348" coefs="-0.188509 -0.208048 0.612075 -0.605844 -0.320964 0.700203"/>
+   <xform weight="0.052" color="0.272727" heart="0.48" disc="0.28" spiral="0.14" ex="0.11" coefs="-0.061158 0.081585 -0.033488 0.570523 0.560634 0.729372"/>
+   <xform weight="0.052" color="0.454545" heart="0.44" spiral="0.14" hyperbolic="0.06" ex="0.11" fisheye="0.26" coefs="-0.058645 -0.105131 -0.244464 -0.191949 0.322338 -0.461133"/>
+   <xform weight="0.114" color="0.636364" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.114" color="0.818182" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.114" color="1" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+</flame>

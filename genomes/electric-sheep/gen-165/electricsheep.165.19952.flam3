@@ -1,0 +1,10 @@
+<flame time="0" palette="25" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.hilltopdesign.com" nick="A man shrouded in great Mr. Wheee">
+   <xform weight="0.038" color="0" sinusoidal="0.88" waves="0.12" coefs="0.164895 -0.432525 -0.458875 -0.386681 -0.667937 -0.389511"/>
+   <xform weight="0.075" color="0.25" ex="0.81" waves="0.19" coefs="0.021923 -0.907103 -0.884995 -0.275515 0.590548 -0.635414"/>
+   <xform weight="0.038" color="0.5" spherical="1" coefs="0.181516 0.4158 -0.239225 0.103714 -0.377606 -0.12071"/>
+   <xform weight="0.049" color="0.75" spherical="0.39" julia="0.61" coefs="-0.585098 0.106093 -0.223761 0.495078 0.021565 -0.559104"/>
+   <xform weight="0.049" color="1" popcorn="1" coefs="0.528935 0.265388 0.50799 -0.544192 -0.800498 -0.217061"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

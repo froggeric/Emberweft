@@ -1,0 +1,6 @@
+<flame time="0" palette="31" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="shagahs">
+   <xform weight="0.145" color="0" linear="0.36" fisheye="0.64" coefs="0.455399 -0.140389 -0.043836 0.556002 -0.133383 0.115774"/>
+   <xform weight="0.188" color="0.33" linear="0.54" spherical="0.46" coefs="-0.715076 -0.736878 -1.08797 0.106838 0.213057 -1.02321"/>
+   <xform weight="0.333" color="0.67" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.333" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

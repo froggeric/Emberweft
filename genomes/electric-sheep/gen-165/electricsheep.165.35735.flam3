@@ -1,0 +1,16 @@
+<flame time="0" palette="33" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.102" color="0.96" sinusoidal="0.74" heart="0.26" coefs="-1.01377 -0.552479 -0.215657 -0.852657 -0.201379 0.078422"/>
+   <xform weight="0.041" color="0.82" hyperbolic="0.52" waves="0.48" coefs="0.202647 0.212627 -0.133831 0.155101 -0.602562 -0.709846"/>
+   <xform weight="0.143" color="0.96" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.143" color="0.51" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="0.63" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.99" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.66" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="0.78" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>
+<flame time="128" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.45" url="http://www.hallucinaut.com" nick="Hallucinaut">
+   <xform weight="0.167" color="0.77" linear="0.67" sinusoidal="0.33" coefs="-0.367754 0.833636 -0.833636 -0.367754 -0.901282 -0.352254"/>
+   <xform weight="0.167" color="0.44" linear="1" coefs="-0.149945 0.143041 -0.143041 -0.149945 -0.662686 -0.025809"/>
+   <xform weight="0.333" color="0.05" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.333" color="0.11" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

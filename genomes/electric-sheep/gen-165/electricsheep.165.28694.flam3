@@ -1,0 +1,24 @@
+<flame time="0" palette="73" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="" nick="">
+   <xform weight="0.281" color="0" horseshoe="0.14" fisheye="0.86" coefs="0.051627 0.740197 -0.802239 -0.257623 0.592519 0.980242"/>
+   <xform weight="0.103" color="0.09" sinusoidal="0.09" spherical="0.91" coefs="0.187614 -0.31059 0.296458 0.104209 0.289369 -0.888783"/>
+   <xform weight="0.128" color="0.18" linear="1" coefs="0.845723 0.307818 -0.307818 0.845723 0 0"/>
+   <xform weight="0.096" color="0.27" linear="1" coefs="0.612836 0.51423 -0.51423 0.612836 0 0"/>
+   <xform weight="0.077" color="0.36" symmetry="1" linear="1" coefs="0.35 0.606218 -0.606218 0.35 0 0"/>
+   <xform weight="0.064" color="0.45" symmetry="1" linear="1" coefs="0.104189 0.590885 -0.590885 0.104189 0 0"/>
+   <xform weight="0.055" color="0.55" symmetry="1" linear="1" coefs="-0.086824 0.492404 -0.492404 -0.086824 0 0"/>
+   <xform weight="0.048" color="0.64" symmetry="1" linear="1" coefs="-0.2 0.34641 -0.34641 -0.2 0 0"/>
+   <xform weight="0.043" color="0.73" linear="1" coefs="-0.229813 0.192836 -0.192836 -0.229813 0 0"/>
+   <xform weight="0.038" color="0.82" linear="1" coefs="-0.187939 0.068404 -0.068404 -0.187939 0 0"/>
+   <xform weight="0.035" color="0.91" linear="1" coefs="-0.1 0 0 -0.1 0 0"/>
+   <xform weight="0.032" color="1" linear="1" coefs="0 0 0 0 0 0"/>
+</flame>
+<flame time="128" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.268" color="0" linear="0.22" spherical="0.04" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.03" coefs="-0.149351 -0.262468 -0.018032 0.267974 1.0044 0.74096"/>
+   <xform weight="0.266" color="0.51" linear="0.23" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" diamond="0.02" fisheye="0.03" coefs="-0.406857 -0.176888 0.033617 -0.182246 0.344815 0.726649"/>
+   <xform weight="0.153" color="0.29" symmetry="1" linear="1" coefs="0 1.06733 -1.06733 0 0 0"/>
+   <xform weight="0.153" color="0.43" symmetry="1" linear="1" coefs="-1.06733 0 0 -1.06733 0 0"/>
+   <xform weight="0.153" color="0.57" symmetry="1" linear="1" coefs="0 -1.06733 1.06733 0 0 0"/>
+   <xform weight="0.002" color="0.06" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.917622 0.017772 -0.037829 0.890753 0.017704 0.056958"/>
+   <xform weight="0.002" color="0.07" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.919472 -0.050486 -0.018955 0.934938 0.016343 0.067751"/>
+   <xform weight="0.002" color="0.08" linear="0.26" spherical="0.01" horseshoe="0.54" polar="0.14" heart="0.04" fisheye="0.01" coefs="0.926066 -0.001903 -0.012154 0.879197 0.00463 0.088414"/>
+</flame>

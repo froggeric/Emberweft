@@ -1,0 +1,18 @@
+<flame time="0" palette="55" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.309212" parents="11747">
+   <xform weight="0.167" color="0" sinusoidal="0.36" hyperbolic="0.64" coefs="-0.368421 0.317408 -0.045344 -0.260728 0.575186 0.080636"/>
+   <xform weight="0.167" color="0.11" linear="1" coefs="0.845723 0.307818 -0.307818 0.845723 0 0"/>
+   <xform weight="0.333" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.333" color="0" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>
+<flame time="128" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.089" color="0" handkerchief="0.52" heart="0.19" diamond="0.25" bent="0.04" coefs="-0.433277 -0.173081 -0.28734 0.542176 -0.426967 -0.739572"/>
+   <xform weight="0.089" color="0.39" sinusoidal="0.03" polar="0.53" heart="0.19" diamond="0.25" coefs="0.327623 -0.076895 0.351731 0.004259 0.092394 0.109743"/>
+   <xform weight="0.089" color="0.77" heart="0.19" diamond="0.25" julia="0.15" fisheye="0.41" coefs="-0.056336 0.237515 -0.166286 0.122219 0.319945 0.013718"/>
+   <xform weight="0.105" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.105" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.105" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.105" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.105" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.105" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.105" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>

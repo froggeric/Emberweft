@@ -1,0 +1,15 @@
+<flame time="0" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http\\\www.apophysis.org" nick="TheUnwise">
+   <xform weight="0.104" color="0" diamond="0.3" julia="0.7" coefs="-0.463337 0.714114 0.725263 0.476041 -0.918471 -0.641376"/>
+   <xform weight="0.039" color="1" horseshoe="0.27" spiral="0.73" coefs="-0.269953 0.440802 -0.451484 -0.299682 0.893626 -0.692713"/>
+   <xform weight="0.143" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.143" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>
+<flame time="128" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.18" parents="7127">
+   <xform weight="0.9" color="0" symmetry="1" linear="1" coefs="-0.011374 0.974183 0.974183 0.011374 -0.335751 0.355957"/>
+   <xform weight="0.05" color="1" julia="0.58" bent="0.42" coefs="-0.150312 0.0578419 -0.183066 0.779295 -0.722503 -0.920928"/>
+   <xform weight="0.05" color="0" disc="0.09" ex="0.97" popcorn="0.33" coefs="-0.880095 0.574907 -1.09181 0.713206 0.916896 -0.03344"/>
+</flame>

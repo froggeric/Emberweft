@@ -1,0 +1,21 @@
+<flame time="0" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.19" url="" nick="Don Ten">
+   <xform weight="0.071" color="0" spherical="0.5" horseshoe="0.5" coefs="-0.356829 -0.342463 -0.478904 -0.465087 0.228007 0.227869"/>
+   <xform weight="0.132" color="0.09" sinusoidal="0.92" spherical="0.08" coefs="-1.28897 -0.888384 -0.51573 -0.358146 1.89042 0.175102"/>
+   <xform weight="0.107" color="0.18" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.107" color="0.27" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.132" color="0.36" sinusoidal="0.92" spherical="0.08" coefs="-1.28897 -0.888384 -0.193014 -1.06987 1.57995 1.51132"/>
+   <xform weight="0.092" color="0.45" linear="1" coefs="0.845723 0.307818 -0.307818 0.845723 0 0"/>
+   <xform weight="0.078" color="0.55" linear="1" coefs="0.612836 0.51423 -0.51423 0.612836 0 0"/>
+   <xform weight="0.069" color="0.64" linear="1" coefs="0.35 0.606218 -0.606218 0.35 0 0"/>
+   <xform weight="0.061" color="0.73" linear="1" coefs="0.104189 0.590885 -0.590885 0.104189 0 0"/>
+   <xform weight="0.055" color="0.82" linear="1" coefs="-0.086824 0.492404 -0.492404 -0.086824 0 0"/>
+   <xform weight="0.05" color="0.91" linear="1" coefs="-0.2 0.34641 -0.34641 -0.2 0 0"/>
+   <xform weight="0.046" color="1" linear="1" coefs="-0.229813 0.192836 -0.192836 -0.229813 0 0"/>
+</flame>
+<flame time="128" palette="14" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.125679">
+   <symmetry kind="13"/>
+   <xform weight="0.25" color="1" diamond="1" coefs="-0.495257 -0.279455 -0.72807 -0.0298809 0.510038 0.171232"/>
+   <xform weight="0.25" color="0.333333" diamond="1" coefs="0.591734 -0.414184 -0.328829 0.844879 -0.369597 0.381837"/>
+   <xform weight="0.25" color="0.666667" diamond="1" coefs="-0.957714 -0.483434 0.990436 0.0888796 0.205079 0.817189"/>
+   <xform weight="0.25" color="0" diamond="1" coefs="-0.275459 -0.574227 0.542505 -0.887515 -0.155956 0.994726"/>
+</flame>

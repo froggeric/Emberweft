@@ -1,0 +1,20 @@
+<flame time="0" palette="14" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.6005" >
+   <xform weight="0.25" color="0.333333" swirl="1" coefs="-0.743549 -0.662726 -0.693579 0.0992186 0.764492 0.361864"/>
+   <xform weight="0.25" color="0" swirl="1" coefs="-0.732615 -0.642382 0.34338 0.916826 0.335026 -0.862639"/>
+   <xform weight="0.25" color="0.666667" swirl="1" coefs="0.89802 0.644596 -0.369119 -0.0503508 -0.757805 -0.872532"/>
+   <xform weight="0.25" color="1" swirl="1" coefs="-0.998221 0.351449 -0.865789 -0.624156 0.723353 -0.514329"/>
+</flame>
+<flame time="128" palette="59" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="35500">
+   <xform weight="0.017" color="0" julia="1" coefs="0.189017 -0.78983 0.788455 0.185992 15.8475 -2.70727"/>
+   <xform weight="0.051" color="0.09" julia="1" coefs="-0.151811 0.293373 0.290688 0.001272 -0.995912 -0.113989"/>
+   <xform weight="0.075" color="0.18" linear="1" coefs="0.773066 0.460847 -0.460847 0.773066 0 0"/>
+   <xform weight="0.06" color="0.27" linear="1" coefs="0.505621 0.619953 -0.619953 0.505621 0 0"/>
+   <xform weight="0.05" color="0.36" linear="1" coefs="-0.735052 -0.74481 -0.346892 0.819861 0.775788 -0.0370946"/>
+   <xform weight="0.043" color="0.45" linear="1" coefs="-0.008356 0.599943 -0.599943 -0.008356 0 0"/>
+   <xform weight="0.037" color="0.55" linear="1" coefs="-0.177556 0.46741 -0.46741 -0.177556 0 0"/>
+   <xform weight="0.033" color="0.64" linear="1" coefs="-0.261378 0.302804 -0.302804 -0.261378 0 0"/>
+   <xform weight="0.03" color="0.73" linear="1" coefs="-0.26188 0.146357 -0.146357 -0.26188 0 0"/>
+   <xform weight="0.027" color="0.82" linear="1" coefs="-0.197435 0.03198 -0.03198 -0.197435 0 0"/>
+   <xform weight="0.025" color="0.91" linear="1" coefs="-0.098226 -0.018737 0.018737 -0.098226 0 0"/>
+   <xform weight="0.552" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>

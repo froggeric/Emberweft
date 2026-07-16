@@ -1,0 +1,12 @@
+<flame time="0" palette="45" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.6" url="" nick="planlos.sh">
+   <xform weight="0.333" color="0" handkerchief="0.5" ex="0.5" coefs="-0.768948 -0.365426 0.217008 -1.40284 -3.47793 -3.33652"/>
+   <xform weight="0.333" color="0.5" spherical="0.97" horseshoe="0.03" coefs="-0.083551 0.25106 -0.269422 0.0099 -0.465938 -0.718816"/>
+   <xform weight="0.333" color="1" linear="0.94" popcorn="0.06" coefs="0.704448 0.403942 -0.403942 0.704448 -0.977801 -0.984807"/>
+</flame>
+<flame time="128" palette="63" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.364" color="0" horseshoe="0.44" waves="0.18" popcorn="0.38" coefs="0.558376 -0.520366 0.047675 -0.717777 -0.2746 1.19883"/>
+   <xform weight="0.126" color="0.29" horseshoe="0.44" julia="0.35" waves="0.22" coefs="0.573496 -0.354654 0.250786 0.372254 -0.776205 1.22138"/>
+   <xform weight="0.186" color="0.57" linear="0.29" horseshoe="0.44" julia="0.27" coefs="-0.235511 0.379022 -0.26081 -0.139261 -0.041761 -0.581994"/>
+   <xform weight="0.27" color="0.86" horseshoe="0.44" disc="0.53" ex="0.03" coefs="0.264983 0.526485 -0.701191 -0.065339 0.728303 1.00797"/>
+   <xform weight="0.055" color="0.56" horseshoe="0.44" diamond="0.5" waves="0.07" coefs="0.134588 -0.170381 0.543243 0.018029 0.501265 0.85311"/>
+</flame>

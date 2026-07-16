@@ -1,0 +1,19 @@
+<flame time="0" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.147" color="0" linear="0.14" sinusoidal="0.13" swirl="0.2" disc="0.29" popcorn="0.25" coefs="0.580972 -0.242866 0.10114 -0.062996 0.299632 -0.466146"/>
+   <xform weight="0.147" color="0.32" linear="0.14" heart="0.31" disc="0.29" bent="0.02" popcorn="0.25" coefs="0.255322 -0.140968 -0.341308 0.265879 -0.245353 -1.03574"/>
+   <xform weight="0.147" color="0.65" linear="0.14" spherical="0.04" disc="0.29" hyperbolic="0.29" popcorn="0.25" coefs="-0.022489 0.005562 -0.037464 -0.370249 0.306432 0.885293"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.143" color="0" symmetry="1" linear="1" coefs="0.5 0.866025 -0.866025 0.5 0 0"/>
+   <xform weight="0.143" color="0.25" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.143" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.143" color="0.75" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="0.5 -0.866025 0.866025 0.5 0 0"/>
+</flame>
+<flame time="128" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://electricsheep.org/v2.5/" nick="digitalglitter">
+   <xform weight="0.215" color="0" linear="0.04" sinusoidal="0.04" polar="0.06" hyperbolic="0.05" julia="0.78" fisheye="0.04" coefs="3.36351 0.499023 -1.54941 0.959592 -0.847804 0.153228"/>
+   <xform weight="0.215" color="0.25" linear="0.04" sinusoidal="0.04" spherical="0.04" heart="0.06" hyperbolic="0.05" julia="0.78" coefs="2.92321 3.30801 -0.340868 -1.25387 -0.067193 -0.693809"/>
+   <xform weight="0.215" color="0.56" linear="0.04" sinusoidal="0.07" hyperbolic="0.05" julia="0.84" coefs="0.009777 -0.128162 0.062805 -0.483325 -0.204856 -0.56243"/>
+   <xform weight="0.167" color="0.56" linear="0.13" sinusoidal="0.04" hyperbolic="0.05" julia="0.78" coefs="-0.343384 -1.71197 0.430693 0.373879 0.081097 -0.375029"/>
+   <xform weight="0.115" color="0.56" linear="0.13" sinusoidal="0.04" hyperbolic="0.05" julia="0.78" coefs="-0.270587 -0.268728 0.401623 -1.27875 0.417373 -0.406513"/>
+   <xform weight="0.072" color="0.4" linear="0.17" hyperbolic="0.05" julia="0.78" coefs="0.785862 -0.877491 0.373397 -0.002303 -0.803439 0.339208"/>
+</flame>

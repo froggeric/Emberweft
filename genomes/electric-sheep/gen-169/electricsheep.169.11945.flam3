@@ -1,0 +1,14 @@
+<flame time="0" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.333" color="0" handkerchief="0.38" bent="0.62" coefs="-1.02378 -0.535277 -0.642295 1.15036 0.921282 -0.907384"/>
+   <xform weight="0.333" color="0.5" spherical="0.31" heart="0.69" coefs="0.722213 -0.142528 0.114905 0.718132 -0.966271 0.826987"/>
+   <xform weight="0.333" color="1" sinusoidal="0.87" horseshoe="0.13" coefs="0.462646 0.3144 -0.304596 0.456567 -0.050923 0.659066"/>
+</flame>
+<flame time="128" palette="69" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="8793">
+   <symmetry kind="5"/>
+   <xform weight="0.057" color="0" sinusoidal="0.25" fisheye="0.75" coefs="0.430551 -0.320667 0.187614 0.259851 0.142228 1.05184"/>
+   <xform weight="0.05" color="0.18" sinusoidal="0.25" spiral="0.43" popcorn="0.32" coefs="0.282662 -0.117235 0.171907 -0.23716 -0.760643 0.172207"/>
+   <xform weight="0.067" color="0.36" sinusoidal="0.25" horseshoe="0.32" julia="0.43" coefs="-0.566 -0.151973 0.641869 -0.628715 -0.325243 -0.415981"/>
+   <xform weight="0.047" color="0.54" sinusoidal="0.25" diamond="0.14" bent="0.61" coefs="-0.580582 0.030885 -0.351803 0.107764 -0.04511 0.564098"/>
+   <xform weight="0.071" color="0.73" sinusoidal="0.25" heart="0.46" bent="0.29" coefs="0.039674 -0.708399 -0.226553 -0.839994 0.417241 0.17636"/>
+   <xform weight="0.063" color="0.91" sinusoidal="0.25" polar="0.58" julia="0.17" coefs="0.262229 0.42457 0.814796 0.055015 0.286167 1.01293"/>
+</flame>

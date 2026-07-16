@@ -1,0 +1,13 @@
+<flame time="0" palette="13" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.56038" >
+   <xform weight="0.25" color="0.333333" bent="1" coefs="-0.0681717 -0.795318 -0.875 -0.237123 0.329367 -0.884785"/>
+   <xform weight="0.25" color="0" bent="1" coefs="0.23325 0.63305 0.799773 0.00194842 -0.0175914 -0.255682"/>
+   <xform weight="0.25" color="1" bent="1" coefs="-0.488751 0.105771 -0.806785 0.815854 -0.618502 0.901324"/>
+   <xform weight="0.25" color="0.666667" bent="1" coefs="-0.714399 -0.159747 -0.92923 -0.784963 -0.773963 -0.858403"/>
+</flame>
+<flame time="128" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.giveupalready.com/gallery/index.php?cat=13927" nick="AURELL">
+   <xform weight="0.125" color="0" sinusoidal="0.43" horseshoe="0.57" coefs="0.137183 0.97048 -0.966869 0.129786 -0.542293 -0.306441"/>
+   <xform weight="0.125" color="1" swirl="0.53" heart="0.47" coefs="0.948469 0.330148 -0.259505 0.949931 0.780542 -0.272133"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.25" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>

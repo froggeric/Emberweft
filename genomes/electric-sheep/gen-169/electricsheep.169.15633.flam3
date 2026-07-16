@@ -1,0 +1,15 @@
+<flame time="0" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=KITCHAOS" nick="Kit Chaos">
+   <xform weight="0.125" color="0.04" linear="0.75" sinusoidal="0.25" coefs="-0.032571 0.341658 0.426045 0.015788 -0.732797 -0.673679"/>
+   <xform weight="0.125" color="0.27" linear="0.75" sinusoidal="0.25" coefs="-0.220469 0.343304 -0.268256 0.030005 0.275395 0.21756"/>
+   <xform weight="0.2" color="1" symmetry="1" linear="1" coefs="-1 0 -0.481395 -0.008828 0.539307 -1.14357"/>
+   <xform weight="0.2" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.2" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.2" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="63" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.511801" >
+   <symmetry kind="3"/>
+   <xform weight="0.25" color="0" sinusoidal="1" coefs="0.637913 0.0677929 -0.0123208 -0.532988 -0.336525 -0.963684"/>
+   <xform weight="0.25" color="1" fisheye="1" coefs="-0.154503 -0.220322 -0.290805 0.612641 -0.163008 0.248761"/>
+   <xform weight="0.25" color="0.666667" disc="1" coefs="0.143017 -0.694158 -0.176411 0.669958 0.837323 -0.576152"/>
+   <xform weight="0.25" color="0.333333" disc="1" coefs="-0.318505 0.289707 -0.089572 -0.453369 -0.570144 -0.572387"/>
+</flame>

@@ -1,0 +1,13 @@
+<flame time="0" palette="14" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="TheStever">
+   <xform weight="0.236" color="0" spherical="0.73" swirl="0.02" popcorn="0.25" coefs="0.633999 -0.491988 0.182975 0.659223 0.545635 0.224952"/>
+   <xform weight="0.179" color="0.2" disc="0.56" bent="0.19" popcorn="0.25" coefs="0.799555 0.117461 0.154649 0.326914 -0.640674 -0.763896"/>
+   <xform weight="0.021" color="0.4" linear="0.75" popcorn="0.25" coefs="-0.220327 -0.1312 -0.106571 0.048426 0.242219 0.662546"/>
+   <xform weight="0.021" color="0.6" linear="0.75" popcorn="0.25" coefs="-0.385192 -0.281298 -0.501456 0.071906 -0.911462 -0.016501"/>
+   <xform weight="0.021" color="0.8" linear="0.75" popcorn="0.25" coefs="0.121756 0.212303 -0.391672 0.056993 -0.343339 0.538999"/>
+   <xform weight="0.021" color="1" linear="0.75" popcorn="0.25" coefs="0.38512 0.252363 -0.195054 -0.064674 0.715305 0.511138"/>
+   <xform weight="0.5" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>
+<flame time="128" palette="26" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="v2d5.sheepserver.net" nick="GGG">
+   <xform weight="0.5" color="0.97" sinusoidal="0.94" polar="0.06" coefs="0.824457 0.186081 -0.323154 0.499724 -0.346611 0.219669"/>
+   <xform weight="0.5" color="0.19" sinusoidal="0.44" horseshoe="0.36" handkerchief="0.2" coefs="-0.574304 -0.428458 0.495327 -0.469372 0.38552 0.100809"/>
+</flame>

@@ -1,0 +1,15 @@
+<flame time="0" palette="32" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.thechisa.com" nick="TheChisa">
+   <xform weight="0.195" color="0" linear="0.69" julia="0.31" coefs="-0.643303 0.093913 0.288075 -0.565555 -0.508163 0.028314"/>
+   <xform weight="0.214" color="0.44" linear="0.03" spherical="0.38" polar="0.21" disc="0.38" julia="1" coefs="-0.490282 0.092209 -0.944604 -0.00976 -0.763044 0.904949"/>
+   <xform weight="0.198" color="0.16" linear="0.69" julia="0.31" coefs="-0.457676 -0.621239 0.356168 -0.379968 -0.453158 -0.79112"/>
+   <xform weight="0.198" color="0.23" linear="0.69" julia="0.31" coefs="-0.312752 -0.112482 0.159778 -0.286226 0.928749 0.374585"/>
+   <xform weight="0.195" color="0.31" linear="0.69" julia="0.31" coefs="-0.921729 -0.362476 0.261053 -0.331844 0.196985 0.548322"/>
+</flame>
+<flame time="128" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.45" parents="34477 34630">
+   <xform weight="0.102" color="0" sinusoidal="0.74" heart="0.26" coefs="-1.01377 -0.552479 -0.215657 -0.852657 -0.201379 0.078422"/>
+   <xform weight="0.167" color="0.166667" linear="1" coefs="-0.149945 0.143041 -0.143041 -0.149945 -0.662686 -0.025809"/>
+   <xform weight="0.143" color="0.333333" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.333" color="0.5" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+   <xform weight="0.143" color="0.666667" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+</flame>

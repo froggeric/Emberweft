@@ -1,0 +1,10 @@
+<flame time="0" palette="15" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://v2d5.sheepserver.net/" nick="adragontattoo">
+   <xform weight="0.213" color="1" linear="-0.12" spherical="-0.88" spiral="-0.2" hyperbolic="0.1" coefs="-0.100895 -0.609263 0.63769 -0.195166 1.52676 0.805991"/>
+   <xform weight="0.106" color="0" linear="0.14" spherical="0.24" spiral="0.24" coefs="-0.431515 -0.44549 0.094828 -0.175504 0.135615 -0.02309"/>
+   <xform weight="0.516" color="0" linear="0.01" spherical="0.25" swirl="0.6" polar="0.1" spiral="0.25" coefs="-0.256526 -0.974118 1.07769 1.03481 -15.4068 10.0283"/>
+   <xform weight="0.165" color="0.68" linear="1" swirl="0.01" coefs="0.327176 -0.354554 0.754954 0.145587 2.39159 3.27632"/>
+</flame>
+<flame time="128" palette="49" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Yellow5">
+   <xform weight="0.333" color="0" sinusoidal="0.9" julia="0.1" coefs="0.209453 -0.795865 0.965081 -0.285709 0.026481 0.82087"/>
+   <xform weight="0.333" color="1" waves="0.92" fisheye="0.08" coefs="-0.452793 0.274853 -0.08358 -0.313532 0.674799 0.459989"/>
+</flame>

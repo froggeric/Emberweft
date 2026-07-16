@@ -1,0 +1,19 @@
+<flame time="0" palette="69" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.0197917">
+   <symmetry kind="27"/>
+   <xform weight="0.2" color="0" hyperbolic="1" coefs="0.159658 0.730172 0.195258 -0.655559 0.677308 0.339533"/>
+   <xform weight="0.2" color="0.5" hyperbolic="1" coefs="-0.125308 0.0566129 0.602819 0.81848 0.769655 0.52984"/>
+   <xform weight="0.2" color="1" hyperbolic="1" coefs="0.814236 -0.502901 -0.511391 0.424279 0.176206 0.866873"/>
+   <xform weight="0.2" color="0.25" hyperbolic="1" coefs="-0.852912 -0.504758 0.638236 0.0880864 0.649329 -0.187944"/>
+   <xform weight="0.2" color="0.75" hyperbolic="1" coefs="-0.0426322 0.365507 -0.88105 -0.978311 -0.783789 -0.550974"/>
+</flame>
+<flame time="128" palette="265" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.92" url="" nick="Don Ten">
+   <xform weight="0.071" color="0" sinusoidal="0.25" julia="0.08" waves="0.68" coefs="0.539054 -0.282896 0.106858 -0.212232 0.203384 0.328571"/>
+   <xform weight="0.071" color="0.42" linear="0.11" sinusoidal="0.25" spherical="0.64" coefs="-0.008714 0.036667 0.166207 0.262419 0.025579 -0.807809"/>
+   <xform weight="0.071" color="0.85" sinusoidal="0.25" spiral="0.55" bent="0.2" coefs="0.210801 0.384647 -0.360052 -0.143748 0.596923 0.256606"/>
+   <xform weight="0.131" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.131" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.131" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.131" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.131" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.131" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>

@@ -1,0 +1,14 @@
+<flame time="0" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="29909 31561">
+   <xform weight="0.530237" color="0" linear="0.215524" sinusoidal="0.0217945" horseshoe="0.303135" spiral="0.00242161" diamond="0.454703" waves="0.00242161" coefs="-0.80694 0.861731 -0.759036 -0.381809 -0.217882 0.458958"/>
+   <xform weight="0.171981" color="0.25" linear="0.0145297" sinusoidal="0.222789" horseshoe="0.0454703" spiral="0.00242161" diamond="0.0378919" waves="0.578379" fisheye="0.0909406" coefs="-0.395936 0.212463 -0.0948954 0.141402 0.0926784 -0.252399"/>
+   <xform weight="0.391754" color="0.5" symmetry="0.757839" linear="0.772368" sinusoidal="0.222789" spiral="0.00242161" waves="0.00242161" coefs="-0.806782 -0.189052 0.205639 -0.873631 -0.00721762 0.00177519"/>
+   <xform weight="0.098519" color="0.75" symmetry="0.689633" linear="1" coefs="0.312029 0.687971 -0.687971 0.312029 0 0"/>
+   <xform weight="0.098519" color="1" symmetry="0.689633" linear="1" coefs="0.312029 -0.687971 0.687971 0.312029 0.525192 0.413975"/>
+</flame>
+<flame time="128" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="29909 30893">
+   <xform weight="0.191" color="0" linear="0.14" spherical="0.25" horseshoe="0.29" polar="0.13" ex="0.2" coefs="0.386399 0.188067 -0.245091 0.414906 0.854445 -0.237636"/>
+   <xform weight="0.053" color="0.166667" linear="0.06" sinusoidal="0.92" spiral="0.01" waves="0.01" coefs="-0.983889 1.52684 -0.21244 -0.115115 0.847065 -0.880847"/>
+   <xform weight="0.104" color="0.333333" symmetry="1" linear="1" coefs="-0.984808 0.173648 0.173648 0.984808 0.35 0.3"/>
+   <xform weight="0.104" color="0.666667" symmetry="1" linear="1" coefs="-0.34202 0.939692 -0.939692 -0.34202 -0.35 -0.3"/>
+   <xform weight="0.104" color="1" symmetry="1" linear="1" coefs="-0.642788 -0.766044 0.766044 -0.642788 0.35 -0.3"/>
+</flame>

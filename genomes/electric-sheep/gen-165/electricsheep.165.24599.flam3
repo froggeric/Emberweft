@@ -1,0 +1,20 @@
+<flame time="0" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="AURELL">
+   <xform weight="0.25" color="0" sinusoidal="0.97" spiral="0.03" coefs="0.071334 -0.618901 0.618901 0.071334 0.261811 -0.415411"/>
+   <xform weight="0.25" color="0.33" handkerchief="0.7" diamond="0.3" coefs="-0.389653 -0.279747 0.279747 -0.389653 0.820524 -0.424347"/>
+   <xform weight="0.25" color="0.67" diamond="0.04" julia="0.96" coefs="0.644152 0.338682 -0.282245 0.602445 -0.291098 -0.284796"/>
+   <xform weight="0.25" color="1" bent="0.05" fisheye="0.95" coefs="0.066451 0.335609 -0.34448 -0.094498 -0.296916 0.427368"/>
+</flame>
+<flame time="128" palette="70" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="HilltopDesign.Com">
+   <xform weight="0.07" color="0" julia="0.58" fisheye="0.42" coefs="-0.250302 0.757898 0.647593 0.739304 0.771689 0.902672"/>
+   <xform weight="0.034" color="0.09" swirl="0.47" ex="0.53" coefs="0.152432 -0.982505 -0.289643 -0.269849 -0.13792 -0.948007"/>
+   <xform weight="0.009" color="0.18" swirl="0.38" bent="0.62" coefs="0.209923 -0.718052 -0.107961 -0.056714 -0.089883 0.728908"/>
+   <xform weight="0.029" color="0.27" swirl="0.03" handkerchief="0.97" coefs="-0.773106 -0.259972 -0.31303 0.256184 0.037461 -0.94773"/>
+   <xform weight="0.04" color="0.36" handkerchief="0.31" bent="0.69" coefs="0.640219 0.41452 -0.393748 0.321155 0.337838 -0.648632"/>
+   <xform weight="0.024" color="0.45" swirl="0.86" ex="0.14" coefs="-0.159213 0.191643 -0.487344 -0.814051 -0.711533 -0.85116"/>
+   <xform weight="0.042" color="0.55" heart="0.72" disc="0.28" coefs="-0.728047 0.18859 0.01813 0.555975 -0.311745 -0.816344"/>
+   <xform weight="0.013" color="0.64" disc="0.63" popcorn="0.37" coefs="-0.200847 0.009126 0.267187 -0.566874 0.469668 -0.541211"/>
+   <xform weight="0.026" color="0.73" linear="0.48" swirl="0.52" coefs="-0.128964 -0.455458 0.529095 -0.041859 -0.430885 -0.512351"/>
+   <xform weight="0.046" color="0.82" julia="0.87" waves="0.13" coefs="0.205359 -0.60069 0.574632 0.408643 0.081665 -0.881569"/>
+   <xform weight="0.333" color="0.91" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.333" color="1" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>

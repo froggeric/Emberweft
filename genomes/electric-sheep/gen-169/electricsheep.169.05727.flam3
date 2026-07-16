@@ -1,0 +1,15 @@
+<flame time="0" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.lunacie.com" nick="lunacie">
+   <xform weight="0.2" color="0" symmetry="1" spherical="0.88" polar="0.01" spiral="0.1" ex="0.12" waves="0.1" coefs="0.599128 -0.495388 0.495395 0.599116 0.55978 0.226204"/>
+   <xform weight="0.2" color="0.25" symmetry="1" spherical="1" horseshoe="1" spiral="0.91" ex="0.09" coefs="-0.456074 0.567572 -0.567572 -0.456074 -0.243785 -0.961768"/>
+   <xform weight="0.2" color="0.5" symmetry="1" spiral="0.48" waves="0.52" coefs="0.067085 0.553342 -0.474868 1.54739 0.565076 0.211557"/>
+   <xform weight="0.2" color="0.75" symmetry="1" linear="0.74" spiral="0.5" waves="0.26" coefs="-0.069886 0.916201 -0.207978 0.258658 0.163366 0.677581"/>
+   <xform weight="0.2" color="1" symmetry="1" handkerchief="0.79" spiral="2" fisheye="0.21" coefs="0.209411 0.156797 -0.156797 0.209411 -0.743769 -0.621512"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="5620 5623">
+   <xform weight="0.9" color="0" linear="1" coefs="-0.301262 -0.796712 -0.804968 0.29432 0.0401157 0.021031"/>
+   <xform weight="0.0223028" color="0.2" linear="0.00614076" sinusoidal="0.355288" swirl="0.49855" disc="0.784754" spiral="0.000767595" waves="0.000767595" popcorn="0.323134" coefs="-0.914017 -0.524235 0.08736 0.0109722 1.51787 -1.07547"/>
+   <xform weight="0.0223028" color="0.4" linear="0.00614076" sinusoidal="0.0690835" spiral="0.000767595" diamond="0.793987" ex="0.129254" waves="0.000767595" coefs="0.496574 -0.624229 0.163471 -1.09319 -0.00988703 -1.83476"/>
+   <xform weight="0.0184648" color="0.6" linear="1" coefs="0.897446 -0.129984 0.129984 0.897446 0 0"/>
+   <xform weight="0.0184648" color="0.8" linear="1" coefs="0.790185 -0.191162 0.191162 0.790185 0 0"/>
+   <xform weight="0.0184648" color="1" linear="1" coefs="0.680103 -0.231602 0.231602 0.680103 0 0"/>
+</flame>

@@ -1,0 +1,10 @@
+<flame time="0" palette="2" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://electricsheep.org/v2.5/" nick="Jack">
+   <xform weight="0.357" color="0" polar="1" coefs="0.347798 0.875568 -0.875568 0.347798 0.026149 0.516588"/>
+   <xform weight="0.264" color="0.5" polar="1" coefs="0.062634 -0.422088 0.427477 0.140635 -0.469397 -0.989346"/>
+   <xform weight="0.38" color="1" polar="1" coefs="-0.916648 0.207988 -0.281713 -0.967068 -0.930087 0.475924"/>
+</flame>
+<flame time="128" palette="64" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.876842">
+   <symmetry kind="-14"/>
+   <xform weight="0.5" color="1" sinusoidal="1" coefs="-0.382487 -0.185665 0.375665 0.630483 -0.379018 0.543849"/>
+   <xform weight="0.5" color="0" sinusoidal="1" coefs="0.313492 0.327533 0.29201 0.786476 -0.235809 -0.127142"/>
+</flame>

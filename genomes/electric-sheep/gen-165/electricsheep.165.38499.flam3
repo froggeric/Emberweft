@@ -1,0 +1,17 @@
+<flame time="0" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="37483 37764">
+   <xform weight="0.089" color="0" handkerchief="0.52" heart="0.19" diamond="0.25" bent="0.04" coefs="-0.433277 -0.173081 -0.28734 0.542176 -0.426967 -0.739572"/>
+   <xform weight="0.125" color="0.125" spherical="1" coefs="0.147706 -0.89141 0.026445 -0.321335 -1.32033 0.163077"/>
+   <xform weight="0.089" color="0.25" heart="0.19" diamond="0.25" julia="0.15" fisheye="0.41" coefs="-0.056336 0.237515 -0.166286 0.122219 0.319945 0.013718"/>
+   <xform weight="0.105" color="0.5" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.105" color="0.75" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.105" color="1" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+</flame>
+<flame time="128" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.989399" parents="12982 24696">
+   <xform weight="0.092" color="0" sinusoidal="0.82" horseshoe="0.18" coefs="0.190668 -0.38779 0.485367 0.313836 0.666952 0.917318"/>
+   <xform weight="0.211226" color="0.1" linear="1" coefs="0.324419 -0.161743 0.0292983 0.192894 -0.0780225 -0.165933"/>
+   <xform weight="0.092" color="0.2" sinusoidal="0.82" horseshoe="0.18" coefs="-0.240502 -0.359019 0.514474 -0.263422 0.666952 0.917318"/>
+   <xform weight="0.075" color="0.4" linear="0.47" spiral="0.53" coefs="-0.085983 0.363836 0.48875 -0.024574 -0.589212 0.779956"/>
+   <xform weight="0.092" color="0.6" sinusoidal="0.82" horseshoe="0.18" coefs="-0.190668 0.38779 -0.485367 -0.313836 0.666952 0.917318"/>
+   <xform weight="0.092" color="0.8" sinusoidal="0.82" horseshoe="0.18" coefs="0.240502 0.359019 -0.514474 0.263422 0.666952 0.917318"/>
+   <xform weight="0.075" color="1" linear="0.47" spiral="0.53" coefs="0.085983 -0.363836 -0.48875 0.024574 -0.589212 0.779956"/>
+</flame>

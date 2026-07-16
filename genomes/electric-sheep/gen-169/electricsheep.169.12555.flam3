@@ -1,0 +1,16 @@
+<flame time="0" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.64" parents="11616 11616">
+   <xform weight="0.18" color="0" linear="0.75" horseshoe="0.25" coefs="-0.194809 0.255791 0.449759 -0.752182 0.306747 0.090285"/>
+   <xform weight="0.202" color="0.2" linear="0.75" horseshoe="0.25" coefs="0.08637 -0.869899 0.113991 -0.256509 0.965911 0.555516"/>
+   <xform weight="0.117" color="0.4" linear="0.75" horseshoe="0.25" coefs="1.9826 0.349871 0.57152 -0.990985 -1.48259 0.633538"/>
+   <xform weight="0.162" color="0.6" linear="0.75" horseshoe="0.25" coefs="0.179967 0.233128 -0.36272 -0.7121 0.371572 -0.178348"/>
+   <xform weight="0.08" color="0.8" linear="0.75" horseshoe="0.25" coefs="-0.074187 0.057164 -0.368645 0.735492 -0.932165 -0.86445"/>
+   <xform weight="0.259" color="1" linear="0.75" horseshoe="0.25" coefs="-0.815261 -0.035273 0.388856 0.76704 0.064521 -0.882879"/>
+</flame>
+<flame time="128" palette="41" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.557323" parents="11616 1">
+   <xform weight="0.287325" color="0" linear="0.225039" horseshoe="0.075013" waves="0.699948" coefs="-0.370922 0.251287 0.76832 -0.0142437 0.122258 0.506716"/>
+   <xform weight="0.293926" color="0.2" linear="0.225039" spherical="0.699948" horseshoe="0.075013" coefs="-0.475462 -0.677387 -0.233085 -0.147506 -0.328902 0.659472"/>
+   <xform weight="0.268422" color="0.4" linear="0.225039" horseshoe="0.075013" julia="0.699948" coefs="0.503808 -0.518183 0.667961 0.001243 0.0292808 0.322283"/>
+   <xform weight="0.0486084" color="0.6" linear="0.924987" horseshoe="0.075013" coefs="0.753947 0.0699505 -0.108835 0.486281 0.111491 -0.0535137"/>
+   <xform weight="0.0240042" color="0.8" linear="0.924987" horseshoe="0.075013" coefs="0.677688 0.0171522 -0.110613 0.920634 -0.279698 -0.25938"/>
+   <xform weight="0.0777135" color="1" linear="0.924987" horseshoe="0.075013" coefs="0.455327 -0.0105837 0.116677 0.9301 0.0193597 -0.26491"/>
+</flame>

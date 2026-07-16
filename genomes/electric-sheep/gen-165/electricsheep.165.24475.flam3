@@ -1,0 +1,15 @@
+<flame time="0" palette="37" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.98" url="www.rubber.co.nr" nick="Comrade smith">
+   <xform weight="0.167" color="0" polar="1" coefs="0.20303 0.706887 -0.784965 0.399317 -0.609351 0.447966"/>
+   <xform weight="0.167" color="0.2" linear="0.98" bent="0.02" coefs="0.059736 0.280272 -0.280272 0.059736 0.645755 0.219819"/>
+   <xform weight="0.167" color="0.4" linear="0.57" swirl="0.43" coefs="-0.006847 0.346437 -0.346437 -0.006847 0.038542 0.11117"/>
+   <xform weight="0.167" color="0.6" disc="0.6" diamond="0.4" coefs="0.36878 -0.670742 0.670742 0.36878 -0.123013 0.117203"/>
+   <xform weight="0.167" color="0.8" spherical="0.8" disc="0.2" coefs="0.772271 -0.319835 -0.250864 -0.755967 -0.284935 0.497097"/>
+   <xform weight="0.167" color="1" sinusoidal="0.34" polar="5" spiral="0.66" coefs="-0.968525 0.212412 -0.322229 -0.829874 -0.77202 -0.503274"/>
+</flame>
+<flame time="128" palette="83" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.258205" >
+   <symmetry kind="3"/>
+   <xform weight="0.25" color="0.666667" handkerchief="1" coefs="0.539337 0.46789 0.871611 -0.268149 0.549728 -0.790191"/>
+   <xform weight="0.25" color="0.333333" handkerchief="1" coefs="0.121674 -0.754128 -0.621277 0.426805 0.693071 0.449261"/>
+   <xform weight="0.25" color="1" handkerchief="1" coefs="-0.0345377 -0.0355549 0.136754 0.44675 -0.512458 0.923988"/>
+   <xform weight="0.25" color="0" handkerchief="1" coefs="0.568313 -0.575535 0.189489 -0.105943 0.59485 -0.183719"/>
+</flame>

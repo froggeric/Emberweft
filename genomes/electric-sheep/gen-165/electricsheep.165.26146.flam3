@@ -1,0 +1,11 @@
+<flame time="0" palette="37" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.phidelity.com" nick="phidelity">
+   <xform weight="0.46" color="0" swirl="1" coefs="-0.414828 0.83376 -0.45675 -0.049275 0.173684 0.013992"/>
+   <xform weight="0.46" color="0.89" swirl="0.75" fisheye="0.7" coefs="0.516327 0.309908 -0.360976 0.479814 0.83007 -0.17626"/>
+   <xform weight="0.04" color="0.11" swirl="1" coefs="-0.760572 -0.544586 0.574908 -0.326112 1.56322 -0.700862"/>
+   <xform weight="0.04" color="0.16" swirl="1" coefs="-0.095043 0.408299 -0.314616 0.103877 0.121322 -0.572532"/>
+</flame>
+<flame time="128" palette="46" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.519269" >
+   <xform weight="0.333333" color="1" spherical="1" coefs="-0.84264 0.602483 -0.421273 0.784717 -0.271759 0.616784"/>
+   <xform weight="0.333333" color="0.5" spherical="1" coefs="-0.39183 -0.683883 0.818541 0.107424 0.374651 0.0316805"/>
+   <xform weight="0.333333" color="0" spherical="1" coefs="0.619216 -0.69469 0.760296 0.416829 0.908072 -0.0309438"/>
+</flame>

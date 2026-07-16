@@ -1,0 +1,14 @@
+<flame time="0" palette="39" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.47" url="http://www.phidelity.com" nick="phidelity">
+   <xform weight="0.683" color="0" horseshoe="0.93" spiral="0.07" coefs="-0.446818 -0.44069 0.44069 -0.446818 0.555735 -0.523515"/>
+   <xform weight="0.317" color="1" spherical="0.28" handkerchief="0.72" coefs="-0.28782 -0.043965 0.043965 -0.28782 0.625637 -0.777167"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.071" color="0" handkerchief="0.29" waves="0.71" coefs="0.438249 0.485909 -0.71252 0.630507 0.890388 0.703256"/>
+   <xform weight="0.06" color="0.25" polar="0.87" fisheye="0.13" coefs="0.277805 0.748243 -0.748243 0.277805 0.171308 0.505284"/>
+   <xform weight="0.052" color="0.5" spherical="0.23" diamond="0.77" coefs="0.520829 0.09509 -0.35819 0.644762 0.007317 0.673786"/>
+   <xform weight="0.051" color="0.75" fisheye="0.35" popcorn="0.65" coefs="-0.404164 -0.181793 0.403525 -0.56809 -0.699796 0.831392"/>
+   <xform weight="0.016" color="1" hyperbolic="0.18" popcorn="0.82" coefs="0.207736 -0.057463 -0.057463 -0.207736 -0.205834 0.943462"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>
