@@ -249,52 +249,76 @@ interpolate(
 
 **Non-uniform timing:** If keyframes have non-uniform time spacing, find appropriate interval via binary search.
 
-## Transition Sequencing
+## Segment Sequencing
+
+Playback is built from **two segment kinds** — the same two the original Electric
+Sheep uses:
+
+- **Loop** — a single sheep played through its *own* temporal keyframes (the
+  `[Flame]` elements in its `.flam3`), interpolated into a seamless loop. This is
+  the sheep's intrinsic motion; it does not involve any other genome. A
+  single-keyframe sheep (no `time>0` keyframes) is a degenerate loop — a still
+  hold. Most archived sheep are multi-keyframe loops.
+- **Transition** — a morph from genome A's parameters to genome B's (the
+  between-genome interpolation described in the rest of this document).
+
+### Alternation rule (mandatory)
+
+Loops and transitions **alternate**: `loop(A) → transition(A→B) → loop(B) →
+transition(B→C) → …`. **Never two transitions in a row** — every transition is
+bracketed by loops. This is how the original Electric Sheep sequences its videos,
+and it is a hard constraint on the scheduler, not a suggestion.
 
 ### Endless Playback
 
-For continuous playback, we sequence transitions:
-
 ```
-sheep_0 → sheep_1 → sheep_2 → sheep_3 → ... → sheep_N → sheep_0
+loop(sheep_0) → transition(0→1) → loop(sheep_1) → transition(1→2) → … → loop(sheep_N) → transition(N→0) → loop(sheep_0) → …
 ```
 
-Each transition runs for **(preliminary)** 120-180 frames (2-3 seconds at 60 FPS).
-
-### Transition Length
+### Segment Length
 
 **(preliminary default):**
+- Loop duration: 5.0 seconds (the sheep's own keyframe cycle, time-scaled to fit)
 - Transition duration: 3.0 seconds
-- Hold duration: 5.0 seconds
 - Total cycle: 8.0 seconds per sheep
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
 
 ### Schedule Computation
 
+A loop segment plays the sheep's own `[Flame]` keyframes (via FlameKit
+`Interpolation`) over `loop_duration`, wrapping the last keyframe back to the
+first for seamlessness. A transition segment morphs A→B over `transition_duration`.
+
 ```
 current_sheep = 0
-transition_start_frame = 0
-hold_end_frame = transition_start_frame + hold_duration_frames
-transition_end_frame = hold_end_frame + transition_duration_frames
+loop_end_frame       = 0 + loop_duration_frames
+transition_end_frame = loop_end_frame + transition_duration_frames
 
 for frame in 0...:
-    if frame < hold_end_frame:
-        render(sheep[current_sheep], t=1.0)
+    if frame < loop_end_frame:
+        # LOOP: this sheep's own temporal keyframe animation, seamless
+        tau = (frame - (loop_end_frame - loop_duration_frames)) / loop_duration_frames
+        render(renderSheepLoop(sheep[current_sheep], tau))   # interpolates its [Flame] keyframes
     else if frame < transition_end_frame:
-        local_t = (frame - hold_end_frame) / transition_duration_frames
+        # TRANSITION: morph current -> next
+        local_t = (frame - loop_end_frame) / transition_duration_frames
         render(
             interpolate(
-                sheep[current_sheep],
-                sheep[(current_sheep + 1) % N],
+                lastKeyframe(sheep[current_sheep]),
+                firstKeyframe(sheep[(current_sheep + 1) % N]),
                 local_t
             )
         )
     else:
         current_sheep = (current_sheep + 1) % N
-        hold_end_frame = frame + hold_duration_frames
-        transition_end_frame = hold_end_frame + transition_duration_frames
+        loop_end_frame = frame + loop_duration_frames
+        transition_end_frame = loop_end_frame + transition_duration_frames
 ```
+
+**Transition endpoints:** a transition starts from the *last keyframe* of sheep A
+and ends at the *first keyframe* of sheep B, so the morph continues each loop's
+end-state smoothly rather than jumping to an arbitrary frame.
 
 See [playback-modes.md](../playback/playback-modes.md) for runtime scheduling.
 

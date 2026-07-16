@@ -126,22 +126,37 @@ class QualityController {
 | 1440p | 30 fps | 4B iterations | 512×288 bins |
 | 4K | 30 fps | 8B iterations | 768×432 bins |
 
-## Transition Engine Integration
+## Segment & Transition Engine Integration
 
-The playback system orchestrates smooth transitions between sheep using the interpolation engine described in [`../rendering/transitions.md`](../rendering/transitions.md).
+The playback system orchestrates **two segment kinds** — loops and transitions —
+using the interpolation engine described in
+[`../rendering/transitions.md`](../rendering/transitions.md).
 
-**Transition Scheduling:**
+- **Loop:** a sheep played through its own `[Flame]` keyframes as a seamless
+  loop (the sheep's intrinsic motion).
+- **Transition:** a morph from the last keyframe of sheep A to the first
+  keyframe of sheep B.
+
+**Alternation rule:** loops and transitions alternate — `loop → transition →
+loop → transition`. Never two transitions in a row; every transition is
+bracketed by loops.
+
+**Segment Scheduling:**
 
 ```swift
-class TransitionScheduler {
-    func scheduleNext(
-        currentSheep: Sheep,
-        transitionDuration: TimeInterval,
-        prefetchWindow: TimeInterval
-    ) {
-        // Begin prefetching next sheep halfway through current
-        let prefetchTime = transitionDuration * 0.5
-        
+class SegmentScheduler {
+    // Produces an endless, strictly alternating stream: loop, transition, loop, …
+    func nextSegment(current: Segment) -> Segment {
+        switch current {
+        case .loop(let sheep):           return .transition(from: sheep, to: pickNextSheep())
+        case .transition(_, let next):   return .loop(next)
+        }
+    }
+
+    func schedulePrefetch(current: Segment, loopDuration: TimeInterval, transitionDuration: TimeInterval) {
+        // Prefetch the upcoming sheep mid-way through the current loop,
+        // so the following transition is ready when the loop ends.
+        let prefetchTime = loopDuration * 0.5
         DispatchQueue.main.asyncAfter(deadline: .now() + prefetchTime) {
             self.pregenerateNextSheep()
         }
@@ -149,10 +164,11 @@ class TransitionScheduler {
 }
 ```
 
-**Morph Timing:**
-- Default transition length: **(preliminary)** 8 seconds
-- Minimum before next switch: 4 seconds
-- Maximum for slow-morph aesthetic: 30 seconds
+**Segment Timing:**
+- Default loop length: **(preliminary)** 5 seconds (the sheep's own keyframe cycle)
+- Default transition length: **(preliminary)** 3 seconds
+- Minimum loop before next transition: 4 seconds
+- Maximum transition for slow-morph aesthetic: 30 seconds
 
 ## Frame Pacing
 

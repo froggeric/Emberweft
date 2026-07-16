@@ -73,24 +73,32 @@
 
 ### M3 — Animation and Realtime Pipeline
 
-**Goal:** Smooth transitions and realtime Metal playback with adaptive quality. (Slices S6–S7.)
+**Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
+
+**Two segment kinds (mirrors the original Electric Sheep):**
+- **Loop** — a single sheep played through its *own* temporal keyframes (`[Flame]` in a `.flam3`), interpolated into a seamless loop. A single-keyframe sheep is a degenerate (still) loop. This is the sheep's intrinsic motion, independent of any other genome.
+- **Transition** — a morph from genome A's parameters to genome B's over a short segment.
+
+**Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
 
 **Key deliverables:**
-- Genome interpolation for smooth transitions ([transitions.md](../rendering/transitions.md))
-- `emberweft animate` (CLI) with genome transitions/morphs (S6)
+- **Loop playback** — render a sheep's own multi-keyframe temporal loop (FlameKit `Interpolation` already provides the keyframe math; FlamePlayer drives it)
+- Genome interpolation for smooth **transitions** between genomes ([transitions.md](../rendering/transitions.md))
+- `emberweft animate` (CLI) producing alternating loop/transition segments (S6)
 - **FlamePlayer** realtime adaptive engine (S7)
 - **FlameUI** Metal-layer wrapper (`CAMetalLayer`)
 - Adaptive quality controller based on performance/thermal state
-- Genome sequencing logic (play a list with transitions)
+- Genome sequencing logic that alternates loop and transition segments per the rule above
 
 **Dependencies:** M2 complete
 
 **Definition of done:**
-- Can play a sequence of genomes with smooth transitions
+- A sheep's own multi-keyframe loop plays seamlessly (last keyframe connects to first)
+- Can play a sequence of genomes where loops and transitions alternate, with no two transitions consecutive
 - Realtime playback at target fps at 1080p *(preliminary: 60 fps on M2 Max)*
 - Adaptive quality adjusts based on thermal state
 - Transitions are visually smooth (no popping or discontinuities)
-- Unit tests for interpolation math; animated-frame parity
+- Unit tests for interpolation math (both within-genome loops and between-genome transitions); animated-frame parity
 
 ### M4 — SwiftUI App and Library Browser
 
