@@ -30,9 +30,12 @@ let package = Package(
             path: "Sources/FlameReference"
         ),
         // Metal compute renderer (chaos game -> histogram -> density filter -> palette).
+        // Stage-3b on-ramp (Task 7): depends on FlameReference to reuse CPU
+        // ToneMapping/DensityEstimation for the first end-to-end parity gate.
+        // Task 9 removes this dep for the production FlameKit-only path.
         .target(
             name: "FlameRenderer",
-            dependencies: ["FlameKit"],
+            dependencies: ["FlameKit", "FlameReference"],
             path: "Sources/FlameRenderer",
             exclude: ["Metal"],
             resources: [.copy("Metal")]

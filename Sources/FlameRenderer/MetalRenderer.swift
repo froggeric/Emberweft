@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import FlameKit
+import FlameReference  // Stage-3b on-ramp only; Task 9 removes this dep.
 
 /// Metal-compute fractal-flame renderer — faithful statistical twin of
 /// `FlameReference`. Deterministic within the Metal backend (same seed →
@@ -31,5 +32,40 @@ public enum MetalRenderer {
         _device = device
         _library = library
         return (device, library)
+    }
+
+    /// Render `flame` at `params` to an 8-bit RGBA image.
+    ///
+    /// Stage-3b on-ramp (M2): chaos on Metal, density-estimation + tone-map on
+    /// CPU. Deterministic within the Metal backend. Statistical twin of
+    /// `ReferenceRenderer.render` (PSNR ≥ 38 dB), not byte-identical.
+    ///
+    /// The Metal chaos kernel fetches its own device/queue via
+    /// `ChaosGameMetal.iterate`, so the only host-side gate needed here is
+    /// `isAvailable` — failing loudly on a no-GPU box rather than producing
+    /// garbage.
+    @MainActor
+    public static func render(flame: Flame, params: RenderParams) -> RGBA8Image {
+        guard isAvailable else {
+            fatalError("MetalRenderer.render called when isAvailable is false")
+        }
+        do {
+            var hist = try ChaosGameMetal.iterate(flame: flame, params: params)
+            if flame.quality.estimatorRadius > 0 {
+                // CPU approximation twin (frozen goldens are radius=0 — unexercised in M2).
+                hist = FlameReference.DensityEstimation.apply(hist,
+                    radius: flame.quality.estimatorRadius,
+                    minimum: flame.quality.estimatorMinimum,
+                    curve: flame.quality.estimatorCurveRate)
+            }
+            return FlameReference.ToneMapping.render(histogram: hist,
+                width: params.width, height: params.height, oversample: params.oversample,
+                gamma: flame.quality.gamma, gammaThreshold: flame.quality.gammaThreshold,
+                vibrancy: flame.quality.vibrancy,
+                sampleDensity: Double(params.samplesPerPixel),
+                pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom))
+        } catch {
+            fatalError("Metal render failed: \(error)")
+        }
     }
 }
