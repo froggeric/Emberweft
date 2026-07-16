@@ -1,6 +1,7 @@
 import Foundation
 import FlameKit
 import FlameReference
+import FlameRenderer
 
 /// Testable `emberweft` CLI engine.
 ///
@@ -21,6 +22,7 @@ public enum EmberweftCLI {
         switch cmd {
         case "--version": out("emberweft \(FlameKit.version)\n"); return 0
         case "-h", "--help": printHelp(); return 0
+        case "--list-backends": return listBackends()
         case "info": return info(args.dropFirst().first)
         case "validate": return validate(args.dropFirst().first)
         case "render": return render(Array(args.dropFirst()))
@@ -31,13 +33,21 @@ public enum EmberweftCLI {
 
     private static func printHelp() {
         out("""
-        emberweft \(FlameKit.version) — fractal-flame renderer (CPU backend)
+        emberweft \(FlameKit.version) — fractal-flame renderer (CPU | Metal backend)
         Usage:
-          emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N]
+          emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N] [--backend cpu|metal]
           emberweft validate <genome.flam3>
           emberweft info     <genome.flam3>
+          emberweft --list-backends
           emberweft --version | --help
         """)
+    }
+
+    private static func listBackends() -> Int32 {
+        let metal = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+        out("cpu: available\n")
+        out("metal: \(metal ? "available" : "unavailable")\n")
+        return 0
     }
 
     private static func load(_ path: String?) -> Flame? {
@@ -74,6 +84,7 @@ public enum EmberweftCLI {
         var height = flame.size.y
         var quality = flame.quality.samplesPerPixel
         var seed: UInt64 = 0
+        var backend = "cpu"
         var i = 1
         while i < args.count {
             switch args[i] {
@@ -91,12 +102,27 @@ public enum EmberweftCLI {
             case "--seed":
                 guard i + 1 < args.count else { err("error: --seed requires a value\n"); return 2 }
                 seed = UInt64(args[i + 1]) ?? seed; i += 2
+            case "--backend":
+                guard i + 1 < args.count else { err("error: --backend requires a value\n"); return 2 }
+                let v = args[i + 1].lowercased()
+                guard v == "cpu" || v == "metal" else { err("error: --backend must be cpu|metal\n"); return 2 }
+                backend = v; i += 2
             default: i += 1
             }
         }
         let params = RenderParams(
             seed: seed, width: width, height: height, oversample: 1, samplesPerPixel: quality)
-        let img = ReferenceRenderer.render(flame: flame, params: params)
+        let img: RGBA8Image
+        if backend == "metal" {
+            let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+            guard metalOK else {
+                err("error: Metal backend unavailable on this machine; use --backend cpu\n")
+                return 1
+            }
+            img = MainActor.assumeIsolated { MetalRenderer.render(flame: flame, params: params) }
+        } else {
+            img = ReferenceRenderer.render(flame: flame, params: params)
+        }
         do { try img.writePNG(to: URL(fileURLWithPath: output)) }
         catch { err("error: cannot write \(output): \(error)\n"); return 1 }
         out("wrote \(output) (\(width)×\(height))\n")

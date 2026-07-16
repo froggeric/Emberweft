@@ -1,6 +1,7 @@
 import XCTest
 @testable import EmberweftCLI
 import FlameKit
+import FlameRenderer
 
 final class CLITests: XCTestCase {
     private func tmp(_ xml: String) -> URL {
@@ -32,6 +33,23 @@ final class CLITests: XCTestCase {
         try? FileManager.default.removeItem(at: out)
         let code = EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
                                      "--size", "16x16", "--quality", "20"])
+        XCTAssertEqual(code, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testListBackends() {
+        let code = EmberweftCLI.run(["emberweft", "--list-backends"])
+        XCTAssertEqual(code, 0)
+    }
+
+    func testRenderMetalBackendWhenAvailable() throws {
+        let metalAvailable = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+        guard metalAvailable else { return }   // skip on GPU-less machines
+        let url = tmp(goodXml)
+        let out = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("m.png")
+        try? FileManager.default.removeItem(at: out)
+        let code = EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
+                                     "--size", "16x16", "--quality", "20", "--backend", "metal"])
         XCTAssertEqual(code, 0)
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
     }
