@@ -394,3 +394,67 @@ kernel void chaosGame(device GPUXform* xforms        [[buffer(0)]],
         j += 1;
     }
 }
+
+// MARK: - Stage-2 density-estimation kernel
+//
+// GPU twin of `FlameReference.DensityEstimation.apply` (the M1 adaptive-kernel
+// approximation, NOT true flam3 density estimation). Per-bin adaptive-kernel
+// smoothing of the AVERAGE bin color: the kernel shrinks where a bin is dense,
+// grows where sparse, and writes the smoothed average back to the SAME bin
+// scaled by that bin's (unchanged) count. Energy is NOT convolved into neighbor
+// output bins. `radius == 0` is an exact passthrough (guarded on the host too).
+//
+// Two-buffer form: `inOut` is read, `work` is written — avoids in-kernel
+// read-after-write hazards. The host copies `work` out after completion.
+
+struct FloatBin {
+    float count, r, g, b, a;
+};
+
+kernel void densityEstimation(device FloatBin* inOut [[buffer(0)]],
+                              constant const float* params [[buffer(1)]],
+                              constant const uint2* dims   [[buffer(2)]],
+                              device FloatBin* work        [[buffer(3)]],
+                              uint2 tid [[thread_position_in_grid]]) {
+    uint gw = dims->x, gh = dims->y;
+    if (tid.x >= gw || tid.y >= gh) return;
+    uint idx = tid.y * gw + tid.x;
+    float radius  = params[0];     // estimator_radius
+    float minimum = params[1];     // estimator_minimum
+    float curve   = params[2];     // estimator_curve
+    if (radius <= 0.0f) { work[idx] = inOut[idx]; return; }   // passthrough
+
+    float cnt = inOut[idx].count;
+    if (cnt <= 0.0f) { work[idx] = inOut[idx]; return; }
+    int maxR = int(ceil(radius));
+    float adapt = radius * pow(minimum / (cnt + minimum), curve);
+    float r = clamp(adapt, 0.0f, float(maxR));
+    int ri = int(ceil(r));
+    float3 colorAvg = float3(inOut[idx].r, inOut[idx].g, inOut[idx].b) / cnt;
+    float  alphaAvg = inOut[idx].a / cnt;
+    float3 acc = float3(0.0f); float accA = 0.0f; float wsum = 0.0f;
+    for (int dy = -ri; dy <= ri; dy++) {
+        for (int dx = -ri; dx <= ri; dx++) {
+            int nx = int(tid.x) + dx, ny = int(tid.y) + dy;
+            if (nx < 0 || nx >= int(gw) || ny < 0 || ny >= int(gh)) continue;
+            float dist = sqrt(float(dx*dx + dy*dy));
+            float w = max(0.0f, 1.0f - dist / max(r, 1.0f));   // conical kernel
+            FloatBin nb = inOut[uint(ny) * gw + uint(nx)];
+            bool populated = nb.count > 0.0f;
+            float3 localC = populated ? float3(nb.r, nb.g, nb.b) / nb.count : colorAvg;
+            float  localA = populated ? nb.a / nb.count : alphaAvg;
+            acc += localC * w; accA += localA * w; wsum += w;
+        }
+    }
+    FloatBin out;
+    out.count = cnt;
+    if (wsum > 0.0f) {
+        float3 c = (acc / wsum) * cnt;
+        out.r = c.x; out.g = c.y; out.b = c.z;
+        out.a = (accA / wsum) * cnt;
+    } else {
+        out.r = colorAvg.x * cnt; out.g = colorAvg.y * cnt; out.b = colorAvg.z * cnt;
+        out.a = alphaAvg * cnt;
+    }
+    work[idx] = out;
+}
