@@ -94,7 +94,7 @@ cat > ~/Library/LaunchAgents/com.emberweft.sheep-sync.plist <<EOF
   <key>Label</key><string>com.emberweft.sheep-sync</string>
   <key>ProgramArguments</key><array>
     <string>/bin/sh</string><string>-c</string>
-    <string>cd /Volumes/ssd/github/electricsheep &amp;&amp; make sync-sheep &amp;&amp; git add genomes/ &amp;&amp; git commit -m 'chore(genomes): auto-sync gen-248' &amp;&amp; git push</string>
+    <string>cd /Volumes/ssd/github/emberweft &amp;&amp; make sync-sheep &amp;&amp; git add genomes/ &amp;&amp; git commit -m 'chore(genomes): auto-sync gen-248' &amp;&amp; git push</string>
   </array>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>17</integer></dict>
 </dict></plist>
