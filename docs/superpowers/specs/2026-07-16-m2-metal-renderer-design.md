@@ -59,7 +59,7 @@ Three MSL kernels, each a compute pass; host binds buffers/textures directly via
 
 - **`GPUXform`** (constant buffer): pre-affine `a,b,c,d,e,f`; post-affine `pa,pb,pc,pd,pe,pf`; `color` (xform color, default `index&1`); `colorSpeed`; `opacity`; `varWeights[19]` (fixed M1 order); `weight` (selection probability). Array length = xform count.
 - **`xform_distrib[16384]`** — flam3's precomputed CDF, built **on the host** from `weight` (identical construction to CPU `ChaosGame`), uploaded as a constant buffer. The kernel selects a transform via `isaac.next() & 16383 → distrib[idx]`. This makes the *selection distribution* match the CPU byte-for-byte; only per-thread *ordering* differs (the source of statistical parity).
-- **Histogram buffer**: per-bin `{atomic_uint count; atomic_uint r,g,b}`. MSL atomics are integer-only, so the CPU's floating color accumulation is quantized to **fixed-point (Q8.24)** in the kernel and dequantized on readback. Count is exact.
+- **Histogram buffer**: per-bin `{atomic_uint count; atomic_uint r,g,b}`. MSL atomics are integer-only, so the CPU's floating color accumulation is accumulated as **`uint32` fixed-point with a per-frame rescale** `scale = 2³¹/(totalSamples·255)` (added in-kernel then dequantized on readback). `uint32` add mod 2³² is fully associative/commutative, so the sum is **identical regardless of thread scheduling** (deterministic), and the rescale makes overflow impossible by construction (no clamping, which would silently destroy log-density energy). Count is a plain exact `uint32`. (A naive Q8.24 scheme was rejected: it overflows hot bins and clamping corrupts parity. 64-bit atomics were rejected as Apple8-only, breaking the M1+ target.) See the plan for the exact encode/decode.
 - **Palette**: 256-entry RGBA, constant buffer (matches `FlameKit.Palette`).
 
 ### RNG — faithful ISAAC, parallelized
@@ -135,6 +135,6 @@ Plus a **performance baseline** (regression guard, not a gate): single-frame tim
 ## Risks & mitigations
 
 - **FP32 vs Double parity floor.** Iteration math in `Float` may cost dB near dense regions. Mitigation: accumulate histogram color in wider fixed-point (Q8.24 or Q16.16); if a genome dips under 38 dB, the lever is more samples, not an algorithm change.
-- **Atomic color quantization.** Fixed-point range must accommodate WHITE_LEVEL pre-scaling without overflow; the kernel clamps and the host validates the dequantized range against CPU.
+- **Atomic color quantization.** The `uint32` per-frame-rescale encoding makes overflow impossible by construction and needs no clamp; the host validates the dequantized Double range against the CPU buckets. (Resolved in the plan; see "Color accumulation encoding" there.)
 - **MSL ISAAC correctness.** The byte-equal unit test (Swift vs MSL) is the guardrail; it lands first, before any chaos-game kernel depends on it.
 - **Runner-GPU uncertainty** is moot under local-only execution.
