@@ -29,6 +29,13 @@ Read these before making non-trivial changes. They override any generic assumpti
 - **Code identifiers** use the neutral `Flame` prefix (`FlameKit`, `FlameRenderer`, …); the **brand name Emberweft** is used only for user-facing artifacts (app bundle `EmberweftApp`, screensaver `EmberweftScreenSaver`, the `emberweft` CLI).
 - **Deployment target:** macOS 26 (Metal 4), Apple Silicon (M1+). Intel unsupported.
 
+### Metal & Swift 6 gotchas
+- **`.metal` files:** SwiftPM does not compile them. Bundle as `resources: [.copy("Metal")]` + `exclude: ["Metal"]`, load at runtime via `Bundle.module` + `MTLDevice.makeLibrary(source:)`.
+- **Pipeline-state API:** use `library.makeFunction(name:)` (optional) + `device.makeComputePipelineState(function:)`. The `makeFunction("x")!.makeComputePipelineState()` form does not compile on the macOS 26 SDK.
+- **`@MainActor` tests:** annotate XCTest methods `@MainActor`; don't wrap bodies in `MainActor.assumeIsolated { }` (it trips Swift 6 `SendingRisksDataRace` on `self` capture).
+- **Running tests:** disable the bash sandbox — `MTLCreateSystemDefaultDevice()` returns nil under it, so all Metal tests skip/fail.
+- **No CI:** GitHub is a plain git mirror; the local test suite is the pre-merge gate (see [testing.md](docs/engineering/testing.md)).
+
 ## Quick commands
 
 ```
