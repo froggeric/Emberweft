@@ -7,7 +7,7 @@ Emberweft is a native macOS (Apple Silicon, Metal 4) re-implementation of Scott 
 Read these before making non-trivial changes. They override any generic assumption:
 
 - **[docs/engineering/development-approach.md](docs/engineering/development-approach.md)** — *how* we build: Reference-then-Optimize methodology, S0–S12 build order, Metal-compute decision, CLI-first.
-- **[docs/engineering/testing.md](docs/engineering/testing.md)** — test layers, oracles, CI gates, thresholds.
+- **[docs/engineering/testing.md](docs/engineering/testing.md)** — test layers, oracles, local pre-merge gate, thresholds.
 - **[docs/engineering/roadmap.md](docs/engineering/roadmap.md)** — milestones M0–M8 and the milestone↔slice map.
 - **[docs/architecture.md](docs/architecture.md)** — modules and data flow.
 - **[docs/license-and-attribution.md](docs/license-and-attribution.md)** — licensing & attribution.
@@ -15,7 +15,7 @@ Read these before making non-trivial changes. They override any generic assumpti
 ## Core engineering rules (do not violate)
 
 1. **Reference-then-Optimize.** `FlameReference` (CPU, Swift) is built and proven first, then `FlameRenderer` (Metal) is validated against it. Do not build Metal behavior that isn't matched by the CPU oracle.
-2. **Determinism is mandatory.** Same genome + seed + params → identical frame, offline and realtime. Never introduce time-based or order-dependent randomness.
+2. **Determinism is mandatory.** Same genome + seed + params → identical frame within a backend, run after run and machine to machine. CPU and Metal are independent deterministic backends that agree within the parity threshold (PSNR ≥ 38 dB, SSIM ≥ 0.95); they are not required to be byte-identical to each other.
 3. **Test-first.** Write the failing test (golden / parity / unit) before the implementation that satisfies it.
 4. **No surprise external dependencies.** Prefer Apple SDKs only (Foundation, Metal, AVFoundation, Accelerate). Any new dependency needs explicit approval.
 5. **Swift 6 strict concurrency.** Mutable state is actor-isolated or `Sendable`; Metal command recording is `@MainActor` where the API requires it.

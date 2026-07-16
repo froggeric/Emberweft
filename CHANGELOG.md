@@ -7,6 +7,77 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [M2] — Metal Renderer (Faithful Twin)
+
+A Metal-compute renderer (`FlameRenderer`) that is a faithful statistical twin of
+the CPU reference: same affine convention, variation formulas, ISAAC RNG +
+consumption order, density-estimation filter, and display pipeline. Exposed via
+`emberweft render --backend cpu|metal` and `--list-backends`. The production path
+depends on **FlameKit only** (shared types lifted out of `FlameReference`).
+
+### Faithful Metal twin
+Three MSL kernels (`chaosGame`, `densityEstimate`, `logDensity` + `displayPipeline`)
+port the CPU stages field-for-field. The RNG is a **faithful MSL port of flam3
+ISAAC**, byte-equal to the Swift `FlameKit.ISAAC` for identical seeds, seeded
+per-thread via flam3's parent→child mechanism. Thread geometry is **pinned from
+params** (not device caps), so Metal output is byte-identical across machines.
+The histogram uses a **`uint32` fixed-point atomic encoding**
+(`colorScale = 2^31 / (T·255)`): deterministic, overflow-safe, and M1+-compatible.
+
+### Statistical parity (production path, 320×200, seed 0, oversample 1, 1000 spp)
+| Genome | PSNR (dB) | SSIM |
+|---|---|---|
+| `final_warp` | 59.80 | 1.0000 |
+| `swirl_field` | 52.84 | 0.9999 |
+| `sierpinski` | 50.59 | 1.0000 |
+| `rich` | 43.53 | 0.9921 |
+| `heart_disc` | 41.72 | 0.9771 |
+| `julia_bubbles` | 39.04 | 0.9533 |
+| fuzz (julia+spherical) | 40.78 | 0.9947 |
+
+- Stage-1 histogram: per-bin `count` correlation > 0.999 on all six goldens.
+- Stage-3a (Metal display vs CPU `ToneMapping`, **same histogram**): `inf` dB —
+  byte-exact. Isolates the display path from chaos-game divergence.
+- Determinism: byte-identical Metal output across repeated runs.
+- Finiteness: no NaN/Inf in any output pixel across the frozen set + fuzz.
+
+### Performance baseline
+`EMBERWEFT_PERF=1`, 100 spp, oversample 1. Single-frame Metal speedup vs CPU:
+
+- **1080p:** 11.62× (`sierpinski`) … 17.82× (`final_warp`). Representative:
+  `final_warp` CPU 169.51 s → Metal 9.51 s.
+- **720p:** same 11.6×–17.8× band.
+
+### CLI
+- `--backend cpu|metal` selects the backend (Metal falls back to CPU when
+  `MetalRenderer.isAvailable` is false).
+- `--list-backends` reports backend availability.
+
+### Infrastructure
+- **Shared types lifted to FlameKit** (`RenderParams`, `Histogram`, `RGBA8Image`,
+  spatial-filter helpers, `buildDmap`, `Flam3XformDistrib`) so `FlameRenderer`
+  depends on `FlameKit` only — `FlameReference` remains the parity oracle but is
+  no longer a build dependency of the production Metal path.
+- **GitHub Actions workflow removed** (`.github/workflows/ci.yml`). GitHub is a
+  plain git mirror; the **local pre-merge gate** (`swift build` debug + release,
+  full `swift test`, optional `EMBERWEFT_PERF=1` baseline, `swift-format` lint)
+  is the source of truth. Run with the bash sandbox disabled (Metal device).
+- Tests: the parity gate is decomposed into per-stage checks (MSL ISAAC
+  byte-equality, histogram correlation, Stage-3a byte-exactness, end-to-end
+  PSNR/SSIM, determinism, finiteness) plus a test-only **Stage-3b on-ramp**
+  (Metal chaos → CPU tone-map) retained as a parity-bisect debug tool.
+
+### Known limitation — precision floor
+The `uint32` fixed-point atomic encoding has a precision floor tied to total
+sample count T. Mathematically ill-posed genomes whose orbit hits a variation's
+`1/r²`-type singularity (e.g. `spherical` at the origin) can produce
+unbounded-density bins that saturate this floor — observable as sub-threshold
+PSNR that does **not** improve with more samples. Real flam3 genomes (and all
+six frozen goldens) are well-posed and unaffected. This is a documented tradeoff
+of the M1+-compatible `uint32` encoding, not a renderer bug; 64-bit atomics
+(which would raise the floor) require Apple8/M2+ and were rejected as violating
+the M1+ deployment target.
+
 ## [M1] — CPU Reference Renderer + CLI
 
 A correct, deterministic CPU fractal-flame renderer that parses `.flam3`, renders
