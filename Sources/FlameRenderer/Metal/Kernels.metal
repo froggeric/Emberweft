@@ -458,3 +458,121 @@ kernel void densityEstimation(device FloatBin* inOut [[buffer(0)]],
     }
     work[idx] = out;
 }
+
+// MARK: - Stage-3a display pipeline (log-density + spatial filter + gamma)
+//
+// Faithful MSL twin of `FlameReference.ToneMapping.render` (which ports flam3
+// rect.c + palettes.c). Two kernels: `logDensity` (per grid cell, rect.c:949-973
+// de==0 path) and `displayPipeline` (per output pixel, rect.c:1137-1202 gather +
+// gamma). DisplayParams lays out as 9 floats + 7 uints = 64 bytes, matching the
+// Swift `DisplayPipelineMetal.DisplayParams` mirror exactly (4-byte aligned, no
+// padding). The host copies `MemoryLayout<DisplayParams>.size` bytes.
+
+constant float PREFILTER_WHITE_MS = 255.0f;
+constant float WHITE_LEVEL_MS     = 255.0f;
+
+struct DisplayParams {
+    float k1, k2;
+    float gammaInv, linrange, vibrancy;
+    float bgR, bgG, bgB;
+    float highlightPower;
+    uint  gw, gh, width, height, oversample, fw, gutter;
+};
+
+// Stage 3 step 1: per grid cell, log-density scale. Reads raw histogram (Float
+// bins: count,r,g,b,a in dmap units), writes accumulator (rgb + a).
+kernel void logDensity(device FloatBin* raw     [[buffer(0)]],
+                       device float*  accumRGB  [[buffer(1)]],
+                       device float*  accumA    [[buffer(2)]],
+                       constant const DisplayParams* dp [[buffer(3)]],
+                       uint2 tid [[thread_position_in_grid]]) {
+    if (tid.x >= dp->gw || tid.y >= dp->gh) return;
+    uint idx = tid.y * dp->gw + tid.x;
+    float c3 = raw[idx].a;                       // rect.c:959 b[0][3]
+    if (c3 == 0.0f) {                            // rect.c:960
+        accumRGB[idx*3] = 0; accumRGB[idx*3+1] = 0; accumRGB[idx*3+2] = 0;
+        accumA[idx] = 0; return;
+    }
+    float ls = dp->k1 * log(1.0f + c3 * dp->k2) / c3;   // rect.c:963
+    accumRGB[idx*3]   = raw[idx].r * ls;
+    accumRGB[idx*3+1] = raw[idx].g * ls;
+    accumRGB[idx*3+2] = raw[idx].b * ls;
+    accumA[idx] = c3 * ls;
+}
+
+// palettes.c:274-289
+static inline float calc_alpha(float density, float gamma, float linrange) {
+    float dnorm = density;
+    float funcval = pow(linrange, gamma);
+    if (dnorm > 0) {
+        if (dnorm < linrange) {
+            float frac = dnorm / linrange;
+            return (1.0f - frac) * dnorm * (funcval / linrange) + frac * pow(density, gamma);
+        }
+        return pow(density, gamma);
+    }
+    return 0;
+}
+
+// palettes.c:292-348. M2 only renders at default highlightPower=-1, where the
+// saturated-highlight (HSV) branch is unreachable; this keeps the `else`
+// (maxa<=255) path, the only one CPU ToneMapping exercises on the goldens.
+static inline float3 calc_newrgb(float3 cbuf, float ls, float highpow) {
+    if (ls == 0 || (cbuf.x == 0 && cbuf.y == 0 && cbuf.z == 0)) return 0.0f;
+    float maxa = -1.0f; float maxc = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        float a = ls * (cbuf[i] / PREFILTER_WHITE_MS);
+        if (a > maxa) { maxa = a; maxc = cbuf[i] / PREFILTER_WHITE_MS; }
+    }
+    float newls = 255.0f / maxc;
+    float adjhlp = -highpow; if (adjhlp > 1) adjhlp = 1; if (maxa <= 255) adjhlp = 1;
+    float blend = (1 - adjhlp) * newls + adjhlp * ls;
+    return float3(blend * cbuf.x / PREFILTER_WHITE_MS,
+                  blend * cbuf.y / PREFILTER_WHITE_MS,
+                  blend * cbuf.z / PREFILTER_WHITE_MS);
+}
+
+// Stage 3 steps 2+3: per output pixel, spatial-filter gather + gamma + write RGBA8.
+kernel void displayPipeline(device const float* accumRGB [[buffer(0)]],
+                            device const float* accumA   [[buffer(1)]],
+                            constant const float* spatialKernel [[buffer(2)]],
+                            constant const DisplayParams* dp [[buffer(3)]],
+                            device uchar* rgbaOut [[buffer(4)]],
+                            uint2 tid [[thread_position_in_grid]]) {
+    if (tid.x >= dp->width || tid.y >= dp->height) return;
+    uint ox = tid.x, oy = tid.y;
+    // CRITICAL: gather origin is `ox*oversample` with NO gutter added — matches
+    // CPU ToneMapping (hardcoded deOffset=0). Adding `+gutter` shifts every tap
+    // by `gutter` cells for oversample>1 (oversample=2 → fw=4, gutter=1 → 1-cell
+    // shift), breaking the Stage-3a ≥50 dB same-histogram gate. Do NOT add gutter.
+    float3 tRGB = 0.0f; float tA = 0.0f;
+    for (uint jj = 0; jj < dp->fw; jj++) {
+        for (uint ii = 0; ii < dp->fw; ii++) {
+            int xx = int(ox * dp->oversample) + int(ii);
+            int yy = int(oy * dp->oversample) + int(jj);
+            if (xx < 0 || xx >= int(dp->gw) || yy < 0 || yy >= int(dp->gh)) continue;
+            float k = spatialKernel[ii + jj * dp->fw];
+            uint idx = uint(yy) * dp->gw + uint(xx);
+            tRGB += k * float3(accumRGB[idx*3], accumRGB[idx*3+1], accumRGB[idx*3+2]);
+            tA   += k * accumA[idx];
+        }
+    }
+    uint base = (oy * dp->width + ox) * 4;
+    rgbaOut[base + 3] = 255;                      // opaque output
+    if (tA <= 0) {                                // rect.c:1171
+        rgbaOut[base] = 0; rgbaOut[base+1] = 0; rgbaOut[base+2] = 0;
+        return;
+    }
+    float tmp = tA / PREFILTER_WHITE_MS;
+    float alpha = calc_alpha(tmp, dp->gammaInv, dp->linrange);
+    float ls2 = dp->vibrancy * 256.0f * alpha / tmp;     // rect.c:1176
+    float3 newrgb = calc_newrgb(tRGB, ls2, dp->highlightPower);
+    float3 bg = float3(dp->bgR, dp->bgG, dp->bgB);
+    for (int c = 0; c < 3; c++) {
+        float a = newrgb[c];
+        a += (1.0f - dp->vibrancy) * 256.0f * pow(tRGB[c] / PREFILTER_WHITE_MS, dp->gammaInv);
+        a += (1.0f - alpha) * bg[c];
+        a = clamp(a, 0.0f, 255.0f);
+        rgbaOut[base + c] = uchar(a + 0.5f);
+    }
+}

@@ -3,15 +3,16 @@ import XCTest
 @testable import FlameReference
 import FlameKit
 
-/// First end-to-end image-level parity gate (Stage-3b on-ramp).
+/// First end-to-end image-level parity gate (Stage-3b on-ramp, now test-only).
 ///
-/// Metal chaos kernel → decoded `Histogram` (dmap-units, same as CPU) →
-/// CPU `DensityEstimation` + `ToneMapping` → `RGBA8Image`. Compared against
-/// the pure-CPU `ReferenceRenderer.render` twin. Two independent ISAAC
-/// consumption orderings (single-threaded CPU vs. multi-threaded Metal)
-/// produce sampling-noise differences; the gate asserts they stay below
-/// 38 dB PSNR / 0.95 SSIM — the parity-bisect on-ramp before any Metal
-/// display or DE kernel exists.
+/// `OnRamp3b.render` composes Metal chaos → decoded `Histogram` (dmap-units,
+/// same as CPU) → CPU `DensityEstimation` + `ToneMapping` → `RGBA8Image`, and
+/// is compared against the pure-CPU `ReferenceRenderer.render` twin. Two
+/// independent ISAAC consumption orderings (single-threaded CPU vs.
+/// multi-threaded Metal) produce sampling-noise differences; the gate asserts
+/// they stay below 38 dB PSNR / 0.95 SSIM. Task 9 moved this composition out of
+/// the production `MetalRenderer.render` (now full-Metal) into `OnRamp3b` so
+/// the parity-bisect gate stays a permanent test.
 final class EndToEndParity3bTests: XCTestCase {
     private func genomesDir() -> URL {
         URL(fileURLWithPath: #filePath)
@@ -36,7 +37,7 @@ final class EndToEndParity3bTests: XCTestCase {
         for g in genomes {
             let flame = try Flam3Parser.parse(Data(contentsOf: g))[0]
             let cpu = ReferenceRenderer.render(flame: flame, params: p)
-            let gpu = MetalRenderer.render(flame: flame, params: p)
+            let gpu = OnRamp3b.render(flame: flame, params: p)
             let psnr = ImageComparison.psnr(cpu, gpu)
             let ssim = ImageComparison.ssim(cpu, gpu)
             let psnrStr = psnr.isInfinite ? "inf" : String(format: "%.2f", psnr)
