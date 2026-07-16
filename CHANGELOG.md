@@ -16,7 +16,7 @@ consumption order, density-estimation filter, and display pipeline. Exposed via
 depends on **FlameKit only** (shared types lifted out of `FlameReference`).
 
 ### Faithful Metal twin
-Three MSL kernels (`chaosGame`, `densityEstimate`, `logDensity` + `displayPipeline`)
+Four MSL kernels (`chaosGame`, `densityEstimation`, `logDensity`, `displayPipeline`)
 port the CPU stages field-for-field. The RNG is a **faithful MSL port of flam3
 ISAAC**, byte-equal to the Swift `FlameKit.ISAAC` for identical seeds, seeded
 per-thread via flam3's parent→child mechanism. Thread geometry is **pinned from

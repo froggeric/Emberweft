@@ -9,6 +9,7 @@ enum ISAACBridge {
     /// Run the MSL `isaac_check` kernel for the given 16-word seed and return
     /// the first `count` output words. Throws if Metal is unavailable.
     static func stream(seed16: [UInt64], count: Int) throws -> [UInt32] {
+        precondition(seed16.count >= 16, "ISAAC seed must supply 16 words (128 bytes)")
         guard let (device, library) = MetalRenderer.deviceAndLibrary() else {
             throw NSError(domain: "MetalRenderer", code: 10)
         }

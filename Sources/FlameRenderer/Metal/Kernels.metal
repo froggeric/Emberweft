@@ -119,10 +119,6 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
     for (uint i = 0; i < count; i++) { out[i] = isaac_next(s); }
 }
 
-kernel void noop_kernel(device uint* out [[buffer(0)]], uint gid [[thread_position_in_grid]]) {
-    if (gid == 0) { out[0] = 0x4d657461; }  // "Meta"
-}
-
 // ---- Device mirrors of Swift GPUXform / GPUFrameParams (field order identical) ----
 //
 // These cross the Swift→MSL boundary as raw bytes, so field order, types, and

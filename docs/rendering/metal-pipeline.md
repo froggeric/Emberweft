@@ -24,7 +24,7 @@ Flame (FlameKit) + RenderParams
         ▼
 ┌──────────────────────────────────────────────┐
 │  Stage 2: Density estimation                 │
-│  densityEstimate kernel (radius > 0;         │
+│  densityEstimation kernel (radius > 0;       │
 │  radius == 0 is a passthrough)               │
 └──────────────────────────────────────────────┘
         │
@@ -81,7 +81,7 @@ Seeding replicates flam3's parent→child mechanism on the host (`MetalHost.buil
 
 ## Stage 2 — Density estimation
 
-Kernel: `densityEstimate` (`Metal/Kernels.metal`). Host: `DensityEstimationMetal.apply`. Faithful twin of the CPU M1 density estimator: adaptive kernel radius from per-bin density, neighbor gather, normalized accumulate. When `flame.quality.estimatorRadius == 0` (the case for the frozen goldens) the stage is a **passthrough** — the host skips the kernel and hands the histogram straight to Stage 3a.
+Kernel: `densityEstimation` (`Metal/Kernels.metal`). Host: `DensityEstimationMetal.apply`. Faithful twin of the CPU M1 density estimator: adaptive kernel radius from per-bin density, neighbor gather, normalized accumulate. When `flame.quality.estimatorRadius == 0` (the case for the frozen goldens) the stage is a **passthrough** — the host skips the kernel and hands the histogram straight to Stage 3a.
 
 ## Stage 3a — Display pipeline
 
