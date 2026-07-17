@@ -42,7 +42,7 @@
 **Key deliverables:**
 - **FlameKit** — genome model, `.flam3` parse/serialize, validation, temporal interpolation (S1)
 - **FlameReference** — CPU renderer: chaos game → histogram → log-density → density-estimation filter → palette/gamma (S2)
-- **Golden oracle harness** — dev-only `flam3` (Homebrew); frozen genome set; PSNR/SSIM comparison (S3)
+- **Golden oracle harness** — dev-only `flam3` (built from source — no Homebrew formula); frozen genome set; PSNR/SSIM comparison (S3)
 - **`emberweft` CLI** — `render` / `validate` / `info`, CPU backend (S4)
 
 **Dependencies:** M0 complete

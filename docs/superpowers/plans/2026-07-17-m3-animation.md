@@ -32,7 +32,7 @@ New files (all under existing targets — no new targets except where noted):
 |---|---|---|
 | `Sources/FlameKit/VariationDescriptor.swift` | FlameKit | Canonical variation→param registry: names, param tables, defaults, special-sauce rest values, name→(slot,index) map. Single source of truth for parser, serializer, CPU table, and Metal host packer. |
 | `Sources/FlameKit/AnimationTypes.swift` | FlameKit | `TempInterpolation`, `MatrixInterpolationType`, `PaletteInterpolation` enums; widening of `Variation`/`Xform`/`Flame` lives in `Genome.swift`. |
-| `Sources/FlameKit/GenomeInterpolator.swift` | FlameKit | Rewrite of `Interpolation.swift`: `.linear` + `.log` (polar) matrix blend with `wind`-anchored unwrap, determinant guard, post-identity special case, HSV palette blend. Thin `interpolate(a,b,t)` shim. |
+| `Sources/FlameKit/GenomeInterpolator.swift` | FlameKit | Rewrite of `Interpolation.swift`: `.linear` + `.log` (polar) matrix blend with `wind`-anchored unwrap, per-column magnitude guard, post-identity special case, HSV palette blend. Thin `interpolate(a,b,t)` shim. |
 | `Sources/FlameKit/SpecialSauce.swift` | FlameKit | `flam3_align` port: pad to equal xform/final count, copy parametric params from neighbour, apply per-variation rest positions. |
 | `Sources/FlameKit/RefAngles.swift` | FlameKit | `establish_asymmetric_refangles` — writes `xform.wind[col]` to anchor the log unwrap. |
 | `Sources/FlameKit/Loop.swift` | FlameKit | `Loop.blend(sheep, t)` = `sheep_loop` port (pure `R(θ)·M` rotation). |
@@ -251,7 +251,7 @@ git commit -m "feat(flamekit): VariationDescriptor registry for variation params
 **Acceptance Criteria:**
 - [ ] `Variation` has `parameters: [String: Double]` (default `[:]`); existing `Variation(name:weight:)` call sites compile unchanged.
 - [ ] `Xform` has `animate: Double` (default `1.0`), `padding: Int` (default `0`), `wind: SIMD2<Double>` (default `.zero`).
-- [ ] `Flame` has `interpolation: TempInterpolation` (default `.linear`), `interpolationType: MatrixInterpolationType` (default `.log`), `paletteInterpolation: PaletteInterpolation` (default `.hsvCircular`), `hueRotation: Double` (default `0`). Existing `hueShift` is retained unchanged (round-trip only — F4).
+- [ ] `Flame` has `interpolation: TempInterpolation` (default `.linear`), `interpolationType: MatrixInterpolationType` (default `.log`), `paletteInterpolation: PaletteInterpolation` (default `.hsvCircular`), `hueRotation: Double` (default `0`), and `hsvRgbPaletteBlend: Double` (default `0`). Existing `hueShift` is retained unchanged (round-trip only — F4). `hsvRgbPaletteBlend` models flam3's `hsv_rgb_palette_blend` — the live rgb↔hsv mix fraction consumed by the hsv_circular/rgb palette blend (`interpolation.c:383-384,432-433`); it is NOT one of the dead palette-hack fields and MUST be modeled (default 0 = pure HSV shorter-arc, the ES norm).
 - [ ] The palette-hack fields (`paletteIndex0/1`, `hueRotation0/1`, `paletteBlend`) are NOT added (dead metadata — F7).
 - [ ] `swift build` + the existing `swift test` suite are green.
 
@@ -282,6 +282,7 @@ func testFlameAnimationFields() {
     XCTAssertEqual(f.interpolationType, .log)        // ES default
     XCTAssertEqual(f.paletteInterpolation, .hsvCircular)
     XCTAssertEqual(f.hueRotation, 0)
+    XCTAssertEqual(f.hsvRgbPaletteBlend, 0)          // live rgb↔hsv mix fraction (default 0 = pure HSV)
     XCTAssertEqual(f.hueShift, 0)                    // retained, round-trip only (F4)
 }
 ```
@@ -343,8 +344,9 @@ public var interpolation: TempInterpolation
 public var interpolationType: MatrixInterpolationType
 public var paletteInterpolation: PaletteInterpolation
 public var hueRotation: Double
+public var hsvRgbPaletteBlend: Double   // flam3 hsv_rgb_palette_blend (LIVE palette mix fraction)
 ```
-Add to the initializer (after `hueShift`): `interpolation: TempInterpolation = .linear, interpolationType: MatrixInterpolationType = .log, paletteInterpolation: PaletteInterpolation = .hsvCircular, hueRotation: Double = 0`.
+Add to the initializer (after `hueShift`): `interpolation: TempInterpolation = .linear, interpolationType: MatrixInterpolationType = .log, paletteInterpolation: PaletteInterpolation = .hsvCircular, hueRotation: Double = 0, hsvRgbPaletteBlend: Double = 0`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -374,7 +376,7 @@ git commit -m "feat(flamekit): widen Variation/Flame/Xform for animation + param
 - [ ] Variation-weight attrs are recognized by name; a `<varname>_<paramname>` attr is routed to that variation's `parameters` (validated against `VariationDescriptor`); unknown attrs still round-trip as zero-contribution weights (existing behavior preserved).
 - [ ] **Param-without-weight edge case (pinned):** a parametric attr whose base weight attr is absent (e.g. `<xform blob_low="0.2"/>` with no `blob="…"`) is attached to a synthesized `Variation(name:"blob", weight:0, parameters:["blob_low":0.2])` so the params survive a round-trip; the serializer emits params for any variation whose `parameters` is non-empty **regardless of weight** (override the `where v.weight != 0` weight-only filter for the param-emission loop). This matches flam3, which identifies the variation from the weight attr but still stores whatever params the file carries. Add a dedicated round-trip test for this case.
 - [ ] **No param-prefix collisions:** the 12 parametric variation names have pairwise-distinct `<name>_` prefixes (`blob_`, `curl_`, `rectangles_`, `fan2_`, `rings2_`, `perspective_`, `super_shape_`, `ngon_`, `julian_`, `juliascope_`, `wedge_julia_`, `wedge_sph_`); in particular `"fan2_…".hasPrefix("fan_") == false` and `"rings2_…".hasPrefix("rings_") == false`. A test asserts `matchParamAttribute` resolves every parametric attr to exactly one variation.
-- [ ] Parser reads `animate` (xform), `interpolation`/`interpolation_type`/`palette_interpolation`/`hue_rotation` (flame); serializer emits them all. `hue` (hueShift) and `hue_rotation` (hueRotation) are both read and both emitted.
+- [ ] Parser reads `animate` (xform), `interpolation`/`interpolation_type`/`palette_interpolation`/`hue_rotation`/`hsv_rgb_palette_blend` (flame); serializer emits them all. `hue` (hueShift) and `hue_rotation` (hueRotation) are both read and both emitted; `hsv_rgb_palette_blend` (hsvRgbPaletteBlend) is read and emitted (non-default only, to keep typical genomes compact).
 - [ ] `parse(serialize(parse(x)))` round-trips a parametric genome with `super_shape`/`blob`/`curl` params and `animate`/`interpolation_type=log` set.
 
 **Verify:** `swift test --filter ParserTests --filter SerializerTests` → PASS.
@@ -445,6 +447,7 @@ f.interpolation = attr["interpolation"].flatMap { TempInterpolation(rawValue: $0
 f.interpolationType = attr["interpolation_type"].flatMap { MatrixInterpolationType(rawValue: $0) } ?? .log
 f.paletteInterpolation = attr["palette_interpolation"].flatMap { PaletteInterpolation(rawValue: $0) } ?? .hsvCircular
 f.hueRotation = attr["hue_rotation"].flatMap { Double($0) } ?? 0
+f.hsvRgbPaletteBlend = attr["hsv_rgb_palette_blend"].flatMap { Double($0) } ?? 0
 ```
 
 In `Flam3Parser.makeXform`, replace the variation-attribute scan so parametric attrs route to `parameters`. Add `animate` reading and reserve the parametric attr prefixes:
@@ -510,6 +513,7 @@ In `Flam3Serializer.flameString`, emit the new flame attrs near `hue`/`time`:
 a += " interpolation_type=\"\(f.interpolationType.rawValue)\""
 a += " palette_interpolation=\"\(f.paletteInterpolation.rawValue)\""
 a += " hue_rotation=\"\(f6(f.hueRotation))\""
+if f.hsvRgbPaletteBlend != 0 { a += " hsv_rgb_palette_blend=\"\(f6(f.hsvRgbPaletteBlend))\"" }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -544,7 +548,7 @@ git commit -m "feat(flamekit): parse/serialize variation params + animation attr
 
 **Acceptance Criteria:**
 - [ ] `Variations.knownNames` includes all 16 special-sauce names; `evaluate` dispatches each via a `(p, weight, params, ef) -> SIMD2<Double>` closure keyed by name, PLUS in-function special cases for the RNG-consuming `julia` (existing), `julian`, `juliascope`, `super_shape`, `wedge_julia` (each consumes the ISAAC stream once per reached variation, in genome order).
-- [ ] **RNG alignment pin:** a unit test constructs an xform with `[julia, julian]` (both weight 1) and asserts CPU `evaluate` consumes exactly the same ISAAC words as a port of flam3's variation loop (`julia` draws first because it appears first in genome order). The four RNG-consuming special-sauce each draw exactly 1 word.
+- [ ] **RNG alignment pin:** a unit test constructs an xform with `[julia, julian]` (both weight 1) and asserts CPU `evaluate` consumes exactly the same ISAAC words as a port of flam3's variation loop. Order basis (VERIFIED vs variations.c): flam3 dispatches in **ascending numeric variation-index order** (varFunc built via `for j if var[j]!=0`); the parser sorts `x.variations` **alphabetically**, so CPU `evaluate` draws in alphabetical name order. For `[julia, julian]` both orders agree → `julia` (13 / "julia") draws before `julian` (32 / "julian"). The four RNG-consuming special-sauce each draw exactly 1 word.
 - [ ] `evaluate` signature is `evaluate(_ variations:, at:, ef: SIMD2<Double>, rng: inout ISAAC)`; the ChaosGame call site passes `ef: SIMD2(x.affine.e, x.affine.f)`.
 - [ ] Each of the 14 new formulas matches the expected output recomputed from the **actual flam3 `varN_*` body** (cite the C line-by-line in the test comment). Self-invented formulas and self-consistent-but-unfaithful tests are forbidden (the round-2 review caught a 2×-frequency blob, a fabricated curl, a 2×-denominator rectangles, and a fabricated rings this way).
 - [ ] `evaluate` no longer warns for any of the 16 names.
@@ -639,7 +643,7 @@ Expected: FAIL (names warn-unknown / return zero).
 
 - [ ] **Step 3: Write minimal implementation**
 
-(a) Change `evaluate` to `evaluate(_ variations:, at:, ef: SIMD2<Double>, rng: inout ISAAC)`. Special-case `julian`, `juliascope`, `super_shape`, `wedge_julia` in the function body (each draws one ISAAC word via `rng.isaac01()` in the flam3-documented position) BEFORE the table lookup, exactly as `julia` already is. Order matters: walk `variations` in genome order and draw RNG when an RNG-consuming variation is reached, so CPU matches flam3's variation loop.
+(a) Change `evaluate` to `evaluate(_ variations:, at:, ef: SIMD2<Double>, rng: inout ISAAC)`. Special-case `julian`, `juliascope`, `super_shape`, `wedge_julia` in the function body (each draws one ISAAC word via `rng.isaac01()` in the flam3-documented position) BEFORE the table lookup, exactly as `julia` already is. RNG order: `x.variations` is sorted alphabetically by the parser, and flam3 dispatches in ascending numeric variation-index order — these agree on the RNG-consuming subset, so walking `variations` in array (alphabetical) order reproduces flam3's RNG stream (see the Task-6 RNG-order invariant). Do NOT re-sort `variations` here.
 
 (b) Table closure type: `(SIMD2<Double>, Double, [String:Double], SIMD2<Double>) -> SIMD2<Double>` — `(p, w, params, ef)`. Port each formula line-for-line from `variations.c` (EPS = 1e-10). The faithful rings/fan/blob/curl/rectangles bodies (quoted so the implementer cannot get them wrong):
 
@@ -852,9 +856,10 @@ git commit -m "feat(renderer): GPUXform 33-slot canonical table + param channel 
 
 **Acceptance Criteria:**
 - [ ] 14 NEW MSL `v_<name>` functions land (`rings`, `fan`, `blob`, `fan2`, `rings2`, `perspective`, `julian`, `juliascope`, `ngon`, `curl`, `rectangles`, `super_shape`, `wedge_julia`, `wedge_sph`); the pre-existing `v_spherical`/`v_polar` cover the remaining two of the 16 special-sauce names. `apply_xform_body` reads `varWeights[0..<33]` and runs a 33-line guarded chain, passing `&x.varParams[slot*8]` positionally to each parametric call.
-- [ ] **RNG-consuming MSL variations take `thread IsaacState& rng` and draw exactly one word each, in canonical-slot order within `apply_xform_body`** — `v_julian`, `v_juliascope`, `v_super_shape`, `v_wedge_julia` (mirroring the existing `v_julia(pre, w, rng)` pattern). This is mandatory: the spec line "none of the 16 variations consumes the ISAAC stream" is wrong (verified in Task 4), and Metal RNG alignment is the core M1 invariant. The guarded if-chain must pass `rng` to these four in the same relative order the CPU `evaluate` reaches them (genome order); a multi-RNG-variation xform parity test (below) is the gate.
+- [ ] **RNG-consuming MSL variations take `thread IsaacState& rng` and draw exactly one word each** — `v_julian`, `v_juliascope`, `v_super_shape`, `v_wedge_julia` (mirroring the existing `v_julia(pre, w, rng)` pattern). This is mandatory: the spec line "none of the 16 variations consumes the ISAAC stream" is wrong (verified in Task 4), and Metal RNG alignment is the core M1 invariant. The if-chain evaluates RNG-consuming slots in canonical-slot order; this matches CPU (alphabetical eval order) AND flam3 (ascending numeric variation-index order) for the RNG-consuming subset {julia, julian, juliascope, super_shape, wedge_julia} — pinned by an explicit invariant test (below).
 - [ ] **Coefficient-dependent MSL variations take `x.e, x.f`** — `v_rings(pre, w, x.e)` and `v_fan(pre, w, x.e, x.f)` (both already live in the `GPUXform` 15-float header; no layout change).
-- [ ] For each of the 16 names, a constructed single-variation genome renders Metal vs CPU at PSNR ≥ 38 dB / SSIM ≥ 0.95. **Plus one multi-variation genome** with `[linear, julian, julia]` on one xform (exercises RNG draw ORDER across julia + an RNG-consuming special-sauce) at ≥ 38 dB — this is the RNG-alignment gate the spec's wrong claim would have skipped.
+- [ ] For each of the 16 names, a constructed single-variation genome renders Metal vs CPU at PSNR ≥ 38 dB / SSIM ≥ 0.95. **Plus one multi-variation genome** with `[linear, julian, julia]` on one xform (exercises RNG draw ORDER across julia + an RNG-consuming special-sauce) at ≥ 38 dB — this is the RNG-alignment gate the spec's wrong claim would have skipped. (The RNG stream matches: both CPU-alphabetical and Metal-slot order draw julia before julian. The non-RNG `linear` term sits at a different summation position CPU-vs-Metal, so this also exercises the ≥3-active FP-associativity regime — covered by the statistical ≥38 dB gate, not a byte-equality claim.)
+- [ ] **RNG-order invariant test (pinned):** asserts the canonical-slot indices of `{julia, julian, juliascope, super_shape, wedge_julia}` are strictly ascending AND equal to their alphabetical-name order AND equal to flam3's numeric variation order (13, 32, 33, 50, 78). This makes the RNG-alignment coincidence a tested invariant; a canonical-tail reorder or a new RNG-consuming variation that violates it fails here, not in a render.
 - [ ] No NaN/Inf pixels on any of the 16 constructed genomes.
 - [ ] The full `EndToEndParityTests` suite stays green (the frozen genomes don't use the new names, so slots 19..32 stay weight-zero).
 
@@ -966,12 +971,25 @@ if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]
 // (slot index literal == position in the Task-5 appended canonicalOrder tail; the
 //  testCanonicalOrderGrewTo33NoDupes assertion pins the order, so a slot/func
 //  mismatch fails loudly at test time, not silently at render time.)
-// RNG ORDER: CPU walks genome-order, Metal walks canonical-slot order. These
-// match ONLY because the Metal host folds same-name weights into one slot and
-// the RNG-consuming slots (julian/juliascope/super_shape/wedge_julia + julia at 12)
-// are each hit at most once per xform — the multi-RNG-variation parity test
-// (Acceptance Criteria) pins this. Revisit if a genome ever has ≥2 distinct
-// RNG-consuming special-sauce names on one xform in a different order than slot order.
+//
+// RNG DRAW ORDER — VERIFIED vs variations.c (the plan's earlier "match ONLY
+// because each hit at most once" reasoning was WRONG). flam3 builds varFunc[] by
+// scanning `for j=0..flam3_nvariations if var[j]!=0` → variations execute in
+// ASCENDING NUMERIC variation-index order (julia=13, julian=32, juliascope=33,
+// super_shape=50, wedge_julia=78), regardless of XML/genome order. Emberweft's
+// CPU `evaluate` iterates `x.variations`, which the parser sorts ALPHABETICALLY
+// (Flam3Parser.swift), so CPU draws RNG in alphabetical name order. The Metal
+// if-chain above draws in canonical-slot order. These three sequences AGREE on
+// the RNG-consuming subset ONLY because {julia, julian, juliascope, super_shape,
+// wedge_julia} are in the SAME relative order alphabetically, numerically, and
+// by canonical slot — a coincidence the plan now PINS as a tested invariant:
+// the unit test asserts the canonical-slot indices of these five names are
+// strictly ascending, so any future canonical-tail reorder or new RNG-consuming
+// variation whose name doesn't sort to match its slot FAILS the test instead of
+// silently diverging the ISAAC stream. (Non-RNG terms: CPU sums alphabetically,
+// Metal by slot, flam3 numerically — these differ by FP-associativity ULPs only,
+// already covered by M1 assumption (2) ≤2 active → bit-identical, and by the
+// ≥38 dB statistical gate for ≥3.)
 ```
 
 (The exact slot numbers above depend on the appended order chosen in Task 5; pin them together — the `SpecialSauceParityTests` per-name run + the multi-RNG-variation run are the correctness oracle. `spherical`(16) and `polar`(14) already exist as `v_spherical`/`v_polar` and need no new function.)
@@ -1009,7 +1027,7 @@ Pure FlameKit math first (TDD'd in isolation), then the CLI and the animated-fra
 - [ ] `Tools/flam3_oracle.sh` documents the pinned flam3 repo commit, the `brew install` deps, the `./configure && make` build, and the exact env-var invocations (sequence / rotate / inter for `flam3-genome`; `begin/end/prefix` for `flam3-animate`).
 - [ ] `Flam3Oracle.isAvailable` returns true iff `flam3-genome` and `flam3-animate` resolve on `$PATH`; every vs-flam3 test calls `try Flam3Oracle.require()` which `XCTSkip`s with a clear warning when absent.
 - [ ] The helper renders a single still with `passes=1 temporal_samples=1` set on every control point (motion blur off — F6), confirmed by a one-frame smoke render that produces a non-empty PNG.
-- [ ] `testing.md` records the oracle as a dev-machine prerequisite (not CI), the 30 dB (vs-flam3) vs 38 dB (Metal↔CPU) split, and the F10 auto-skip fallback.
+- [ ] `testing.md` records the oracle as a dev-machine prerequisite (not CI), the 30 dB (vs-flam3) vs 38 dB (Metal↔CPU) split, and the F10 auto-skip fallback. **Also fix the stale "flam3 (Homebrew)" claims** at `testing.md:31` and `roadmap.md:45` — flam3 has NO Homebrew formula; replace with "built from `scottdraves/flam3` source (autotools + zlib/libpng/libxml2)" per Task 7.
 
 **Verify:** `which flam3-genome flam3-animate` resolves on the dev machine; `swift test --filter Flam3OracleSmoke` either runs the smoke render or skips with the documented warning.
 
@@ -1042,7 +1060,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Acceptance Criteria:**
 - [ ] `BlendMath.smoother(0)==0`, `smoother(1)==1`, `smoother(0.5)==0.5`, monotone on [0,1].
-- [ ] `BlendMath.staggerCoef(ncp:2, xformIndex:i, notFinal:flag, stagger:s, t:)` returns the documented per-xform eased sub-interval; for `stagger<=0` or `ncp!=2` or the final xform it returns `smoother(t)` unchanged (no stagger).
+- [ ] `BlendMath.staggerCoef(numXforms:nx, xformIndex:i, isFinal:flag, stagger:s, t:)` ports `get_stagger_coef` (interpolation.c:343-367) exactly: `max_stag=(nx-1)/nx; stag_scaled=stagger*max_stag; st=stag_scaled*(nx-1-i)/(nx-1); et=st+(1-stag_scaled)`; returns 0 if `t<=st`, 1 if `t>=et`, else `smoother((t-st)/(1-stag_scaled))`. Here `nx` = the **standard** xform count (excludes the final xform — `interpolation.c:524` computes `nx = num_xforms - (final_xform_enable)`); `i` is the 0-based xform index into the standard set. For `stagger<=0` or `ncp!=2` or the final xform it returns `smoother(t)` unchanged (no stagger). NOTE (verified): the active formula makes the **last** standard xform interpolate first (`i=nx-1 ⇒ st=0`); the flam3 comment claiming "first xform first" describes the commented-out alternative line — port the active line, not the comment.
 - [ ] A unit test pins the staggered values at a known `(s, i, n)`.
 
 **Verify:** `swift test --filter BlendMathTests` → PASS.
@@ -1059,32 +1077,36 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 ### Task 9: HSV (hsv_circular) palette blend + hueRotation interpolation
 
-**Goal:** Port flam3's transition palette blend: HSV (`hsv_circular`) interpolation of the two endpoints' 256-entry RGB LUTs (`interpolation.c:377-427`), and linear interpolation of `hueRotation` across keyframes (`INTERP(hue_rotation)`, `interpolation.c:478`).
+**Goal:** Port flam3's transition palette blend faithfully: the per-entry blend of the two endpoints' 256-entry RGB LUTs governed by `palette_interpolation` (`interpolation.c:386-443`), and linear interpolation of `hueRotation` across keyframes (`INTERP(hue_rotation)`, `interpolation.c:478`).
+
+> **VERIFIED GROUND TRUTH (read before implementing).** A direct read of `interpolation.c:383-384,403-413,432-433` settles two things the round-2 spec got loose:
+> 1. **`hsv_circular` and `rgb` are MIXED by `hsv_rgb_palette_blend`, not pure HSV.** `rgb_fraction = (mode==rgb) ? 1.0 : (mode==hsv_circular) ? cpi[0].hsv_rgb_palette_blend : 0.0`. The result entry = `rgb_fraction*new_rgb + (1−rgb_fraction)*new_hsv_rgb`, where `new_rgb` is the linear-RGB blend and `new_hsv_rgb = hsv2rgb(linear-HSV blend)`. Pure-`hsv` mode ⇒ `rgb_fraction=0` (HSV only). The plan's earlier "shorter-arc hue blend" described only the HSV half and ignored `hsvRgbPaletteBlend`; that fails vs-flam3 on any genome with non-zero `hsv_rgb_palette_blend`. `hsvRgbPaletteBlend` is added to the `Flame` model in Task 2.
+> 2. **HSV hue is on a 0–6 scale; the shorter-arc adjustment is `±3.0` / shift `±6.0`, applied ONLY to the first control point's hue (ncp==2, k==0) based on the second's hue** (`interpolation.c:409-413`). No 8-bit rounding anywhere in the blend — all `Double`, channels clipped to `[0,1]` at the end (`interpolation.c:437-442`); `hsv2rgb` reduces hue mod 6. The 256-loop has no off-by-one.
 
 **Files:**
 - Create: `Sources/FlameKit/PaletteBlend.swift` (kept in its own file so Task 9 does not depend on the later Task 10)
 - Test: `Tests/FlameKitTests/PaletteBlendTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `PaletteBlend.hsvCircular(a,b,t)` returns the HSV-circular interpolated 256-LUT; at `t=0==a`, `t=1==b`, midpoint is the shorter-arc hue blend.
-- [ ] `hueRotation` interpolates linearly across two genomes.
-- [ ] All entries finite; `rgb` fallback (palette_interpolation=rgb) also implemented (linear RGB) so the `paletteInterpolation` switch is exhaustive.
+- [ ] `PaletteBlend.blend(a, b, t, mode: PaletteInterpolation, hsvMix: Double)` returns the 256-LUT per `interpolation.c:386-443`: `rgb_fraction` per mode above; for hsv_circular/hsv, convert each entry RGB→HSV (hue 0–6), shorter-arc-adjust the cp0 hue against cp1 (±6.0 when the raw Δ exceeds ±3.0), linear-blend both the HSV and RGB triples by `(1−t),t`, `hsv2rgb` the blended HSV, mix by `rgb_fraction`. Clip all channels to `[0,1]`. At `t=0==a`, `t=1==b`.
+- [ ] `hueRotation` interpolates linearly across two genomes (`INTERP(hue_rotation)`).
+- [ ] All entries finite on a black palette and on a saturated palette; the `rgb` and `hsv` (plain) modes are implemented so the `paletteInterpolation` switch is exhaustive (`rgb`⇒rgb_fraction=1; `hsv`⇒rgb_fraction=0; `sweep`⇒the hard-cut branch at `interpolation.c:445-451`).
 
 **Verify:** `swift test --filter PaletteBlendTests` → PASS.
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests** (endpoint equality at t=0/t=1; hsv midpoint on a known red→green pair recomputed by hand; finiteness on a black palette).
+- [ ] **Step 1: Write failing tests** (endpoint equality at t=0/t=1; hsv_circular midpoint on a known red→green pair recomputed by hand against the `±6.0` shorter-arc rule on the 0–6 hue scale; a non-zero `hsvMix` case proving the rgb/hsv mix is applied; finiteness on a black palette).
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** RGB→HSV→blend (shortest-arc hue for hsv_circular)→HSV→RGB per flam3 `hsv_rgb_palette_blend`; linear `hueRotation` interp.
+- [ ] **Step 3: Implement** the blend verbatim per `interpolation.c:386-443` (rgb_fraction, the 0–6-hue shorter-arc adjust on cp0, double RGB+HSV accumulation, hsv2rgb, mix, clip); linear `hueRotation` interp.
 - [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(flamekit): HSV/RGB palette blend + hueRotation interpolation`.
+- [ ] **Step 5: Commit** `feat(flamekit): HSV/RGB palette blend (hsv_rgb_palette_blend mix) + hueRotation interpolation`.
 
 ---
 
 ### Task 10: GenomeInterpolator rewrite (.linear + .log polar)
 
-**Goal:** Replace the M1 `Interpolation.interpolate` body with a `GenomeInterpolator` that switches on `interpolationType`: `.linear` (the existing per-field lerp, now the shim) and `.log` (polar matrix decomposition with `wind`-anchored angle unwrap, determinant guard → linear fallback, post-identity special case). A thin `Interpolation.interpolate(a,b,t)` shim delegates to `.linear` so M1/M2 call sites and tests stay green.
+**Goal:** Replace the M1 `Interpolation.interpolate` body with a `GenomeInterpolator` that switches on `interpolationType`: `.linear` (the existing per-field lerp, now the shim) and `.log` (polar matrix decomposition with `wind`-anchored angle unwrap, per-column magnitude guard, post-identity special case). A thin `Interpolation.interpolate(a,b,t)` shim delegates to `.linear` so M1/M2 call sites and tests stay green.
 
 **Files:**
 - Create: `Sources/FlameKit/GenomeInterpolator.swift`
@@ -1094,7 +1116,8 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 **Acceptance Criteria:**
 - [ ] `GenomeInterpolator.interpolate(a, b, t, type:)` switches on `interpolationType`.
 - [ ] `.linear` matches the previous `Interpolation.interpolate` output bit-for-bit on the existing test genomes (M1/M2 `InterpolationTests` unchanged and green). This requires the `.linear` path to REUSE the legacy `mergeVariations` verbatim (drop-zero-weight + sort-by-name) — do NOT route `.linear` through the new `.log` merge.
-- [ ] `.log` interpolates each xform's 2×2 via polar decomposition (magnitude linear, angle unwrapped by `wind`), guards near-zero determinant (falls back to linear), and forces result post to identity when both parents' post is identity. **Determinant guard is concrete:** compute `det = a*d − b*c` of each endpoint's 2×2; if `abs(det) < 1e-12` for EITHER endpoint, the whole 2×2 (+ its translation `e,f`) for that xform falls back to the `.linear` path (per-xform, all 6 coefficients together — NOT per-coefficient); the other xforms still use `.log`. This matches flam3's `convert_linear_to_polar` NaN-guard behavior (a degenerate matrix has no polar angle). Threshold pinned at `1e-12` (tighter than EPS=1e-10 because the test for "degenerate" is stricter than the per-term EPS guard).
+- [ ] `.log` interpolates each xform's 2×2 via the polar decomposition ported **verbatim from flam3** (`convert_linear_to_polar` + `interp_and_convert_back`, interpolation.c:207-227,283-318): per column `col∈{0,1}`, magnitude `cxmag=sqrt(c[col][0]²+c[col][1]²)` interpolates **log-linearly** (`accmag += c[i]*log(cxmag)`) and angle `cxang=atan2(c[col][1],c[col][0])` interpolates with the `wind`-anchored unwrap; translation `e,f` interpolates linearly. Result column = `(exp(accmag)*cos(accang), exp(accmag)*sin(accang))`. Post is forced to identity when both parents' post is identity.
+- [ ] **Near-degenerate guard is PER-COLUMN magnitude, NOT a determinant guard (VERIFIED vs interpolation.c:213-215 — the plan's earlier "det<1e-12 → whole-xform .linear fallback" was WRONG; there is no determinant, no NaN guard, no COMPAT fallback in flam3).** Port `interp_and_convert_back` exactly: for each column, if `log(cxmag[i][col]) < -10` (i.e. `cxmag < e^-10 ≈ 4.54e-5`) for ANY control point `i`, set `accmode[col]=1` and accumulate that column's magnitude **linearly** (`accmag += c[i]*cxmag[i][col]`; reconvert uses `expmag = accmag` instead of `exp(accmag)`). The angle still polar-interpolates; the OTHER column and the translation are unaffected; the xform does NOT fall back to `.linear`. Additionally port the zero-column-magnitude rule in `convert_linear_to_polar`: if `cxmag[k][col]==0` set `zlm[col]=1`, and if exactly one column is zero, copy the angle from the non-zero column (`cxang[k][zero]=cxang[k][nonzero]`).
 - [ ] Near-singular constructed affine does not produce NaN/Inf (determinant-guard fallback exercised by a test).
 - [ ] `mergeVariations` is split: the `.log` branch unions variations by name (preserving zero-weight padding slots that `align` created) and carries per-name `parameters` from whichever side defines them; the `.linear` branch is the legacy behavior.
 
@@ -1102,9 +1125,9 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests** — `.linear` parity with old output (snapshot a few coefficients), `.log` midpoint on a rotation pair (recomputed), and a near-singular affine that must stay finite.
+- [ ] **Step 1: Write failing tests** — `.linear` parity with old output (snapshot a few coefficients), `.log` midpoint on a rotation pair (recomputed), and a near-degenerate (tiny column-magnitude) affine that must stay finite AND must match the per-column linear-magnitude fallback (port `interp_and_convert_back`'s `accmode[col]` rule, NOT a determinant test).
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** `GenomeInterpolator` (port `convert_linear_to_polar` + `interp_and_convert_back` + the `wind` unwrap `interpolation.c:293-309` + the determinant guard + post-identity special case `interpolation.c:668-679`). Implement TWO merge functions: `mergeLinear` (moved from the current `Interpolation.mergeVariations`, byte-identical) and `mergeLog` (union + param carry-over, preserves zero-weight slots). `GenomeInterpolator` picks one by `type`. Make `Interpolation.interpolate(a,b,at:)` a thin delegate to `GenomeInterpolator.interpolate(a,b,t,type:.linear)` using `mergeLinear`, so every existing call site (`InterpolationTests`, any CLI/CLI-test caller) is bit-identical.
+- [ ] **Step 3: Implement** `GenomeInterpolator` (port `convert_linear_to_polar` + `interp_and_convert_back` + the `wind` unwrap `interpolation.c:293-309` + the **per-column magnitude fallback** (`log(cxmag)<-10` → linear magnitude for that column) + the zero-column angle-copy + post-identity special case `interpolation.c:668-679`). Implement TWO merge functions: `mergeLinear` (moved from the current `Interpolation.mergeVariations`, byte-identical) and `mergeLog` (union + param carry-over, preserves zero-weight slots). `GenomeInterpolator` picks one by `type`. Make `Interpolation.interpolate(a,b,at:)` a thin delegate to `GenomeInterpolator.interpolate(a,b,t,type:.linear)` using `mergeLinear`, so every existing call site (`InterpolationTests`, any CLI/CLI-test caller) is bit-identical.
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit** `feat(flamekit): GenomeInterpolator (.linear + .log polar) with wind unwrap + det guard`.
 
@@ -1150,6 +1173,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 - [ ] `RefAngles.establish(spun, ncp:)` writes **only** `xform.wind[col]` (never coefs).
 - [ ] A symmetric/animated xform pair gets the symmetric side's column angle +2π in `wind`.
 - [ ] An already-symmetric-on-both-sides pair leaves `wind` at its default (no-op).
+- [ ] **Symmetry gate is `animate==0` ONLY (VERIFIED vs interpolation.c:753-756):** flam3's `padsymflag` is hardcoded `0` inside the loop, so the `(padding==1 && padsymflag)` branch is DEAD — padding does NOT trigger the asymmetric-refangle path. Gate on `animate==0` (the effective behavior); do not treat padding as symmetry.
 
 **Verify:** `swift test --filter RefAnglesTests` → PASS.
 
@@ -1195,7 +1219,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 ### Task 14: `Transition.blend` (sheep_edge port)
 
-**Goal:** Port `sheep_edge` (`flam3.c:434-508` + `spin_inter`): clone both parents → `align` (Task 11) → normalize times → `establish_asymmetric_refangles` (Task 12) → rotate both by `t·360°` (`Loop` rotation) → `GenomeInterpolator.interpolate(2cp, smoother(t), stagger)` with `.log` + HSV palette blend. Strip motion elements; return the interpolated genome.
+**Goal:** Port `sheep_edge` (`flam3.c:436-491`; VERIFIED: there is NO separate `spin_inter` helper in master — `sheep_edge` calls the helpers inline): clone both parents → fold motion → `align` (Task 11) → normalize times to {0,1} → `establish_asymmetric_refangles` (Task 12) → **rotate BOTH endpoints by `t·360°`** via `flam3_rotate` (Task-13 rotation; same `animate!=0`/final-skip/padding-under-log gates apply to both) → `flam3_interpolate(2cp, smoother(t), stagger)` with `.log` + HSV palette blend. Strip motion elements; return the interpolated genome.
 
 **Files:**
 - Create: `Sources/FlameKit/Transition.swift`
@@ -1213,7 +1237,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 - [ ] **Step 1: Write failing tests** (endpoint equality; continuity ‖Δ‖<1e-3 over t∈{0,0.1,…,1}; finiteness on mismatched pair; stagger-vs-no-stagger genome differs at interior t).
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** `blend` orchestrating Tasks 8–12: `align` → normalize times to {0,1} → `establish` → rotate both via the Task-13 rotation → `GenomeInterpolator.interpolate(spun, 2, staggerCoef(...), type:.log)` (palette via Task-9 hsv_circular).
+- [ ] **Step 3: Implement** `blend` orchestrating Tasks 8–12: `align` → normalize times to {0,1} → `establish` → rotate BOTH endpoints via the Task-13 rotation (gate on `animate!=0`, skip final, padding only under `.log`) → `GenomeInterpolator.interpolate(spun, 2, smoother(t)` with stagger applied per-xform inside the interp loop, `type:.log)` (palette via Task-9 `hsv_circular` with `hsvRgbPaletteBlend`).
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit** `feat(flamekit): Transition.blend sheep_edge port (align+rotate+log interp+HSV palette)`.
 
@@ -1320,7 +1344,8 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 **Acceptance Criteria:**
 - [ ] `emberweft animate a.flam3 b.flam3 --frames 8 --segments 3 --selector sequential --seed 0 --backend cpu --out /tmp/frames` writes exactly `3*8 = 24` PNGs (`000000.png … 000023.png`) + `manifest.json`. The count is `segments * framesPerSegment` — NO duplicate/drop at segment boundaries (Task-15 blend convention).
 - [ ] `manifest.json` parses via `Manifest` Codable; `manifestVersion==1`; loop rows have `interpolationType: null`; `stagger` is top-level; `blend` follows the 1-indexed `(local+1)/N` convention (every row's blend ∈ (0,1], none is 0).
-- [ ] **Stable emit order + determinism:** the `frames` array is built by iterating the global frame index `0..<(segments*N)` — NEVER by iterating a `Set`/`Dictionary` of frames (F1). G2 byte-determinism: two runs of the same `(input, seed, backend, quality)` produce byte-identical PNGs AND byte-identical `manifest.json`. CPU is single-threaded → byte-deterministic by construction; Metal is byte-deterministic per the existing `EndToEndParityTests` repeat-run behavior — the snapshot test re-runs and diffs to prove it.
+- [ ] **Stable emit order + determinism:** the `frames` array is built by iterating the global frame index `0..<(segments*N)` — NEVER by iterating a `Set`/`Dictionary` of frames (F1). G2 byte-determinism: two runs of the same `(input, seed, backend, quality)` produce byte-identical PNGs AND byte-identical `manifest.json`. CPU is single-threaded → byte-deterministic by construction; Metal is byte-deterministic per the existing `EndToEndParityTests` repeat-run behavior (the per-frame packer walks `flame.xforms` and the canonical-order array — fixed order, no Set/Dict iteration; no hidden nondeterminism) — the snapshot test re-runs and diffs to prove it.
+- [ ] **CLI arg parsing (VERIFIED feasible vs the existing `CLI.swift` pattern):** `animate` takes **variadic positional genome paths PLUS flags**. The existing `render` uses `args.first` (single positional); `animate` must instead loop once over `args`: collect every non-`-`-prefixed token into `var genomes: [String]`, and handle `--flag value` pairs (`--frames`, `--segments`, `--selector`, `--seed`, `--stagger`, `--backend`, `--out`, `--library`, `--size`, `--quality`, `--rebuild-cache`) by consuming `args[i+1]`. Dispatch is a new `case "animate": return animate(args)` in `CLI.run`; it does NOT collide with `render`/`info`/`validate`/`--version`/`_feature-score` (distinct first-token switch arms). Metal frames render via `MainActor.assumeIsolated { MetalRenderer.render(...) }` exactly as the existing `render` path does (the CLI runs single-threaded; this is the established pattern).
 - [ ] Empty/size-1 input → non-zero exit with a clear error (alternation needs ≥ 2 sheep).
 - [ ] CLI snapshot test: the manifest for a fixed tiny input is byte-stable across runs.
 
@@ -1383,6 +1408,7 @@ S7 reuses S6's `Schedule`/`PairSelector`/Metal variation set **verbatim** — no
 - [ ] Mid-loop it prefetches the upcoming sheep's `Flame` so the transition's first frame is ready.
 - [ ] No frame is held/duplicated during a transition (realtime overrun → display best-available, never freeze).
 - [ ] **Swift 6 actor↔MainActor crossing is sound:** `MetalRenderer.render` is `@MainActor`, so the dispatcher `await`s across the actor boundary explicitly (`await MainActor.run { MetalRenderer.render(...) }`); the frame-ready callback into `@MainActor FlameUI` is likewise `await`ed. NO `nonisolated(unsafe)` escape hatches snuck in for the render target / texture / schedule (the existing CLI `nonisolated(unsafe)` IO hooks in `EmberweftCLI` are single-threaded test injection and are NOT a precedent for the realtime path). The dispatcher's `MetalRenderer` dependency is isolated behind an injected `protocol Renderer` (the test injects a fake; the production wiring hands the actor a `@MainActor`-isolated closure).
+- [ ] **Prefetch + teardown lifecycle (Swift 6):** the in-flight prefetch is held as an `actor`-isolated `Task<Flame, Never>?`. A `func stop() async` cancels it (`prefetchTask?.cancel()`) and awaits it settled before return; `FlameUI` teardown calls `await dispatcher.stop()`. (Swift 6 disallows async work in `deinit`, so teardown is an explicit `stop()` the owner calls, not a `deinit` side-effect.) On cancellation the prefetch task returns the partially-built genome is discarded (never fed to the renderer). No dangling/orphaned task after teardown.
 
 **Verify:** `swift test --filter PlaybackDispatcherTests` → PASS.
 
@@ -1447,6 +1473,8 @@ Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves th
 - [ ] It wires the dispatcher's frame-ready callback to `CAMetalLayer` drawable presentation; the layer resizes with the view.
 - [ ] A smoke test (skip if Metal unavailable) constructs the view headless and confirms it accepts at least one frame without faulting.
 
+> **Headless-test feasibility (VERIFIED).** A `@MainActor` `NSView` + `CAMetalLayer` CAN be constructed and driven in an XCTest without a window or graphics context on the macOS test host: `NSView` requires no window to instantiate, and `CAMetalLayer` can be created and fed an offscreen `MTLTexture` without being attached to a backing window (presentation via `nextDrawable` is only needed for on-screen vsync, not for accepting a frame). `MTLCreateSystemDefaultDevice()` already works in the existing `EndToEndParityTests` under the same regime the gate already requires — bash sandbox DISABLED (testing.md "Local pre-merge gate"). So: the smoke test builds `FlameUI()` headless on `@MainActor`, renders a frame to an offscreen texture via the existing offscreen `MetalRenderer.render` path, hands it to the layer, and asserts no fault. `XCTSkip` when `MetalRenderer.isAvailable` is false OR when the sandbox blocks device creation (detect by catching the nil device).
+
 **Verify:** `swift test --filter FlameUITests` → PASS (or skip).
 
 **Steps:**
@@ -1471,6 +1499,8 @@ Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves th
 
 **Acceptance Criteria:**
 - [ ] An `EMBERWEFT_PERF=1`-gated test runs the dispatcher for 30 s at 1080p on the dev machine under nominal thermal state and prints sustained p50/p95 fps; the **median sustained fps is ≥ 58**.
+
+> **30s-in-`swift-test` feasibility (VERIFIED).** The test does NOT drive `CAMetalLayer` vsync presentation — it runs the `PlaybackDispatcher` against a synthetic clock (the Task-20 fake-clock pattern) rendering to **offscreen `MTLTexture`s** (the existing `MetalRenderer.render` path is already offscreen; no window/drawable needed), sampling frame timestamps from the dispatcher. `xctest` (the `swift test` harness) has NO default per-test timeout; the 30 s run is well inside the gate. Add `executionTimeAllowance = 60` (in case Xcode-style plans are ever used) and `XCTSkipUnless(EMBERWEFT_PERF == "1")` + `XCTSkip` when Metal is unavailable or the sandbox blocks device creation. Run only with the bash sandbox DISABLED (already required by the gate).
 - [ ] The adaptive controller kept the frame budget within bounds and never froze a transition frame.
 - [ ] `testing.md` records the baseline number + the M3-owns / M4-deferred split.
 - [ ] If Metal is unavailable, the test `XCTSkip`s.
@@ -1493,7 +1523,7 @@ Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves th
 
 ### Task 24: Documentation sweep + flip M3 to complete
 
-**Goal:** Update the docs the spec lists, correcting the loop/palette wording everywhere, promoting transitions to implemented reality, adding the animation-parity layer + oracle to `testing.md`, adding `FlameUI`/`PlaybackDispatcher` to `architecture.md`, and flipping M3 to ✅ in `roadmap.md` + a `CHANGELOG.md` entry.
+**Goal:** Update the docs the spec lists. NOTE (round-3 VERIFIED): `transitions.md`, `roadmap.md`, and `CLAUDE.md` already carry the corrected "pure rotation, palette static" wording — `grep -rn "circular palette" docs/` returns NO content-doc hits today, only plan/spec references. So Task 24 is primarily **verify-already-correct + add new content** (CHANGELOG M3 entry; `FlameUI`/`PlaybackDispatcher` in `architecture.md`; the animation-parity layer + oracle + `hsv_rgb_palette_blend` in `testing.md`; flip roadmap M3 to ✅), NOT a wording-correction sweep.
 
 **Files:**
 - Modify: `docs/rendering/transitions.md` (drop the "circular palette cycle" claim + early-draft sections that contradict `log`+special-sauce+`sheep_loop`; document the static-palette loop and HSV-transition palette).
@@ -1522,6 +1552,10 @@ Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves th
 
 - **Determinism is rule #2.** Any FP accumulation over variation/parameter-name-keyed data MUST use sorted arrays (F1 — Swift `Dictionary`/`Set` hash seeds are per-process randomized). Integer-indexed `Set<Int>` and arrays are fine. The cross-process bit-identity test (Task 16) is the guardrail.
 - **SPEC DISCREPANCY (flagged, do not re-litigate):** the spec's "Param-channel layout" note says "none of the 16 variations consumes the ISAAC stream, so RNG alignment holds." Verified against `scottdraves/flam3` `variations.c`: this is FALSE. Four of the 16 draw the ISAAC stream (`julian`, `juliascope`, `super_shape` [unconditionally, even at `rnd=0`], `wedge_julia`), and `rings`/`fan` are coefficient-dependent (read affine `c[2][0]`/`c[2][1]` = `e`/`f`). Tasks 4 and 6 are written to the flam3 source (the authority the spec itself defers to), not to that note. When you reach Phase A, treat the flam3 source as ground truth; the human will reconcile the spec prose separately.
+- **ROUND-3 MATH CORRECTIONS (flagged, load-bearing — port the source, not earlier plan prose):**
+  - **`.log` near-degenerate guard is PER-COLUMN MAGNITUDE, NOT a determinant guard** (`interpolation.c:213-215`). For each column, if `log(cxmag[i][col]) < -10` for any cp, that column's magnitude switches to linear accumulation; the angle still polar-interpolates; the xform does NOT fall back to `.linear`; there is NO NaN guard and NO COMPAT fallback. Also port the zero-column angle-copy (`convert_linear_to_polar`). Task 10 is rewritten to this.
+  - **`hsv_circular`/`rgb` palette blend is MIXED by `hsv_rgb_palette_blend`** (`interpolation.c:383-384,432-433`): result = `rgb_fraction·new_rgb + (1−rgb_fraction)·new_hsv_rgb`, `rgb_fraction = hsv_rgb_palette_blend` (hsv_circular) / 1.0 (rgb) / 0.0 (hsv). `hsvRgbPaletteBlend` is added to the `Flame` model (Task 2) and the blend (Task 9). HSV hue is 0–6; shorter-arc adjust is ±3 / shift ±6 on cp0 only; no 8-bit rounding.
+  - **RNG draw order is ascending NUMERIC variation-index in flam3** (varFunc via `for j if var[j]!=0`); CPU is alphabetical (parser-sorted); Metal is canonical-slot. They agree on the RNG-consuming subset by coincidence — pinned as a tested invariant (Task 6). Do NOT attribute RNG alignment to "each hit at most once"; that is not the reason.
 - **No self-invented variation formulas.** Every special-sauce body is a line-for-line port of `varN_*` in `variations.c`. The round-2 review caught four unfaithful example formulas (blob, curl, rectangles, rings) whose tests were self-consistent with the wrong implementation — so tests MUST be derived from the C source independently, not from the Swift implementation under test.
 - **`.metal` files are NOT compiled by the Swift toolchain.** `Package.swift` lists them under `resources: [.copy("Metal")]` in the `FlameRenderer` target; `Kernels.metal` is compiled to a `.metallib` at runtime by `MetalRenderer`. Consequence for Tasks 5/6: `swift build` will NOT catch an MSL syntax error or a Swift↔MSL layout mismatch — only `swift test --filter EndToEndParityTests` (or any Metal render) will. After every `Kernels.metal` edit, run a Metal test before committing; the `GPUXform` byte-layout guard (`bytesPerXform == 1248`, asserted in `packXforms`) is the only compile-time-adjacent check you get, and it only validates the Swift side.
 - **The Swift `GPUXform` struct may NOT gain a `[Float]` field.** The xform buffer is created by byte-copying a `[GPUXform]` via `withUnsafeBytes` (`ChaosGameMetal.buf`). A Swift `Array` field stores a heap pointer, not inline floats, so it would send garbage to the GPU. This is why Task 5 switches the xform path to a flat-packed `[Float]` produced by `MetalHost.packXforms`. The 15-float scalar header may stay a struct; only the variable-size tail (`varWeights` + `varParams`) moves to the flat array. Do not "simplify" this back to a struct-with-array-field.

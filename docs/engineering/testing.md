@@ -28,7 +28,7 @@ XCTest, run on every save and in the local pre-merge gate.
 The correctness backbone for `FlameReference` (and transitively for the algorithm).
 
 - **Frozen genome set.** A curated, versioned set of ~12 `.flam3` genomes covering: a few transforms, many transforms, final xforms, edge-heavy and detail-heavy attractors, varied palettes. Lives under `Tests/Goldens/genomes/`.
-- **Golden generation.** A checked-in script renders each frozen genome with dev-only `flam3` (Homebrew) at a fixed size/quality and stores the result under `Tests/Goldens/reference/`. `flam3` is **never** linked into or distributed with Emberweft (see [license-and-attribution.md](../license-and-attribution.md)).
+- **Golden generation.** A checked-in script renders each frozen genome with dev-only `flam3` at a fixed size/quality and stores the result under `Tests/Goldens/reference/`. `flam3` is **never** linked into or distributed with Emberweft (see [license-and-attribution.md](../license-and-attribution.md)). `flam3` has **no Homebrew formula** — it is built from source (`scottdraves/flam3`, autotools + zlib/libpng/libxml2); see the M3 [animation spec](../superpowers/specs/2026-07-17-m3-animation-design.md) and `Tools/flam3_oracle.sh`.
 - **Comparison.** `FlameReference` renders the same genomes; output is compared to the goldens by **PSNR ≥ threshold** and **SSIM ≥ threshold** *(preliminary: PSNR ≥ 30 dB, SSIM ≥ 0.95 — to be tuned after first parity runs)*. Near-exact match is not expected (different RNG/filter implementations), so thresholds are statistical.
 - **Re-goldening.** A dedicated, review-required workflow; the local pre-merge gate fails loudly on unexpected golden drift.
 
