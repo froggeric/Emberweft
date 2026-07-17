@@ -173,7 +173,7 @@ Owner-approved. Scope:
 **S6-pre gates:** (a) round-trip parse/serialize of parametric genomes; (b) per-variation CPU unit tests; (c) **the existing M2 Metal↔CPU parity gate stays green** AND a fuzz run that **excludes the 16 new names** (proving the widening is additive, not a regression); (d) per-variation **Metal↔CPU parity** for each of the 16 on a constructed genome. If the flam3 build is unavailable, the vs-flam3 tests auto-skip (F10); Metal↔CPU remains the hard gate.
 
 ### Param-channel layout (F2 — pinned, not "e.g.")
-The `GPUXform` extension is structurally clean against the real code: today it is `6 (pre-affine) + 6 (post) + 3 (color/colorSpeed/opacity) + 19 (varWeights) = 34` floats, stride 136 B, asserted at `MetalHost.swift:74` and mirrored in `Kernels.metal:128-133`. The selection logic (`distrib[isaac_next & CHAOS_GRAIN_M1]`) is host-precomputed and untouched; none of the 16 variations consumes the ISAAC stream, so RNG alignment holds. The blast radius is: the struct grows a params block, the host packer gains a name→index map, and the MSL `apply_xform_body` if-chain grows from 19 to 35 guarded lines.
+The `GPUXform` extension is structurally clean against the real code: today it is `6 (pre-affine) + 6 (post) + 3 (color/colorSpeed/opacity) + 19 (varWeights) = 34` floats, stride 136 B, asserted at `MetalHost.swift:74` and mirrored in `Kernels.metal:128-133`. The selection logic (`distrib[isaac_next & CHAOS_GRAIN_M1]`) is host-precomputed and untouched; none of the 16 variations consumes the ISAAC stream, so RNG alignment holds. The blast radius is: the struct grows a params block, the host packer gains a name→index map, and the MSL `apply_xform_body` if-chain grows from 19 to **33** guarded lines (the 19 + the **14 NEW** special-sauce — `spherical`/`polar` are already in the 19, so the unique count is 33, not 35).
 
 - **`MAX_PARAMS_PER_SLOT = 6`** (driven by `super_shape`: rnd, m, n1, n2, n3, holes). **Device slot width = 8 floats** (6 params + 2 spare for natural float4 alignment and an optional per-slot weight/index tag without a second bind).
 - **Device layout:** append `float varParams[NUM_XFORM_SLOTS][8]` to `GPUXform`; bump the stride assertion on both Swift and MSL sides. `varWeights` (the 99-entry weight array) stays a separate channel.
@@ -331,7 +331,7 @@ Writes `frames/000000.png …` + `frames/manifest.json`:
 - SwiftUI browser/metadata/import — M4. Screensaver/multi-monitor/power events — M5.
 - Audio-reactive — M7. HDR/10-bit/ProRes/AV1 — M8.
 - Temporal oversampling / motion blur — Emberweft renders at exact `blend` (no sub-frame sampling); **the oracle is configured to match** (`passes=1, temporal_samples=1`) for parity (F6). Adding Emberweft-side motion blur is a later fidelity refinement; at that point the oracle's oversampling is re-enabled for comparison.
-- Variations beyond the M1-19 + the 16 special-sauce = 35 total — additive later.
+- Variations beyond the M1-19 + the 14 NEW special-sauce = 33 total (spherical/polar are already in the M1-19, so not double-counted) — additive later.
 - Faithful (non-approximation) density estimation — unchanged from M1/M2.
 
 ## Risks & mitigations

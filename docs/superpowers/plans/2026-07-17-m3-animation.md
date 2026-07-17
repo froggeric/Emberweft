@@ -47,7 +47,7 @@ New files (all under existing targets — no new targets except where noted):
 | `Sources/FlamePlayer/AdaptiveQualityController.swift` | FlamePlayer | Pure controller: (measured fps, thermalState) → iteration budget with hysteresis. |
 | `Sources/FlamePlayer/FlameUI.swift` | FlamePlayer | `@MainActor` `NSView` subclass wrapping `CAMetalLayer`. |
 
-Modified files: `Sources/FlameKit/Genome.swift` (widen structs), `Sources/FlameKit/Flam3Parser.swift` + `Flam3Serializer.swift` (params + animation fields), `Sources/FlameKit/Interpolation.swift` (becomes the `.linear` shim delegating to `GenomeInterpolator`), `Sources/FlameKit/Variations.swift` (14 new CPU formulas), `Sources/FlameRenderer/MetalHost.swift` (`GPUXform` param channel + packer), `Sources/FlameRenderer/Metal/Kernels.metal` (`GPUXform` mirror + 14 MSL variations + `apply_xform_body`), `Sources/EmberweftCLI/CLI.swift` (wire `animate`), `Package.swift` (new files auto-included by path; `FlamePlayer` already a target). Docs: `transitions.md`, `playback-modes.md`, `roadmap.md`, `testing.md`, `architecture.md`, `CLAUDE.md`, `CHANGELOG.md`.
+Modified files: `Sources/FlameKit/Genome.swift` (widen structs), `Sources/FlameKit/Flam3Parser.swift` + `Flam3Serializer.swift` (params + animation fields), `Sources/FlameKit/Interpolation.swift` (becomes the `.linear` shim delegating to `GenomeInterpolator`), `Sources/FlameKit/Variations.swift` (14 new CPU formulas **and** `canonicalOrder` grown 19 → 33), `Sources/FlameRenderer/MetalHost.swift` (`GPUXform` flat packer + `packXforms`), `Sources/FlameRenderer/ChaosGameMetal.swift` (xform buffer now built from the flat packed `[Float]`, not `[GPUXform]`), `Sources/FlameRenderer/Metal/Kernels.metal` (`GPUXform` mirror: `varWeights[33]` + `varParams[264]`, 14 MSL variations, `apply_xform_body` grown to a 33-line chain), `Sources/EmberweftCLI/CLI.swift` (wire `animate` + hidden `_feature-score`), `Package.swift` (new files auto-included by path; **add the `FlamePlayerTests` target** in Task 20 — `FlamePlayer` is a product/target but has NO test target today). New test artifacts: `Tests/Goldens/m2_baseline_hashes.json` (Task 5 additivity oracle), `Tests/FlameKitTests/Fixtures/similarity_pair/` (Task 16 cross-process determinism pair). Docs: `transitions.md`, `playback-modes.md`, `roadmap.md`, `testing.md`, `architecture.md`, `CLAUDE.md`, `CHANGELOG.md`.
 
 ---
 
@@ -57,17 +57,17 @@ The prerequisite slice. It lands first as an isolated, gate-keeping slice; M1/M2
 
 ### Task 1: VariationDescriptor registry
 
-**Goal:** Create the single source of truth for variation parameter metadata — param names, defaults, special-sauce rest values, and the fixed name→(slot,index) map — so the parser, serializer, CPU table, and Metal host packer all share one definition.
+**Goal:** Create the **single source of truth** for all variation metadata: the canonical **33-slot order** (M1's 19 + the 14 NEW special-sauce; `spherical`/`polar` counted once), the per-variation param names/defaults, the special-sauce rest values, and the fixed name→(slot,index) maps — so the parser, serializer, CPU table, Metal host packer, and `apply_xform_body` dispatch all share one definition. `Variations.canonicalOrder` becomes a thin re-export of `VariationDescriptor.canonicalOrder`.
 
 **Files:**
 - Create: `Sources/FlameKit/VariationDescriptor.swift`
 - Test: `Tests/FlameKitTests/VariationDescriptorTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `VariationDescriptor` exposes, for each of the 16 special-sauce + `linear`: the canonical name, the ordered param-name list, the default value per param, and the special-sauce rest value per param (or `nil`).
-- [ ] `slotIndex(variation:param:)` returns the pinned slot index from the spec's param-channel table (MAX_PARAMS_PER_SLOT = 6; see spec "Param-channel layout").
-- [ ] Parameterless variations (`linear`, `spherical`, `polar`, `rings`, `fan`) report an empty param list.
-- [ ] A unit test asserts the full table matches the spec's per-variation param table (names, defaults, rest, slot indices).
+- [ ] `VariationDescriptor` has an entry for **every one of the 33 canonical names** (M1's 19 + the 14 new special-sauce; `spherical`/`polar` counted once, NOT duplicated). Each entry carries the canonical name, the ordered param-name list, defaults, and rest (empty params for the parameterless M1 set + `linear`/`rings`/`fan`).
+- [ ] `VariationDescriptor.canonicalOrder` is the fixed 33-name array; `canonicalSlot(for:)` returns its index; `slotIndex(variation:param:)` returns the intra-slot index (MAX_PARAMS_PER_SLOT = 6). `Variations.canonicalOrder` is `public static let canonicalOrder = VariationDescriptor.canonicalOrder` (one-liner re-export) so `MetalHost` call sites are unchanged.
+- [ ] Parameterless variations (`linear`, `spherical`, `polar`, `rings`, `fan`, and the 14 M1 ones) report an empty param list.
+- [ ] A unit test asserts: `canonicalOrder.count == 33`; no duplicates; `spherical`/`polar` appear exactly once; every name in `canonicalOrder` has a descriptor; and the parametric entries match the spec's per-variation param table (names, defaults, rest, intra-slot indices).
 
 **Verify:** `swift test --filter VariationDescriptorTests` → all assertions pass.
 
@@ -108,6 +108,22 @@ final class VariationDescriptorTests: XCTestCase {
                      "julian","juliascope","ngon","curl","rectangles","super_shape","wedge_julia","wedge_sph"]
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
+    func testCanonicalOrderIsSingleAuthority() {
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 33)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 33, "duplicate canonical name")
+        // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 33).
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
+        // Every canonical name resolves to a descriptor + a slot index.
+        for n in VariationDescriptor.canonicalOrder {
+            XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n)
+            XCTAssertNotNil(VariationDescriptor.canonicalSlot(for: n), n)
+        }
+        // The 14 NEW special-sauce names are all present (the 16 minus spherical/polar).
+        let newOnes = ["rings","fan","blob","fan2","rings2","perspective","julian","juliascope",
+                       "ngon","curl","rectangles","super_shape","wedge_julia","wedge_sph"]
+        for n in newOnes { XCTAssertNotNil(VariationDescriptor.canonicalSlot(for: n), n) }
+    }
 }
 ```
 
@@ -121,18 +137,39 @@ Expected: FAIL (cannot find `VariationDescriptor` in scope).
 ```swift
 import Foundation
 
-/// Single source of truth for variation parameter metadata, shared by the
-/// parser, serializer, CPU variation table, and Metal host packer. Pinned to
-/// the spec's "Param-channel layout" + "Special-sauce padding" tables.
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 33-slot
+/// order (M1's 19 + the 14 NEW special-sauce; spherical/polar counted once),
+/// per-variation params/defaults, special-sauce rest values, and the
+/// name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
+/// `Variations` table, the Metal host packer, and `apply_xform_body` dispatch.
+/// `Variations.canonicalOrder` is a one-line re-export of `canonicalOrder` so
+/// existing `MetalHost` call sites are unchanged. Pinned to the spec's
+/// "Param-channel layout" + "Special-sauce padding" tables.
 public struct VariationDescriptor: Sendable {
     public let name: String
-    public let parameters: [String]                 // ordered (slot order)
+    public let parameters: [String]                 // ordered (intra-slot order)
     public let defaults: [String: Double]
-    public let rest: [String: Double]               // special-sauce rest value; key absent => stays at default
+    public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    /// Fixed (variation,param) -> slot index (0..<MAX_PARAMS_PER_SLOT). Same map
-    /// is used by the Metal host packer and mirrored implicitly by the MSL
-    /// per-variation functions, which read params positionally.
+    // ---- canonical slot order (the 33-device-slot layout) ----
+    /// Fixed 33-name order. First 19 == the M1 set (in its existing order, so the
+    /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
+    /// special-sauce names in documented order. spherical/polar appear ONCE.
+    public static let canonicalOrder: [String] = [
+        // --- M1's 19 (do not reorder: existing slots 0..18) ---
+        "bent","cosine","cylinder","diamond","disc","ex","exponential","fisheye",
+        "handkerchief","heart","horseshoe","hyperbolic","julia","linear","polar",
+        "sinusoidal","spherical","spiral","swirl",
+        // --- 14 NEW special-sauce (slots 19..32) ---
+        "rings","fan","blob","fan2","rings2","perspective","julian","juliascope",
+        "ngon","curl","rectangles","super_shape","wedge_julia","wedge_sph",
+    ]
+    /// Canonical device-slot index for a variation name (0..<33), or nil if unknown.
+    public static func canonicalSlot(for name: String) -> Int? {
+        canonicalOrder.firstIndex(of: name)
+    }
+    /// Intra-slot param index (0..<MAX_PARAMS_PER_SLOT). Used by the Metal host
+    /// packer and mirrored implicitly by the MSL per-variation functions.
     public static func slotIndex(variation: String, param: String) -> Int {
         guard let d = descriptor(for: variation) else { return 0 }
         return d.parameters.firstIndex(of: param) ?? 0
@@ -141,19 +178,26 @@ public struct VariationDescriptor: Sendable {
 
     public static func descriptor(for name: String) -> VariationDescriptor? { table[name] }
 
-    // name -> (ordered params, defaults, rest-overrides). Defaults/rest source-
-    // cited to flam3.h / parser.c / variations.c in the spec param table.
+    // name -> (ordered params, defaults, rest-overrides). Covers ALL 33 canonical
+    // names so canonicalOrder and the descriptor table cannot drift. Defaults/rest
+    // source-cited to flam3.h / parser.c / variations.c in the spec param table.
     private static let table: [String: VariationDescriptor] = {
         var t: [String: VariationDescriptor] = [:]
         func d(_ name: String, _ params: [String], _ defaults: [String: Double],
                _ rest: [String: Double] = [:]) {
             t[name] = VariationDescriptor(name: name, parameters: params, defaults: defaults, rest: rest)
         }
-        d("linear", [], [:])
-        d("spherical", [], [:])                      // Group A (parameterless)
-        d("polar", [], [:])                           // Group A
-        d("rings", [], [:])                           // Group C (swap-affine, no params)
-        d("fan", [], [:])                             // Group C
+        // --- M1's 19 (all parameterless; every canonicalOrder name must be
+        //     registered so the order table and descriptor table cannot drift) ---
+        d("bent", [], [:]); d("cosine", [], [:]); d("cylinder", [], [:]); d("diamond", [], [:])
+        d("disc", [], [:]); d("ex", [], [:]); d("exponential", [], [:]); d("fisheye", [], [:])
+        d("handkerchief", [], [:]); d("heart", [], [:]); d("horseshoe", [], [:]); d("hyperbolic", [], [:])
+        d("julia", [], [:]); d("linear", [], [:]); d("polar", [], [:])        // Group A
+        d("sinusoidal", [], [:]); d("spherical", [], [:])                     // Group A
+        d("spiral", [], [:]); d("swirl", [], [:])
+        // --- 14 NEW special-sauce ---
+        d("rings", [], [:])                            // Group C (swap-affine, no params)
+        d("fan", [], [:])                              // Group C
         d("blob", ["blob_low","blob_high","blob_waves"],
           ["blob_low":0,"blob_high":1,"blob_waves":1],
           ["blob_low":1,"blob_high":1,"blob_waves":1])
@@ -178,6 +222,8 @@ public struct VariationDescriptor: Sendable {
     }()
 }
 ```
+
+> **Re-export:** in `Sources/FlameKit/Variations.swift`, replace the existing 19-element `canonicalOrder` literal with `public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder` (Task 5 does this as part of growing to 33; Task 1 defines the authority here).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -326,6 +372,8 @@ git commit -m "feat(flamekit): widen Variation/Flame/Xform for animation + param
 **Acceptance Criteria:**
 - [ ] A `<xform curl="1" curl_c1="0.5" curl_c2="-0.2" .../>` parses to a `Variation(name:"curl", weight:1)` with `parameters == ["curl_c1":0.5, "curl_c2":-0.2]`.
 - [ ] Variation-weight attrs are recognized by name; a `<varname>_<paramname>` attr is routed to that variation's `parameters` (validated against `VariationDescriptor`); unknown attrs still round-trip as zero-contribution weights (existing behavior preserved).
+- [ ] **Param-without-weight edge case (pinned):** a parametric attr whose base weight attr is absent (e.g. `<xform blob_low="0.2"/>` with no `blob="…"`) is attached to a synthesized `Variation(name:"blob", weight:0, parameters:["blob_low":0.2])` so the params survive a round-trip; the serializer emits params for any variation whose `parameters` is non-empty **regardless of weight** (override the `where v.weight != 0` weight-only filter for the param-emission loop). This matches flam3, which identifies the variation from the weight attr but still stores whatever params the file carries. Add a dedicated round-trip test for this case.
+- [ ] **No param-prefix collisions:** the 12 parametric variation names have pairwise-distinct `<name>_` prefixes (`blob_`, `curl_`, `rectangles_`, `fan2_`, `rings2_`, `perspective_`, `super_shape_`, `ngon_`, `julian_`, `juliascope_`, `wedge_julia_`, `wedge_sph_`); in particular `"fan2_…".hasPrefix("fan_") == false` and `"rings2_…".hasPrefix("rings_") == false`. A test asserts `matchParamAttribute` resolves every parametric attr to exactly one variation.
 - [ ] Parser reads `animate` (xform), `interpolation`/`interpolation_type`/`palette_interpolation`/`hue_rotation` (flame); serializer emits them all. `hue` (hueShift) and `hue_rotation` (hueRotation) are both read and both emitted.
 - [ ] `parse(serialize(parse(x)))` round-trips a parametric genome with `super_shape`/`blob`/`curl` params and `animate`/`interpolation_type=log` set.
 
@@ -442,12 +490,13 @@ public static func matchParamAttribute(_ key: String) -> (variation: String, par
 }
 ```
 
-In `Flam3Serializer.xformString`, emit params after weights and `animate`:
+In `Flam3Serializer.xformString`, emit params for every variation that carries them (weight-zero included, so the param-without-weight round-trip holds), in addition to the existing weight emission:
 
 ```swift
 if x.animate != 1 { a += " animate=\"\(f6(x.animate))\"" }
-// ... existing variation-weight emission ...
-for v in x.variations.sorted(by: { $0.name < $1.name }) where v.weight != 0 {
+// ... existing variation-weight emission (`where v.weight != 0`, unchanged) ...
+// param emission is a SEPARATE loop so weight-0 parametric variations survive:
+for v in x.variations.sorted(by: { $0.name < $1.name }) where !v.parameters.isEmpty {
     let d = VariationDescriptor.descriptor(for: v.name)
     for p in d?.parameters ?? [] {
         if let val = v.parameters[p] { a += " \(p)=\"\(f6(val))\"" }
@@ -617,45 +666,93 @@ git commit -m "feat(flamekit): port 14 special-sauce variation formulas to CPU"
 
 ### Task 5: GPUXform parameter channel (Swift + MSL) + host packer
 
-**Goal:** Add the per-slot parameter channel to `GPUXform` on both sides of the Swift→MSL boundary, build the host packer from `VariationDescriptor`, bump the stride assertion, and prove the widening is additive (M2 parity stays green and a fuzz run **excluding** the 16 new names shows no regression).
+**Goal:** Grow the canonical variation table from 19 to 33 slots, add the per-slot parameter channel to `GPUXform` on both sides of the Swift→MSL boundary, build the host packer from `VariationDescriptor`, bump the device-buffer size guard, and prove the widening is additive (M2 parity stays green and the 6 frozen genomes render **byte-identically** to a captured pre-change baseline).
+
+> **Spec count (resolved).** The faithful unique canonical count is **19 + 14 = 33**: `spherical` and `polar` belong to BOTH the M1-19 and the 16 special-sauce, so they are counted once. (The spec previously wrote "35"; it has been amended to 33 to match.) The 14 NEW special-sauce names are `rings, fan, blob, fan2, rings2, perspective, julian, juliascope, ngon, curl, rectangles, super_shape, wedge_julia, wedge_sph`; `spherical`/`polar` already exist as MSL `v_spherical`/`v_polar` at slots 14/16 and are NOT re-implemented.
+
+> **Layout scheme — read first (the single biggest correctness risk in M3).**
+> The current `apply_xform_body` (Kernels.metal:258) dispatches by **canonical slot index**, NOT by name: it copies `varWeights[19]` into `w[19]` and runs a fixed 19-line if-chain (`bent`=0 … `swirl`=18). The host packer (`MetalHost.buildGPUXforms`) maps `name → slot` via `idxMap[name]` over `Variations.canonicalOrder`. Therefore the faithful, minimal-surprise scheme is:
+>
+> 1. **`VariationDescriptor.canonicalOrder` (defined in Task 1) is the authority** — it already lists all 33 names (M1's 19 + the 14 NEW special-sauce; `spherical`/`polar` once). In Task 5, `Variations.canonicalOrder` becomes a one-line re-export: `public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder`. `NUM_XFORM_SLOTS = VariationDescriptor.canonicalOrder.count == 33`. The 14 new names occupy slots 19..32 in the documented order: `rings, fan, blob, fan2, rings2, perspective, julian, juliascope, ngon, curl, rectangles, super_shape, wedge_julia, wedge_sph`.
+> 2. **`varWeights` grows 19 → 33** (one weight per canonical slot). The host packer's existing `idxMap[name]` then maps every one of the 33 names to its slot unchanged.
+> 3. **Add `varParams[33][8]`** (MAX_PARAMS_PER_SLOT=6, device slot width 8; 33×8 = 264 floats). Slot index = canonical index; intra-slot param index from `VariationDescriptor.slotIndex`. Parameterless variations leave their slot zeroed.
+>
+> The alternative `ssWeights[16]/ssTags[16]` side-channel idea is REJECTED: it diverges from the spec's "grow the if-chain" prescription, doubles the dispatch mechanism, and (with `uint8_t` inside a `float` struct) breaks the homogeneous-float layout contract that the existing `buf([GPUXform])` byte-copy depends on.
 
 **Files:**
-- Modify: `Sources/FlameRenderer/MetalHost.swift` (`GPUXform` + `buildGPUXforms`)
-- Modify: `Sources/FlameRenderer/Metal/Kernels.metal` (`struct GPUXform` + param reads)
+- Modify: `Sources/FlameKit/Variations.swift` (`canonicalOrder` becomes the `VariationDescriptor.canonicalOrder` re-export)
+- Modify: `Sources/FlameRenderer/MetalHost.swift` (`GPUXform` + packer)
+- Modify: `Sources/FlameRenderer/ChaosGameMetal.swift` (xform buffer now built from the flat packed array)
+- Modify: `Sources/FlameRenderer/Metal/Kernels.metal` (`struct GPUXform` mirror — `varWeights[33]` + `varParams[264]`)
 - Test: `Tests/FlameRendererTests/ParamChannelParityTests.swift` (new)
 
 **Acceptance Criteria:**
-- [ ] `GPUXform` (Swift + MSL) gains `varParams[NUM_XFORM_SLOTS][8]` (MAX_PARAMS_PER_SLOT=6, device slot width 8); both `MemoryLayout<GPUXform>.stride` assertions updated to the new byte count and equal on both sides.
-- [ ] `buildGPUXforms` packs each variation's `parameters` into positional `varParams[slot][index]` via `VariationDescriptor`; unused tail slots zeroed; `super_shape_rnd` clamped to `[0,1]` in the packer.
+- [ ] `VariationDescriptor.canonicalOrder.count == 33` (original 19 + the 14 new special-sauce names; `spherical`/`polar` counted once, NOT duplicated). `Variations.canonicalOrder` is its re-export and also `.count == 33`. A test asserts no duplicates and that every `VariationDescriptor` parametric name resolves to a canonical slot.
+- [ ] The Swift→MSL device layout is: `6 (pre) + 6 (post) + 3 (color/cs/opacity) + 33 (varWeights) + 33*8 (varParams) = 15 + 33 + 264 = 312 floats = 1248 bytes` per xform. The size guard on the device buffer (`xforms.count * GPUXform.bytesPerXform`, `bytesPerXform == 1248`) holds on both sides.
+- [ ] The packer writes each variation's `parameters` into `varParams[slot*8 + idx]` (slot = `idxMap[name]`, idx = `VariationDescriptor.slotIndex`); unused tail slots zeroed; `super_shape_rnd` clamped to `[0,1]` in the packer; EPS guards stay in the kernel (Task 6).
 - [ ] The existing M2 end-to-end parity suite (`EndToEndParityTests`) stays green at ≥38 dB / 0.95 SSIM.
-- [ ] A fuzz run over genomes that use **only the original 19 names** produces byte-identical output to a pre-change baseline (proving additivity).
+- [ ] **Additivity proof (concrete):** a SHA-256 of the Metal-rendered pixels of each of the 6 frozen genomes, captured into `Tests/Goldens/m2_baseline_hashes.json` **before** any Task-5 edit, matches the post-change SHA-256 byte-for-byte (the frozen genomes use none of the 14 new names, so `varParams` is all-zero and unread — output is unchanged).
 
 **Verify:** `swift test --filter EndToEndParityTests --filter ParamChannelParityTests` → PASS.
 
 **Steps:**
+
+- [ ] **Step 0: Capture the additivity baseline (BEFORE editing any source).** Add a one-shot helper (or a temporary test) that renders each of the 6 frozen genomes on Metal at the `EndToEndParityTests` sample count and writes `Tests/Goldens/m2_baseline_hashes.json` (`{ "genome_name": "<sha256 of RGBA8 pixels>", ... }`). Commit this file on its own:
+
+```bash
+git add Tests/Goldens/m2_baseline_hashes.json
+git commit -m "test(renderer): capture pre-S6-pre M2 Metal baseline hashes (additivity oracle)"
+```
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
 import XCTest
 @testable import FlameRenderer
+@testable import FlameReference
 import FlameKit
 
 final class ParamChannelParityTests: XCTestCase {
     @MainActor
-    func testStrideMatches() throws {
-        // NUM_XFORM_SLOTS (e.g. 8) * 8 floats added to the 34-float base.
-        XCTAssertEqual(MemoryLayout<GPUXform>.stride, GPUXform.expectedStride)
+    func testCanonicalOrderGrewTo33NoDupes() throws {
+        XCTAssertEqual(Variations.canonicalOrder.count, 33)
+        XCTAssertEqual(Set(Variations.canonicalOrder).count, 33, "duplicate canonical name")
+        // spherical/polar must NOT be duplicated (they stay at their original M1 slots)
+        XCTAssertEqual(Variations.canonicalOrder.filter { $0 == "spherical" }.count, 1)
+        XCTAssertEqual(Variations.canonicalOrder.filter { $0 == "polar" }.count, 1)
+        // every descriptor parametric name resolves to a slot
+        for name in ["blob","curl","super_shape","ngon","julian","juliascope",
+                     "wedge_julia","wedge_sph","perspective","fan2","rings2","rectangles"] {
+            XCTAssertNotNil(Variations.canonicalOrder.firstIndex(of: name), name)
+        }
+        XCTAssertNotNil(Variations.canonicalOrder.firstIndex(of: "rings"))
+        XCTAssertNotNil(Variations.canonicalOrder.firstIndex(of: "fan"))
     }
     @MainActor
-    func testOriginalGenomesUnchanged() throws {
-        // A genome using only the 19 original names must render identically.
-        let flame = Flame(size: SIMD2(160,100), camera: Camera(scale: 200),
-            xforms: [Xform(affine: .identity, color: 0, variations: [Variation(name:"linear",weight:1)])],
-            palette: Palette(colors: (0..<256).map { SIMD3<Double>(Double($0)/255,0.5,0.5) }))
-        let p = RenderParams(seed: 0, width: 160, height: 100, oversample: 1, samplesPerPixel: 200)
-        let img = MetalRenderer.render(flame: flame, params: p)
-        XCTAssertEqual(img.pixels.count, 160*100*4)
+    func testBytesPerXform() throws {
+        XCTAssertEqual(GPUXform.bytesPerXform, 1248)   // 312 floats = 6+6+3+33+264
+    }
+    @MainActor
+    func testFrozenGenomesByteIdenticalToBaseline() throws {
+        // Additivity gate: frozen genomes use only the 19 original names, so the
+        // new varParams channel (all-zero, unread) MUST NOT change Metal output.
+        guard MetalRenderer.isAvailable else { throw XCTSkip("Metal unavailable") }
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Goldens/genomes")
+        let urls = (try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))
+            .filter { $0.pathExtension == "flam3" }
+        let baselines = try JSONDecoder().decode([String: String].self,
+            from: Data(contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Goldens/m2_baseline_hashes.json")))
+        for url in urls {
+            let name = url.deletingPathExtension().lastPathComponent
+            let flame = try Flam3Parser.parse(Data(contentsOf: url))[0]
+            let p = RenderParams(seed: 0, width: 320, height: 200, oversample: 1, samplesPerPixel: 1000)
+            let gpu = MetalRenderer.render(flame: flame, params: p)
+            let hash = sha256(gpu.pixels)   // helper over the raw RGBA8 byte buffer
+            XCTAssertEqual(hash, baselines[name], "\(name): Metal output drifted from pre-S6-pre baseline")
+        }
     }
 }
 ```
@@ -663,53 +760,45 @@ final class ParamChannelParityTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `swift test --filter ParamChannelParityTests`
-Expected: FAIL (`expectedStride` / `NUM_XFORM_SLOTS` do not exist).
+Expected: FAIL (`bytesPerXform` / 33-slot order absent).
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `MetalHost.swift`, extend `GPUXform` (append after `varWeights`). Use `NUM_XFORM_SLOTS = 8` (one slot per active variation an xform may carry; pad). Store as a flat `Float` array of count `8*8` for guaranteed contiguous layout, with an accessor:
+**(a) `Variations.canonicalOrder`** — replace the 19-element literal with `public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder` (the authority, already 33, from Task 1). Update the `ASSUMPTIONS` doc comment: assumption (2) (≤2 active variations → FP-associativity safe) is unchanged; add a note that slots 19..32 are the special-sauce set and are read positionally by `apply_xform_body` (Task 6).
 
-```swift
-public struct GPUXform {
-    // ... existing 34-float fields ...
-    public static let numXformSlots = 8
-    public static let slotWidth = 8
-    public static let expectedStride: Int = 136 + numXformSlots * slotWidth * MemoryLayout<Float>.size
-    public var varParams: [Float]   // count == numXformSlots * slotWidth
-    public init() { varParams = Array(repeating: 0, count: numXformSlots * slotWidth) }
-}
-```
+**(b) Swift side — flat pack (NOT a `[Float]` struct field).** The xform buffer today is created by `buf(xforms)` in `ChaosGameMetal.swift:64`, which does `values.withUnsafeBytes` over `[GPUXform]` and byte-copies the struct. A Swift `Array<Float>` field is heap-allocated and would NOT be inlined into the struct, so the byte-copy would send garbage to the GPU. Therefore the struct-copy route is abandoned for the variable-size tail: replace it with a **flat packed array**.
 
-Update the stride precondition to `MemoryLayout<GPUXform>.stride == GPUXform.expectedStride`.
+- Keep `GPUXform` for its 15 scalar header floats (a..f, pa..pf, color/colorSpeed/opacity) — these stay a trivial inline struct.
+- Add `MetalHost.packXforms(_ flame: Flame) -> [Float]` returning a flat array of length `flame.xforms.count * GPUXform.floatsPerXform`. Per xform, emit in order: the 15 header floats, then 33 weight floats (via the existing `idxMap`), then 264 param floats (`varParams[slot*8 + idx]`; clamp `super_shape_rnd`; zero the rest). Add `GPUXform.floatsPerXform = 312` and `GPUXform.bytesPerXform = 312 * 4` and offset constants.
+- In `ChaosGameMetal.swift`, replace `let xforms = MetalHost.buildGPUXforms(flame)` + `let xformsBuf = buf(xforms)` with `let flat = MetalHost.packXforms(flame); let xformsBuf = buf(flat)`. The final-xform buffer is packed the same way from a synthetic single-xform flame (`packXforms` over a Flame whose `xforms == [flame.finalXform!]`, length `1 * floatsPerXform` floats). The zeroed fallback buffer (`device.makeBuffer(length: MemoryLayout<GPUXform>.stride, …)`) becomes `length: GPUXform.bytesPerXform`.
+- The old `MemoryLayout<GPUXform>.stride == 136` precondition moves into `packXforms` as a per-xform float-count assertion: `precondition(flat.count % GPUXform.floatsPerXform == 0)` where `floatsPerXform == 312`.
 
-Rewrite `buildGPUXforms` to also pack params: after the existing `varWeights` packing loop, iterate the xform's variations in canonical order and, for each parametric variation, write its params into `varParams[slot*slotWidth + idx]` using `VariationDescriptor.slotIndex`; clamp `super_shape_rnd` to `[0,1]`.
-
-In `Kernels.metal`, mirror exactly:
+**(c) MSL side** — mirror exactly (MSL arrays ARE inline, so no issue):
 
 ```metal
-#define NUM_XFORM_SLOTS_MS 8
-#define SLOT_WIDTH_MS 8
+constant int NUM_XFORM_SLOTS_MS = 33;   // == canonicalOrder.count
+constant int SLOT_WIDTH_MS = 8;
 struct GPUXform {
     float a,b,c,d,e,f;
     float pa,pb,pc,pd,pe,pf;
     float color, colorSpeed, opacity;
-    float varWeights[19];
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];
+    float varWeights[33];
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];   // 33*8 = 264
 };
 ```
 
-(Param reads are wired in Task 6; here only the layout lands.)
+(Param reads + the 14 new `v_<name>` functions + the grown if-chain land in Task 6. Here only the layout + the flat pack + the weight channel widening land, and `apply_xform_body` keeps reading `varWeights[i]` for `i in 0..<19` — the new slots 19..32 stay weight-zero on the frozen genomes, so M2 is unaffected.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `swift test --filter EndToEndParityTests --filter ParamChannelParityTests`
-Expected: PASS (M2 parity unaffected; stride asserts hold).
+Expected: PASS — frozen genomes byte-identical to baseline; M2 parity unaffected.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/FlameRenderer/MetalHost.swift Sources/FlameRenderer/Metal/Kernels.metal Tests/FlameRendererTests/ParamChannelParityTests.swift
-git commit -m "feat(renderer): GPUXform parameter channel + host packer (additive)"
+git add Sources/FlameKit/Variations.swift Sources/FlameRenderer/MetalHost.swift Sources/FlameRenderer/ChaosGameMetal.swift Sources/FlameRenderer/Metal/Kernels.metal Tests/FlameRendererTests/ParamChannelParityTests.swift
+git commit -m "feat(renderer): GPUXform 33-slot canonical table + param channel (flat-packed, additive)"
 ```
 
 ---
@@ -724,10 +813,10 @@ git commit -m "feat(renderer): GPUXform parameter channel + host packer (additiv
 - Test: `Tests/FlameRendererTests/SpecialSauceParityTests.swift` (new)
 
 **Acceptance Criteria:**
-- [ ] All 16 special-sauce variations have MSL `v_<name>` functions; `apply_xform_body` evaluates every active slot with the `w != 0` guard, reading params positionally from `x.varParams`.
+- [ ] 14 NEW MSL `v_<name>` functions land (`rings`, `fan`, `blob`, `fan2`, `rings2`, `perspective`, `julian`, `juliascope`, `ngon`, `curl`, `rectangles`, `super_shape`, `wedge_julia`, `wedge_sph`); the pre-existing `v_spherical`/`v_polar` cover the remaining two of the 16 special-sauce names. `apply_xform_body` reads `varWeights[0..<33]` and runs a 33-line guarded chain, passing `&x.varParams[slot*8]` positionally to each parametric call.
 - [ ] For each of the 16 names, a constructed single-variation genome renders Metal vs CPU at PSNR ≥ 38 dB / SSIM ≥ 0.95.
 - [ ] No NaN/Inf pixels on any of the 16 constructed genomes.
-- [ ] The full `EndToEndParityTests` suite stays green.
+- [ ] The full `EndToEndParityTests` suite stays green (the frozen genomes don't use the new names, so slots 19..32 stay weight-zero).
 
 **Verify:** `swift test --filter SpecialSauceParityTests --filter EndToEndParityTests` → PASS.
 
@@ -796,7 +885,32 @@ static inline float2 v_curl(float2 p, float w, thread const float* pr) {
 //     super_shape, wedge_julia, wedge_sph — each reads pr[0..k] positionally ...
 ```
 
-Extend `apply_xform_body` to dispatch by name: since `varWeights` is canonical-order keyed, add a parallel name-index scheme. The simplest faithful approach mirroring CPU: keep `varWeights[19]` for the original set, and add a small fixed array of `(nameTag, weight)` for the 16 special-sauce slots (tag = the MSL enum index 0..15). The host packer (Task 5) fills `varWeights` for the original-19 and the special-sauce slot array for the 16, with matching `varParams`. `apply_xform_body` then runs both groups with the `w != 0` guard, passing `&x.varParams[slot*SLOT_WIDTH_MS]` as the param pointer. (Concretely: add `float ssWeights[16]; uint8 ssTags[16];` to `GPUXform` if a pure-slot scheme proves cleaner — choose the one that keeps the layout simple and the stride asserted; document the choice in a comment.)
+Extend `apply_xform_body` to cover all 33 canonical slots — NO new dispatch mechanism, NO side-channel. Task 5 already grew `varWeights` from 19 → 33 and made `Variations.canonicalOrder` a re-export of `VariationDescriptor.canonicalOrder` (33 entries), so the existing `idxMap[name]` host packer already routes every special-sauce name to its slot. The MSL change is purely mechanical:
+
+- Change `float w[19]; for (int i=0;i<19;i++) w[i]=x.varWeights[i];` → `float w[33]; for (int i=0;i<33;i++) w[i]=x.varWeights[i];`
+- Append one guarded line per new slot, in canonical-slot order (slots 19..32). Each parametric line passes a pointer into the param channel at the slot's offset; parameterless lines (`rings`, `fan`) take no param pointer. Concretely:
+
+```metal
+if (w[19] != 0.0f) acc += v_rings(pre, w[19]);                       // Group C, parameterless
+if (w[20] != 0.0f) acc += v_fan(pre, w[20]);                         // Group C, parameterless
+if (w[21] != 0.0f) acc += v_blob(pre, w[21], &x.varParams[21*SLOT_WIDTH_MS]);
+if (w[22] != 0.0f) acc += v_fan2(pre, w[22], &x.varParams[22*SLOT_WIDTH_MS]);
+if (w[23] != 0.0f) acc += v_rings2(pre, w[23], &x.varParams[23*SLOT_WIDTH_MS]);
+if (w[24] != 0.0f) acc += v_perspective(pre, w[24], &x.varParams[24*SLOT_WIDTH_MS]);
+if (w[25] != 0.0f) acc += v_julian(pre, w[25], &x.varParams[25*SLOT_WIDTH_MS]);
+if (w[26] != 0.0f) acc += v_juliascope(pre, w[26], &x.varParams[26*SLOT_WIDTH_MS]);
+if (w[27] != 0.0f) acc += v_ngon(pre, w[27], &x.varParams[27*SLOT_WIDTH_MS]);
+if (w[28] != 0.0f) acc += v_curl(pre, w[28], &x.varParams[28*SLOT_WIDTH_MS]);
+if (w[29] != 0.0f) acc += v_rectangles(pre, w[29], &x.varParams[29*SLOT_WIDTH_MS]);
+if (w[30] != 0.0f) acc += v_super_shape(pre, w[30], &x.varParams[30*SLOT_WIDTH_MS]);
+if (w[31] != 0.0f) acc += v_wedge_julia(pre, w[31], &x.varParams[31*SLOT_WIDTH_MS]);
+if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]);
+// (slot index literal == position in the Task-5 appended canonicalOrder tail; the
+//  testCanonicalOrderGrewTo33NoDupes assertion pins the order, so a slot/func
+//  mismatch fails loudly at test time, not silently at render time.)
+```
+
+(The exact slot numbers above depend on the appended order chosen in Task 5; pin them together — the `SpecialSauceParityTests` per-name run is the correctness oracle. `spherical`(16) and `polar`(14) already exist as `v_spherical`/`v_polar` and need no new function.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -915,10 +1029,10 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Acceptance Criteria:**
 - [ ] `GenomeInterpolator.interpolate(a, b, t, type:)` switches on `interpolationType`.
-- [ ] `.linear` matches the previous `Interpolation.interpolate` output bit-for-bit on the existing test genomes (M1/M2 tests unchanged).
+- [ ] `.linear` matches the previous `Interpolation.interpolate` output bit-for-bit on the existing test genomes (M1/M2 `InterpolationTests` unchanged and green). This requires the `.linear` path to REUSE the legacy `mergeVariations` verbatim (drop-zero-weight + sort-by-name) — do NOT route `.linear` through the new `.log` merge.
 - [ ] `.log` interpolates each xform's 2×2 via polar decomposition (magnitude linear, angle unwrapped by `wind`), guards near-zero determinant (falls back to linear), and forces result post to identity when both parents' post is identity.
 - [ ] Near-singular constructed affine does not produce NaN/Inf (determinant-guard fallback exercised by a test).
-- [ ] `mergeVariations` no longer drops zero-weight / re-sorts incorrectly for `.log` (variations are unioned by name with per-name parameter carry-over from the side that has them).
+- [ ] `mergeVariations` is split: the `.log` branch unions variations by name (preserving zero-weight padding slots that `align` created) and carries per-name `parameters` from whichever side defines them; the `.linear` branch is the legacy behavior.
 
 **Verify:** `swift test --filter InterpolationTests` → PASS (including the degenerate-affine case).
 
@@ -926,7 +1040,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 - [ ] **Step 1: Write failing tests** — `.linear` parity with old output (snapshot a few coefficients), `.log` midpoint on a rotation pair (recomputed), and a near-singular affine that must stay finite.
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** `GenomeInterpolator` (port `convert_linear_to_polar` + `interp_and_convert_back` + the `wind` unwrap `interpolation.c:293-309` + the determinant guard + post-identity special case `interpolation.c:668-679`). Rewrite `mergeVariations` to union variations and carry params from whichever side defines them. Make `Interpolation.interpolate` call `GenomeInterpolator.interpolate(a,b,t,type:.linear)`.
+- [ ] **Step 3: Implement** `GenomeInterpolator` (port `convert_linear_to_polar` + `interp_and_convert_back` + the `wind` unwrap `interpolation.c:293-309` + the determinant guard + post-identity special case `interpolation.c:668-679`). Implement TWO merge functions: `mergeLinear` (moved from the current `Interpolation.mergeVariations`, byte-identical) and `mergeLog` (union + param carry-over, preserves zero-weight slots). `GenomeInterpolator` picks one by `type`. Make `Interpolation.interpolate(a,b,at:)` a thin delegate to `GenomeInterpolator.interpolate(a,b,t,type:.linear)` using `mergeLinear`, so every existing call site (`InterpolationTests`, any CLI/CLI-test caller) is bit-identical.
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit** `feat(flamekit): GenomeInterpolator (.linear + .log polar) with wind unwrap + det guard`.
 
@@ -1081,9 +1195,12 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests** — the cross-process bit-identity test (a tiny executable helper or `swift test`-spawned subprocess that prints the score for a fixed pair; the test asserts all N outputs equal), the exploration-count test, and the F9 zero-palette finiteness test.
+- [ ] **Step 1: Write failing tests** — the cross-process bit-identity test (concrete mechanism below), the exploration-count test, and the F9 zero-palette finiteness test.
+
+> **Cross-process bit-identity mechanism (pinned, not left to the implementer).** Spawning processes from inside `swift test` is environment-fragile, so the determinism check runs against a stable in-repo entry point: add a hidden `emberweft _feature-score` subcommand to `EmberweftCLI` (parsed by `CLI.run`, not advertised in `--help`) that loads two frozen genomes by index from a tiny fixture directory committed under `Tests/FlameKitTests/Fixtures/similarity_pair/` (two `.flam3` files), builds their `FeatureVector`s, and prints the similarity score as a bare `%0.6x`-hex (exact-bit) line on stdout. The test spawns the built `emberweft` executable N=4 times via `Process` (`swift run emberweft _feature-score` or the test-runner-resolved product path), captures stdout, and asserts all N hex strings are byte-equal. `Process` is used (not an in-process call) precisely so each launch has a fresh Swift hash seed — that is what makes the F1 rule load-bearing rather than vacuous. If the product path can't be resolved in the test environment, `XCTSkip` with a clear message (the test is a guardrail, not a build gate).
+
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** `FeatureVector` (sorted-array storage; `cosine`/`distance` helpers that iterate the sorted arrays), the guarded metric, and `SimilarityExploration` (ε-greedy using an `ISAAC`/`RNG` seeded walk + an integer `Set<Int>` recency window — integer-indexed, so the walk is deterministic).
+- [ ] **Step 3: Implement** `FeatureVector` (sorted-array storage; `cosine`/`distance` helpers that iterate the sorted arrays), the guarded metric, the hidden `_feature-score` subcommand, and `SimilarityExploration` (ε-greedy using an `ISAAC`/`RNG` seeded walk + an integer `Set<Int>` recency window — integer-indexed, so the walk is deterministic).
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit** `feat(flamekit): FeatureVector (sorted-array) + SimilarityExploration ε-greedy (F1 deterministic)`.
 
@@ -1194,11 +1311,23 @@ S7 reuses S6's `Schedule`/`PairSelector`/Metal variation set **verbatim** — no
 
 **Steps:**
 
+- [ ] **Step 0: Add the `FlamePlayerTests` target to `Package.swift` (it does not exist yet — `Package.swift` currently has no test target for `FlamePlayer`; Tasks 20–23 all assume it).** Append a new `.testTarget`:
+
+```swift
+.testTarget(
+    name: "FlamePlayerTests",
+    dependencies: ["FlamePlayer", "FlameRenderer", "FlameReference", "FlameKit"],
+    path: "Tests/FlamePlayerTests"
+),
+```
+
+Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves the new target before writing any test. This is a Phase-C prerequisite; commit it with Step 5.
+
 - [ ] **Step 1: Write failing tests** (alternation under a fake clock; prefetch invoked once per loop; no duplicate-on-transition using a capturing fake renderer).
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** the actor (frame-advance loop, triple-buffer texture pool, prefetch task; isolate `MetalRenderer` calls behind a protocol so the test injects a fake).
 - [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(player): PlaybackDispatcher actor (Schedule-driven, triple-buffered, prefetch)`.
+- [ ] **Step 5: Commit** `feat(player): PlaybackDispatcher actor + FlamePlayerTests target (Schedule-driven, triple-buffered, prefetch)`.
 
 ---
 
@@ -1315,7 +1444,9 @@ S7 reuses S6's `Schedule`/`PairSelector`/Metal variation set **verbatim** — no
 ## Notes for implementers
 
 - **Determinism is rule #2.** Any FP accumulation over variation/parameter-name-keyed data MUST use sorted arrays (F1 — Swift `Dictionary`/`Set` hash seeds are per-process randomized). Integer-indexed `Set<Int>` and arrays are fine. The cross-process bit-identity test (Task 16) is the guardrail.
+- **`.metal` files are NOT compiled by the Swift toolchain.** `Package.swift` lists them under `resources: [.copy("Metal")]` in the `FlameRenderer` target; `Kernels.metal` is compiled to a `.metallib` at runtime by `MetalRenderer`. Consequence for Tasks 5/6: `swift build` will NOT catch an MSL syntax error or a Swift↔MSL layout mismatch — only `swift test --filter EndToEndParityTests` (or any Metal render) will. After every `Kernels.metal` edit, run a Metal test before committing; the `GPUXform` byte-layout guard (`bytesPerXform == 1248`, asserted in `packXforms`) is the only compile-time-adjacent check you get, and it only validates the Swift side.
+- **The Swift `GPUXform` struct may NOT gain a `[Float]` field.** The xform buffer is created by byte-copying a `[GPUXform]` via `withUnsafeBytes` (`ChaosGameMetal.buf`). A Swift `Array` field stores a heap pointer, not inline floats, so it would send garbage to the GPU. This is why Task 5 switches the xform path to a flat-packed `[Float]` produced by `MetalHost.packXforms`. The 15-float scalar header may stay a struct; only the variable-size tail (`varWeights` + `varParams`) moves to the flat array. Do not "simplify" this back to a struct-with-array-field.
 - **Interpolation runs once in FlameKit (Double).** The resulting `Flame` is handed to both renderers, so the genome is byte-identical CPU↔Metal. Never run interpolation on-device in FP32.
 - **flam3 is read, never linked.** Port the logic; cite `file:line`. The oracle is a local build; vs-flam3 tests auto-skip if it's absent (F10), Metal↔CPU ≥38 dB remains the hard gate.
 - **Thresholds:** vs-flam3 **≥30 dB**; Metal↔CPU **≥38 dB**; consecutive-frame continuity **≥40 dB**; genome-space `‖Δ‖ < 1e-3`. Do not swap these.
-- **The `.linear` interpolation shim must keep M1/M2 green** throughout Phase A — S6-pre is an isolated, gate-keeping slice; do not change existing render behavior until S6.
+- **The `.linear` interpolation shim must keep M1/M2 green** throughout Phase A — S6-pre is an isolated, gate-keeping slice; do not change existing render behavior until S6. The `.linear` path reuses the legacy `mergeVariations` byte-for-byte (Task 10); only `.log` gets the union+carry merge.
