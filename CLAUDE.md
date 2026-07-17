@@ -28,7 +28,8 @@ Read these before making non-trivial changes. They override any generic assumpti
 - **Formatting:** `swift-format` (config in `.swift-format`).
 - **Code identifiers** use the neutral `Flame` prefix (`FlameKit`, `FlameRenderer`, …); the **brand name Emberweft** is used only for user-facing artifacts (app bundle `EmberweftApp`, screensaver `EmberweftScreenSaver`, the `emberweft` CLI).
 - **Deployment target:** macOS 26 (Metal 4), Apple Silicon (M1+). Intel unsupported.
-- **`genomes/`** is an intentional ~1.6 GB data-preservation archive of ~123k Electric Sheep `.flam3` genomes (gens 165–248) — do not gitignore or remove. Gen 248 is a live flock (a local launchd job, `com.emberweft.sheep-sync`, syncs it daily). See `genomes/README.md`.
+- **`genomes/`** is an intentional ~1.6 GB data-preservation archive of ~123k Electric Sheep `.flam3` genomes (gens 165–248), split into `sheep/` (stills) + `edges/` (stored transitions) + an `edges.sqlite` pair DB — do not gitignore or remove. Gen 248 is a live flock (a local launchd job `com.emberweft.sheep-sync` syncs it daily). See `genomes/README.md`.
+- **M3 animation** is a faithful flam3 port (`sheep_loop` = rotate each xform's 2×2 affine 360° + circular palette; `sheep_edge` = interpolate A→B with `interpolation_type=log` + special-sauce padding); see [docs/rendering/transitions.md](docs/rendering/transitions.md), and treat the archived genomes (flame counts, `time` values, `edges.sqlite`) as ground truth — don't re-derive the mechanics.
 
 ### Metal & Swift 6 gotchas
 - **`.metal` files:** SwiftPM does not compile them. Bundle as `resources: [.copy("Metal")]` + `exclude: ["Metal"]`, load at runtime via `Bundle.module` + `MTLDevice.makeLibrary(source:)`.
