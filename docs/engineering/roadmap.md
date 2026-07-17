@@ -76,13 +76,13 @@
 **Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
 
 **Two segment kinds (mirrors the original Electric Sheep):**
-- **Loop** — a single sheep played through its *own* temporal keyframes (`[Flame]` in a `.flam3`), interpolated into a seamless loop; loop length is the sheep's natural keyframe extent (not a fixed value). This is the sheep's intrinsic motion, independent of any other genome. Single-keyframe (still) sheep have no motion and are filtered out of the playback pool (kept in the archive).
+- **Loop** — animate a single sheep by rotating its genome through a full 360° while cycling its palette circularly (flam3 `sheep_loop`, driven by `blend ∈ [0,1]`); seamless because 360°=0° and the palette wraps. This is structural motion of one genome via the same blend pipeline transitions use, and it is what animates still (single-keyframe) sheep. Loop length = `nframes` at the target fps.
 - **Transition** — a morph from genome A's parameters to genome B's over a short segment.
 
 **Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
 
 **Key deliverables:**
-- **Loop playback** — render a sheep's own multi-keyframe temporal loop (FlameKit `Interpolation` already provides the keyframe math; FlamePlayer drives it)
+- **Loop playback** — animate each (still) sheep via flam3 `sheep_loop`: rotate the genome 0→360° + circular palette cycle over `nframes` (seamless). Same blend pipeline as transitions.
 - Genome interpolation for smooth **transitions** between genomes ([transitions.md](../rendering/transitions.md))
 - `emberweft animate` (CLI) producing alternating loop/transition segments (S6)
 - **FlamePlayer** realtime adaptive engine (S7)
@@ -93,7 +93,7 @@
 **Dependencies:** M2 complete
 
 **Definition of done:**
-- A sheep's own multi-keyframe loop plays seamlessly (last keyframe connects to first)
+- A sheep's `sheep_loop` (360° rotation + palette cycle) plays seamlessly (frame N = frame 0)
 - Can play a sequence of genomes where loops and transitions alternate, with no two transitions consecutive
 - Realtime playback at target fps at 1080p *(preliminary: 60 fps on M2 Max)*
 - Adaptive quality adjusts based on thermal state

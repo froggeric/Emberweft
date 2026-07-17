@@ -251,23 +251,33 @@ interpolate(
 
 ## Segment Sequencing
 
-Playback is built from **two segment kinds** — the same two the original Electric
-Sheep uses:
+Playback is built from **two segment kinds** — the same two flam3/ES produce via
+the `flam3-genome` `spin` (loop) and `strand` (transition) functions, both driven
+by a `blend ∈ [0,1]` parameter over `nframes`:
 
-- **Loop** — a single sheep played through its *own* temporal keyframes (the
-  `[Flame]` elements in its `.flam3`), interpolated into a seamless loop. This is
-  the sheep's intrinsic motion; it does not involve any other genome. A
-  single-keyframe sheep (no `time>0` keyframes) is a degenerate loop — a still
-  hold. Most archived sheep are multi-keyframe loops.
-- **Transition** — a morph from genome A's parameters to genome B's (the
-  between-genome interpolation described in the rest of this document).
+- **Loop** — animate a single sheep by **rotating its genome through a full 360°**
+  (`blend × 360°`, flam3 `sheep_loop`) while **cycling its palette circularly**
+  (HSV-circular). Because 360° = 0° and the palette wraps, the last frame equals
+  the first → a **seamless loop**. This is structural motion of one genome — the
+  same blend-interpolation pipeline transitions use. It is what animates **still,
+  single-keyframe sheep** (the archive's sheep are stills; their motion comes
+  entirely from this rotation+palette loop).
+- **Transition** — interpolate genome A → B over `blend ∈ [0,1]` (flam3
+  `sheep_edge`): affine coefs, weights, and palette blend. This is the
+  between-genome morph described in the rest of this document.
+
+> The 2-keyframe `.flam3` files in the archive (62% of it) are **stored
+> transitions** (`sheep_edge` endpoints, two different sheep); the 1-keyframe
+> files (38%) are the **sheep** themselves (stills). There are no per-sheep
+> animation keyframes — loops are generated on the fly by `sheep_loop`.
 
 ### Alternation rule (mandatory)
 
 Loops and transitions **alternate**: `loop(A) → transition(A→B) → loop(B) →
 transition(B→C) → …`. **Never two transitions in a row** — every transition is
-bracketed by loops. This is how the original Electric Sheep sequences its videos,
-and it is a hard constraint on the scheduler, not a suggestion.
+bracketed by loops. This is the flam3 `flam3-genome` sequencing (and the original
+Electric Sheep): *"loop the A flame, then transition A→B, then loop the B flame,
+… "*, and it is a hard constraint on the scheduler, not a suggestion.
 
 ### Endless Playback
 
@@ -277,20 +287,26 @@ loop(sheep_0) → transition(0→1) → loop(sheep_1) → transition(1→2) → 
 
 ### Segment Length
 
-- **Loop duration = the sheep's natural keyframe extent**, not a fixed value. A sheep's `[Flame]` keyframes carry `time` values that define its intrinsic loop length (in the archive, commonly `time="0"` → `time="160"`, i.e. ~160 frames). Play each sheep at its natural rate; optionally apply a uniform time-scale. (An earlier "5 s loop" here was a placeholder, not derived from the genome.)
+- **Loop length:** `nframes` rendered at the target fps (flam3 `nframes` per
+  loop). Preliminary default: enough frames for a smooth 360° rotation (e.g. a
+  few seconds). Configurable.
 - **Transition duration:** **(preliminary default)** 3.0 seconds, configurable.
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
 
-### Stills (single-keyframe sheep)
+### Stills are the loops
 
-A single-keyframe sheep has no intrinsic motion. It is **not shown as a static hold**; instead it is **filtered out of the playback/sequencing pool** (while remaining in the archive). Optionally a still can be salvaged with **synthetic motion** — a slow camera drift (pan/zoom/rotate) or palette/hue rotation — which gives subtle motion, though it cannot become a true multi-keyframe IFS loop. Default behavior: discard from use.
+Every archived sheep is a still (single keyframe) — and that is exactly what the
+loop animates. There is **no filtering of stills**: each sheep, still or
+otherwise, is turned into a seamless moving loop via `sheep_loop` (360° rotation
++ circular palette). The "discard stills / synthesize motion" idea from earlier
+drafts is obsolete — `sheep_loop` *is* the motion, and it is faithful to flam3.
 
 ### Schedule Computation
 
-A loop segment plays the sheep's own `[Flame]` keyframes (via FlameKit
-`Interpolation`) over `loop_duration`, wrapping the last keyframe back to the
-first for seamlessness. A transition segment morphs A→B over `transition_duration`.
+A loop segment applies `sheep_loop(sheep, blend)` over `loop_duration_frames`
+(blend 0→1 = rotate 0→360° + palette cycle), seamless by construction. A
+transition segment applies `sheep_edge(A, B, blend)` over `transition_duration`.
 
 ```
 current_sheep = 0
@@ -299,28 +315,22 @@ transition_end_frame = loop_end_frame + transition_duration_frames
 
 for frame in 0...:
     if frame < loop_end_frame:
-        # LOOP: this sheep's own temporal keyframe animation, seamless
-        tau = (frame - (loop_end_frame - loop_duration_frames)) / loop_duration_frames
-        render(renderSheepLoop(sheep[current_sheep], tau))   # interpolates its [Flame] keyframes
+        # LOOP: rotate this sheep 0->360deg + circular palette (sheep_loop)
+        blend = (frame - (loop_end_frame - loop_duration_frames)) / loop_duration_frames
+        render(sheepLoop(sheep[current_sheep], blend))
     else if frame < transition_end_frame:
-        # TRANSITION: morph current -> next
-        local_t = (frame - loop_end_frame) / transition_duration_frames
-        render(
-            interpolate(
-                lastKeyframe(sheep[current_sheep]),
-                firstKeyframe(sheep[(current_sheep + 1) % N]),
-                local_t
-            )
-        )
+        # TRANSITION: interpolate current -> next (sheep_edge)
+        blend = (frame - loop_end_frame) / transition_duration_frames
+        render(sheepEdge(sheep[current_sheep], sheep[(current_sheep + 1) % N], blend))
     else:
         current_sheep = (current_sheep + 1) % N
         loop_end_frame = frame + loop_duration_frames
         transition_end_frame = loop_end_frame + transition_duration_frames
 ```
 
-**Transition endpoints:** a transition starts from the *last keyframe* of sheep A
-and ends at the *first keyframe* of sheep B, so the morph continues each loop's
-end-state smoothly rather than jumping to an arbitrary frame.
+**Transition endpoints:** a transition interpolates directly from sheep A's
+genome to sheep B's (both stills); the rotation of each loop resets at 0°/360°,
+so the morph flows out of one full revolution and into the next.
 
 See [playback-modes.md](../playback/playback-modes.md) for runtime scheduling.
 

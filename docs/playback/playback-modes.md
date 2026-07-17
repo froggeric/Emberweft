@@ -132,10 +132,11 @@ The playback system orchestrates **two segment kinds** — loops and transitions
 using the interpolation engine described in
 [`../rendering/transitions.md`](../rendering/transitions.md).
 
-- **Loop:** a sheep played through its own `[Flame]` keyframes as a seamless
-  loop (the sheep's intrinsic motion).
-- **Transition:** a morph from the last keyframe of sheep A to the first
-  keyframe of sheep B.
+- **Loop:** a single sheep animated via flam3 `sheep_loop` — rotate the genome
+  0→360° + circular palette cycle over `nframes` (seamless; this is what animates
+  still sheep).
+- **Transition:** a morph from sheep A's genome to sheep B's via `sheep_edge`
+  (interpolate coefs + palette over `blend`).
 
 **Alternation rule:** loops and transitions alternate — `loop → transition →
 loop → transition`. Never two transitions in a row; every transition is
@@ -165,11 +166,11 @@ class SegmentScheduler {
 ```
 
 **Segment Timing:**
-- Loop length: each sheep's natural keyframe extent (archive sheep are commonly ~160 frames), optionally time-scaled — **not** a fixed value.
+- Loop length: `nframes` at the target fps (a full 360° `sheep_loop` rotation + palette cycle). Preliminary default: a few seconds; configurable.
 - Default transition length: **(preliminary)** 3 seconds (configurable)
 - Maximum transition for slow-morph aesthetic: 30 seconds
 
-**Stills:** single-keyframe sheep are filtered out of the playback pool (kept in the archive); they are not shown as static holds. See [transitions.md](../rendering/transitions.md#stills-single-keyframe-sheep).
+**Stills are animated, not filtered:** every sheep (still or otherwise) becomes a moving loop via flam3 `sheep_loop` (360° rotation + circular palette). See [transitions.md](../rendering/transitions.md).
 
 ## Frame Pacing
 
