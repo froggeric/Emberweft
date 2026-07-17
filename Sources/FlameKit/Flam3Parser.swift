@@ -117,6 +117,13 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Double($0) } ?? 0.6
         f.hueShift = attr["hue"].flatMap { Double($0) } ?? 0
         f.time = attr["time"].flatMap { Double($0) } ?? 0
+        // Animation attributes (flam3 interpolation pipeline). Defaults mirror
+        // flam3: temporal=linear, matrix=log, palette=hsv_circular, hue=0.
+        f.interpolation = attr["interpolation"].flatMap { TempInterpolation(rawValue: $0) } ?? .linear
+        f.interpolationType = attr["interpolation_type"].flatMap { MatrixInterpolationType(rawValue: $0) } ?? .log
+        f.paletteInterpolation = attr["palette_interpolation"].flatMap { PaletteInterpolation(rawValue: $0) } ?? .hsvCircular
+        f.hueRotation = attr["hue_rotation"].flatMap { Double($0) } ?? 0
+        f.hsvRgbPaletteBlend = attr["hsv_rgb_palette_blend"].flatMap { Double($0) } ?? 0
         return f
     }
 
@@ -137,22 +144,52 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         if let cf = attr["coefs"] { x.affine = parseAffine(cf) ?? .identity }
         if let pf = attr["post"] { x.postAffine = parseAffine(pf) ?? .identity }
         if let ch = attr["chaos"] { x.chaos = floats(ch) }
+        // flam3 convention: `animate` is an xform attribute (0 => symmetry xform,
+        // rotation skipped). Absent => 1.0 (random default rotates).
+        x.animate = attr["animate"].flatMap { Double($0) } ?? 1.0
         // flam3/Apophysis convention: variation weights are xform ATTRIBUTES
         // (e.g. `<xform linear="1" sinusoidal="0.5" .../>`). This is the ONLY
         // form flam3-render reads, so the frozen golden genomes (Task 12) MUST
         // use it — a `<var>` child element is ignored by flam3 and yields a
-        // blank render. Any attribute that is not a reserved keyword is a
-        // variation weight. Sort by name so round-trip order is deterministic
-        // regardless of XMLParser's dictionary iteration order.
+        // blank render. Any attribute that is not a reserved keyword is either a
+        // variation weight (plain `<name>="…"`) or a parametric attribute
+        // (`<varname>_<paramname>="…"`, routed to that variation's `parameters`
+        // via `VariationDescriptor.matchParamAttribute`). Unknown attrs still
+        // parse through as zero-contribution weights so imported genomes
+        // round-trip without error. Sort by name so round-trip order is
+        // deterministic regardless of XMLParser's dictionary iteration order.
         let reserved: Set<String> = [
             "weight", "color", "color_speed", "symmetry", "coefs", "post",
             "chaos", "opacity", "animate", "name",
+            "interpolation", "interpolation_type", "palette_interpolation",
+            "hue_rotation", "hue",
         ]
-        let attrVars = attr
-            .filter { !reserved.contains($0.key) }
-            .compactMap { (k, v) -> Variation? in Double(v).map { Variation(name: k, weight: $0) } }
-            .sorted { $0.name < $1.name }
-        x.variations = attrVars
+        var weights: [(String, Double)] = []
+        var paramsByVariation: [String: [String: Double]] = [:]
+        for (k, v) in attr where !reserved.contains(k) {
+            guard let val = Double(v) else { continue }
+            if let hit = VariationDescriptor.matchParamAttribute(k) {
+                paramsByVariation[hit.variation, default: [:]][hit.param] = val
+            } else {
+                // Unknown attr (incl. malformed "<knownvar>_<unknownparam>",
+                // e.g. blob_foo) falls through as a zero-contribution weight
+                // Variation — existing behavior. It round-trips but creates a
+                // phantom variation; left as-is for compat.
+                weights.append((k, val))
+            }
+        }
+        // Param-without-weight edge case: a parametric attr whose base weight
+        // attr is absent (e.g. `<xform blob_low="0.2"/>` with no `blob="…"`)
+        // must still round-trip. Synthesize a weight-0 variation to carry the
+        // params so the serializer (which emits params regardless of weight)
+        // preserves them.
+        let weightedNames = Set(weights.map { $0.0 })
+        for (varName, _) in paramsByVariation where !weightedNames.contains(varName) {
+            weights.append((varName, 0))
+        }
+        x.variations = weights.sorted { $0.0 < $1.0 }.map { name, w in
+            Variation(name: name, weight: w, parameters: paramsByVariation[name] ?? [:])
+        }
         return x
     }
 

@@ -97,4 +97,49 @@ final class ParserTests: XCTestCase {
         XCTAssertNotNil(f.finalXform)
         XCTAssertEqual(f.finalXform?.variations, [Variation(name: "spherical", weight: 1)])
     }
+    func testParsesVariationParameters() {
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame><xform weight="1" coefs="1 0 0 1 0 0" curl="1" curl_c1="0.5" curl_c2="-0.2"/></flame></flames>
+        """
+        let f = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        let curl = f.xforms[0].variations.first { $0.name == "curl" }!
+        XCTAssertEqual(curl.weight, 1)
+        XCTAssertEqual(curl.parameters["curl_c1"]!, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(curl.parameters["curl_c2"]!, -0.2, accuracy: 1e-9)
+    }
+    func testParsesAnimationAttributes() {
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame interpolation_type="log" palette_interpolation="hsv_circular" hue_rotation="0.25">
+          <xform weight="1" coefs="1 0 0 1 0 0" animate="0" linear="1"/></flame></flames>
+        """
+        let f = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        XCTAssertEqual(f.interpolationType, .log)
+        XCTAssertEqual(f.paletteInterpolation, .hsvCircular)
+        XCTAssertEqual(f.hueRotation, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[0].animate, 0)
+    }
+    func testMatchParamAttributeResolvesExactlyOneVariation() {
+        // Every parametric attr resolves to exactly one variation; no prefix collisions
+        // (fan2_ does NOT match fan_, rings2_ does NOT match rings_).
+        let cases: [(attr: String, variation: String)] = [
+            ("blob_low", "blob"), ("curl_c2", "curl"), ("rectangles_x", "rectangles"),
+            ("fan2_x", "fan2"), ("rings2_val", "rings2"), ("perspective_angle", "perspective"),
+            ("super_shape_n3", "super_shape"), ("ngon_sides", "ngon"),
+            ("julian_power", "julian"), ("juliascope_power", "juliascope"),
+            ("wedge_julia_angle", "wedge_julia"), ("wedge_sph_hole", "wedge_sph"),
+        ]
+        for (attr, variation) in cases {
+            let hit = VariationDescriptor.matchParamAttribute(attr)
+            XCTAssertNotNil(hit, attr)
+            XCTAssertEqual(hit!.variation, variation, attr)
+        }
+        // fan2_ must NOT resolve as fan; rings2_ must NOT resolve as rings
+        XCTAssertNotEqual(VariationDescriptor.matchParamAttribute("fan2_x")?.variation, "fan")
+        XCTAssertNotEqual(VariationDescriptor.matchParamAttribute("rings2_val")?.variation, "rings")
+        // A plain variation-weight attr (no suffix) returns nil
+        XCTAssertNil(VariationDescriptor.matchParamAttribute("linear"))
+        XCTAssertNil(VariationDescriptor.matchParamAttribute("curl"))
+    }
 }

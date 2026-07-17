@@ -30,6 +30,15 @@ public enum Flam3Serializer {
         a += " vibrancy=\"\(f6(f.quality.vibrancy))\""
         a += " hue=\"\(f6(f.hueShift))\""
         a += " time=\"\(f.time)\""
+        // Animation attributes. `interpolation_type`/`palette_interpolation` are
+        // always emitted (flam3 writes them on every flame); the temporal
+        // `interpolation` and `hsv_rgb_palette_blend` are non-default-only to
+        // keep typical genomes compact.
+        a += " interpolation_type=\"\(f.interpolationType.rawValue)\""
+        a += " palette_interpolation=\"\(f.paletteInterpolation.rawValue)\""
+        a += " hue_rotation=\"\(f6(f.hueRotation))\""
+        if f.interpolation != .linear { a += " interpolation=\"\(f.interpolation.rawValue)\"" }
+        if f.hsvRgbPaletteBlend != 0 { a += " hsv_rgb_palette_blend=\"\(f6(f.hsvRgbPaletteBlend))\"" }
         if f.quality.estimatorRadius > 0 {
             a += " estimator_radius=\"\(f6(f.quality.estimatorRadius))\""
             a += " estimator_minimum=\"\(f6(f.quality.estimatorMinimum))\""
@@ -56,8 +65,18 @@ public enum Flam3Serializer {
         if x.postAffine != .identity { a += " post=\"\(af(x.postAffine))\"" }
         if let chaos = x.chaos { a += " chaos=\"\(chaos.map(f6).joined(separator: " "))\"" }
         if x.opacity != 1 { a += " opacity=\"\(f6(x.opacity))\"" }
+        if x.animate != 1 { a += " animate=\"\(f6(x.animate))\"" }
         for v in x.variations.sorted(by: { $0.name < $1.name }) where v.weight != 0 {
             a += " \(v.name)=\"\(f6(v.weight))\""
+        }
+        // Param emission is a SEPARATE loop that does NOT filter on weight, so a
+        // parametric variation whose base weight attr is absent (parser-synthesized
+        // weight 0) still round-trips its params. Matches flam3.
+        for v in x.variations.sorted(by: { $0.name < $1.name }) where !v.parameters.isEmpty {
+            let d = VariationDescriptor.descriptor(for: v.name)
+            for p in d?.parameters ?? [] {
+                if let val = v.parameters[p] { a += " \(p)=\"\(f6(val))\"" }
+            }
         }
         a += "/>\n"
         return a

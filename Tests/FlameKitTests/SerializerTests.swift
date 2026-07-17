@@ -56,4 +56,58 @@ final class SerializerTests: XCTestCase {
         let parsed = try Flam3Parser.parse(out.data(using: .utf8)!)[0]
         XCTAssertEqual(parsed, f)
     }
+
+    func testRoundTripsParametricGenome() {
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame interpolation_type="log" hue_rotation="0.1">
+          <xform weight="1" coefs="1 0 0 1 0 0" animate="1" blob="1" blob_low="0.2" blob_high="0.8" blob_waves="3"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" super_shape="1" super_shape_n1="2" super_shape_n2="2" super_shape_n3="2"/>
+        </flame></flames>
+        """
+        let f1 = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        let re = Flam3Serializer.serialize([f1])
+        let f2 = try! Flam3Parser.parse(re.data(using: .utf8)!)[0]
+        XCTAssertEqual(f1.interpolationType, f2.interpolationType)
+        XCTAssertEqual(f1.hueRotation, f2.hueRotation, accuracy: 1e-9)
+        let blob1 = f1.xforms[0].variations.first { $0.name == "blob" }!
+        let blob2 = f2.xforms[0].variations.first { $0.name == "blob" }!
+        XCTAssertEqual(blob1.parameters, blob2.parameters)
+    }
+
+    func testRoundTripsParamWithoutWeight() {
+        // blob_low present, but NO blob="…" weight attr → must still round-trip as a
+        // weight-0 variation carrying the param (synthesized by the parser; params emitted
+        // regardless of weight by the serializer).
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame><xform weight="1" coefs="1 0 0 1 0 0" linear="1" blob_low="0.2"/></flame></flames>
+        """
+        let f1 = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        let re = Flam3Serializer.serialize([f1])
+        let f2 = try! Flam3Parser.parse(re.data(using: .utf8)!)[0]
+        let blob2 = f2.xforms[0].variations.first { $0.name == "blob" }
+        XCTAssertNotNil(blob2, "blob variation must survive round-trip even with weight 0")
+        XCTAssertEqual(blob2!.weight, 0)
+        XCTAssertEqual(blob2!.parameters["blob_low"]!, 0.2, accuracy: 1e-9)
+    }
+
+    func testRoundTripsConditionallyEmittedAttrs() {
+        // interpolation (temporal) and hsv_rgb_palette_blend are emitted only when
+        // non-default — pin that both survive a round trip.
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame interpolation="smooth" hsv_rgb_palette_blend="0.3">
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1"/></flame></flames>
+        """
+        let f1 = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        let re = Flam3Serializer.serialize([f1])
+        let f2 = try! Flam3Parser.parse(re.data(using: .utf8)!)[0]
+        XCTAssertEqual(f1.interpolation, .smooth)
+        XCTAssertEqual(f2.interpolation, .smooth, "temporal interpolation must round-trip")
+        XCTAssertEqual(f2.hsvRgbPaletteBlend, 0.3, accuracy: 1e-9, "hsv_rgb_palette_blend must round-trip")
+        // and confirm the conditional attrs are actually present in the serialized output
+        XCTAssertTrue(re.contains("interpolation=\"smooth\""), re)
+        XCTAssertTrue(re.contains("hsv_rgb_palette_blend=\""), re)
+    }
 }

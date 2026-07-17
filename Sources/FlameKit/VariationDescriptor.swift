@@ -44,6 +44,31 @@ public struct VariationDescriptor: Sendable {
 
     public static func descriptor(for name: String) -> VariationDescriptor? { table[name] }
 
+    /// Resolve a parametric XML attr key against the known tables. Returns nil for
+    /// a plain variation-weight attr (e.g. "linear", "curl" with no suffix) or an
+    /// unknown param suffix.
+    ///
+    /// Each param is stored under its FULL XML name (`blob_low`, `fan2_x`,
+    /// `super_shape_n3`, …) — NOT the short suffix — so the serializer's
+    /// `for p in d.parameters` emit loop produces `blob_low="…"` verbatim and
+    /// `evaluate`/`v_blob` read the same key from `parameters`. Therefore the
+    /// matcher checks the FULL `key` against `d.parameters` (after a `hasPrefix`
+    /// gate as a fast-path intent check). Stripping the prefix and checking the
+    /// short suffix would ALWAYS miss (there is no "low" entry, only "blob_low")
+    /// — do not revert to that.
+    ///
+    /// "At most one hit" is guaranteed by param-name UNIQUENESS (no two variations
+    /// share a full param key), independent of prefix distinctness; the `hasPrefix`
+    /// gate is not load-bearing for uniqueness, only an optimization + clarity guard.
+    public static func matchParamAttribute(_ key: String) -> (variation: String, param: String)? {
+        for (varName, d) in table where !d.parameters.isEmpty {
+            if key.hasPrefix(varName + "_") && d.parameters.contains(key) {
+                return (varName, key)   // param == full XML name (e.g. "blob_low")
+            }
+        }
+        return nil
+    }
+
     // name -> (ordered params, defaults, rest-overrides). Covers ALL 33 canonical
     // names so canonicalOrder and the descriptor table cannot drift. Defaults/rest
     // source-cited to flam3.h / parser.c / variations.c in the spec param table.
