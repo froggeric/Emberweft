@@ -166,8 +166,9 @@ class SegmentScheduler {
 ```
 
 **Segment Timing:**
-- Frame budget grew with hardware: 128 (classic) → 160 → 320 → 900 (newest gen-248). Emberweft applies one budget to all sheep (loops are generated live by `sheep_loop`, so a sheep's era doesn't constrain it): **160 frames (~5.5–7 s) realtime default**, **900 frames (~15–39 s) premium (screensaver/export)**.
+- Frame budget grew with hardware: 128 (classic) → 160 → 320 → 900 (newest gen-248). Emberweft applies one budget to all sheep (loops are generated live by `sheep_loop`, so a sheep's era doesn't constrain it): **160 frames (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium (screensaver/export)**.
 - Loops and transitions share the same budget; loops are played **once** then transitioned ("continuously morphing sequence").
+- **Transitions are generated on the fly** (`sheep_edge(A, B)` from two still sheep, pairs chosen by similarity); stored ES edges are an optional curation oracle / classic-flock mode, not a render requirement (an edge is just its two endpoint stills + a time extent).
 - Configurable; adaptive transitions may run shorter/longer for similar/dissimilar sheep.
 
 **Stills are animated, not filtered:** every sheep (still or otherwise) becomes a moving loop via flam3 `sheep_loop` (360° rotation + circular palette). See [transitions.md](../rendering/transitions.md).

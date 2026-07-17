@@ -298,6 +298,7 @@ stored in a still sheep's genome), Emberweft applies **one budget to all sheep,
 classic or new**:
 
 - **160 frames (~5.5–7 s):** realtime default — snappy playback.
+- **320 frames (~11–14 s):** standard/intermediate — smoother dwell.
 - **900 frames (~15–39 s):** premium preset — screensaver / export / "stately" mode.
 
 Both loops and transitions use the same budget. Configurable.
@@ -307,6 +308,26 @@ morphing sequence," not a loop repeated several times (though the seamless loop
 could repeat for a longer dwell).
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
+
+### Transitions: generated on the fly (stored edges are optional)
+
+A stored ES edge genome is **just its two endpoint still sheep** plus a `time`
+extent — verified byte-identical to the standalone sheep (modulo `time`/edits),
+and both endpoints are single-frame stills. The morph is entirely produced by
+interpolation at render time. So **on-the-fly `sheep_edge(A, B)` from two still
+sheep yields identical frames to the stored edge for the same pair** — edges add
+no render information, only a curated *choice* of which pairs connect.
+
+Emberweft therefore **generates transitions on the fly** (`sheep_edge(A, B)`,
+pairs chosen by a similarity metric so morphs stay smooth), and uses the stored
+edge genomes only as:
+
+- a **gold set of good pairs** (ES-linked sheep are related) to validate/seed the
+  similarity metric, and
+- an optional **"classic ES flock"** playback mode that follows the authored graph.
+
+Stored edges stay in the archive for preservation; they are not required for
+rendering.
 
 ### Stills are the loops
 
