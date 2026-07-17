@@ -261,7 +261,10 @@ public enum ChaosGame {
     @inline(__always)
     static func applyXformBody(_ x: Xform, _ p: SIMD2<Double>, rng: inout ISAAC) -> SIMD2<Double> {
         let pre = x.affine.apply(p)
-        let v = Variations.evaluate(x.variations, at: pre, rng: &rng)
+        // ef carries the affine translation (e, f) = (c[2][0], c[2][1]) needed by
+        // the coefficient-dependent variations rings/fan (variations.c:521,543).
+        let v = Variations.evaluate(x.variations, at: pre,
+                                    ef: SIMD2(x.affine.e, x.affine.f), rng: &rng)
         // xform.opacity is reflected in `q[3]` / the final-xform opacity test;
         // it is not part of the geometric output (Emberweft's tone mapping is
         // opaque, and goldens use opacity=1 throughout).
