@@ -285,20 +285,26 @@ Electric Sheep): *"loop the A flame, then transition A→B, then loop the B flam
 loop(sheep_0) → transition(0→1) → loop(sheep_1) → transition(1→2) → … → loop(sheep_N) → transition(N→0) → loop(sheep_0) → …
 ```
 
-### Segment Length (from the original ES)
+### Segment Length
 
-Per the Draves papers and the archive, loops and transitions share one
-`nframes` (each segment = one loop OR one transition of that length):
+The frame budget (`nframes` per loop or transition) grew with hardware:
+**128** (classic ES) → **160** → **320** → **900** (newest gen-248, sheep id
+≥ ~20915). The Draves papers pin classic ES at 128 frames / ~23 fps ≈ 5.5 s; the
+archive shows modern gens at 160 (dominant) and 320, and gen-248's newest content
+at 900.
 
-- **nframes:** **128** (classic ES) / **160** (modern archive; some 320). Historic
-  gen-169 2-frame files are all `time=128`; modern gens are dominantly `time=160`.
-- **fps:** **~23** (classic ES default).
-- **⇒ segment duration ≈ 5.5–7 s** (128–160 frames / 23 fps). Both loops and
-  transitions are this long — a gentle 360° rotation, not a fast spin.
+Because loops are generated on the fly by `sheep_loop` (the budget is **not**
+stored in a still sheep's genome), Emberweft applies **one budget to all sheep,
+classic or new**:
+
+- **160 frames (~5.5–7 s):** realtime default — snappy playback.
+- **900 frames (~15–39 s):** premium preset — screensaver / export / "stately" mode.
+
+Both loops and transitions use the same budget. Configurable.
 
 **Loops are played once, then transitioned** — ES "displays a continuously
-morphing sequence," not a loop repeated several times. (The loop is seamless, so
-repeating is possible if a longer dwell is desired.)
+morphing sequence," not a loop repeated several times (though the seamless loop
+could repeat for a longer dwell).
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
 
