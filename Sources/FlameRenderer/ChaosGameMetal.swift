@@ -30,8 +30,11 @@ enum ChaosGameMetal {
         }
 
         // --- Build device payloads via the shared FlameKit/MetalHost builders ---
-        let xforms = MetalHost.buildGPUXforms(flame)
-        let finalXform = MetalHost.buildGPUFinalXform(flame)
+        // FLAT PACK: the xform buffer is a contiguous [Float] (312 floats/xform),
+        // NOT a byte-copy of the GPUXform header struct — a [Float] struct field
+        // would be heap-allocated and corrupt the device copy.
+        let xforms = MetalHost.packXforms(flame)
+        let finalXform = MetalHost.packFinalXform(flame)
         let weights = flame.xforms.map { max(0, $0.weight) }
         guard weights.reduce(0, +) > 0 else {
             return Histogram(gridWidth: params.gridWidth, gridHeight: params.gridHeight)
@@ -63,9 +66,9 @@ enum ChaosGameMetal {
         }
         let xformsBuf    = buf(xforms)
         // finalXf buffer is mandatory in the kernel signature even when unused;
-        // emit a zeroed single-element buffer so binding 1 is always valid.
-        let finalBuf     = finalXform.map { buf([$0]) }
-                                   ?? device.makeBuffer(length: MemoryLayout<GPUXform>.stride,
+        // emit a zeroed single-xform-width buffer so binding 1 is always valid.
+        let finalBuf     = finalXform.map { buf($0) }
+                                   ?? device.makeBuffer(length: GPUXform.bytesPerXform,
                                                         options: .storageModeShared)!
         let distribBuf   = buf(distrib)
         let dmapBuf      = buf(dmap)

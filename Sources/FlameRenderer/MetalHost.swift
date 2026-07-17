@@ -5,30 +5,34 @@ import FlameKit
 // MARK: - Device-side structs (Swift mirrors of the MSL structs in Kernels.metal.
 // Field order and types MUST match exactly; both align `float` to 4 bytes.)
 
-/// One IFS transform, device layout. 19-slot variation table.
+/// One IFS transform — the 15 scalar header floats only.
 ///
-/// LAYOUT CONTRACT: this struct crosses the Swift→MSL boundary as raw bytes,
-/// so its in-memory layout MUST match `struct GPUXform` in Kernels.metal
-/// field-for-field. Both sides are all-`float` (4-byte align), 6+6+3+19 = 34
-/// floats = 136 bytes, stride 136. Swift does not formally guarantee struct
-/// field order or homogeneous-tuple contiguity in the language spec, but the
-/// ABI lays out trivial structs of `Float` fields sequentially with no
-/// padding. `buildGPUXforms` asserts the stride at runtime so any future ABI
-/// drift fails loudly instead of silently corrupting the device buffer. If
-/// the assertion ever fires on a new toolchain, switch `varWeights` to a
-/// `withUnsafeMutablePointer`-filled `[Float]` of count 19 copied into the
-/// device buffer (or 4×`SIMD4<Float>`), which is fully layout-defined.
+/// LAYOUT CONTRACT: the device xform buffer is a FLAT `[Float]` pack produced
+/// by `MetalHost.packXforms` (NOT a byte-copy of this struct), because a Swift
+/// `Array<Float>` field would be heap-allocated and not inlined into the struct,
+/// corrupting the `withUnsafeBytes` copy. This struct therefore carries only
+/// the 15 inline header floats (a..f, pa..pf, color/colorSpeed/opacity) used by
+/// host-side extraction; the full device layout (312 floats = header + 33
+/// varWeights + 264 varParams) is described by `floatsPerXform`/`bytesPerXform`
+/// and built by the packer. The MSL `struct GPUXform` mirrors the full 312-float
+/// layout field-for-field (15 scalars + `varWeights[33]` + `varParams[264]`).
 public struct GPUXform {
     public var a: Float = 0, b: Float = 0, c: Float = 0, d: Float = 0, e: Float = 0, f: Float = 0
     public var pa: Float = 0, pb: Float = 0, pc: Float = 0, pd: Float = 0, pe: Float = 0, pf: Float = 0
     public var color: Float = 0
     public var colorSpeed: Float = 0
     public var opacity: Float = 0
-    public var varWeights: (Float, Float, Float, Float, Float, Float, Float,
-                            Float, Float, Float, Float, Float, Float, Float,
-                            Float, Float, Float, Float, Float) =
-          (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
     public init() {}
+
+    // ---- Device layout constants (both sides must agree) ----
+    // DERIVED from the authority (VariationDescriptor.canonicalOrder) so numSlots
+    // and floatsPerXform can't internally drift. 6 (pre) + 6 (post) + 3
+    // (color/cs/opacity) + 33 (varWeights) + 33*8 (varParams) = 312 floats.
+    public static let headerFloats = 15
+    public static let numSlots = VariationDescriptor.canonicalOrder.count   // authority
+    public static let slotWidth = 8                                         // MAX_PARAMS_PER_SLOT=6, device slot width 8
+    public static let floatsPerXform = headerFloats + numSlots + numSlots * slotWidth   // 15+33+264 = 312
+    public static let bytesPerXform = floatsPerXform * 4                    // 1248
 }
 
 /// Per-frame constants passed to the chaos kernel.
@@ -65,40 +69,72 @@ enum MetalHost {
         return groups * threadsPerGroup
     }
 
-    /// Build the device xform array from a Flame: affine (tx=a·x+c·y+e),
-    /// post-affine, color/colorSpeed/opacity, and the 19-slot canonical
-    /// variation table (summing weights of repeated names, which is algebraically
-    /// identical to CPU's array-order sum because variation terms commute).
-    static func buildGPUXforms(_ flame: Flame) -> [GPUXform] {
-        // Layout-contract guard: see GPUXform doc comment. 34 Floats == 136 B.
-        precondition(MemoryLayout<GPUXform>.stride == 136,
-                     "GPUXform stride drifted from MSL mirror (136 bytes); Metal buffer would be misread")
-        let slots = Variations.canonicalOrder
+    /// Build the flat-packed device xform buffer for a Flame. Each xform emits
+    /// `GPUXform.floatsPerXform` (312) floats: 15 header (a..f, pa..pf,
+    /// color/colorSpeed/opacity), then 33 `varWeights` (canonical slot order,
+    /// summing weights of repeated names — algebraically identical to CPU's
+    /// array-order sum because variation terms commute), then 264 `varParams`
+    /// (`varParams[slot*8 + intraIdx]`; `super_shape_rnd` clamped to [0,1];
+    /// parameterless variations + unused tail slots zeroed).
+    ///
+    /// FLAT PACK (not a `[Float]` struct field): a Swift `Array<Float>` field
+    /// on `GPUXform` would be heap-allocated and not inlined into the struct,
+    /// so the `withUnsafeBytes` device-buffer copy would send garbage. This
+    /// returns a contiguous `[Float]` that crosses the boundary intact.
+    static func packXforms(_ flame: Flame) -> [Float] {
+        let order = Variations.canonicalOrder          // 33-name authority
         var idxMap = [String: Int]()
-        for (i, n) in slots.enumerated() { idxMap[n] = i }
-        return flame.xforms.map { xf in
-            var g = GPUXform()
-            g.a = Float(xf.affine.a); g.b = Float(xf.affine.b); g.c = Float(xf.affine.c)
-            g.d = Float(xf.affine.d); g.e = Float(xf.affine.e); g.f = Float(xf.affine.f)
-            g.pa = Float(xf.postAffine.a); g.pb = Float(xf.postAffine.b); g.pc = Float(xf.postAffine.c)
-            g.pd = Float(xf.postAffine.d); g.pe = Float(xf.postAffine.e); g.pf = Float(xf.postAffine.f)
-            g.color = Float(xf.color); g.colorSpeed = Float(xf.colorSpeed); g.opacity = Float(xf.opacity)
-            withUnsafeMutableBytes(of: &g.varWeights) { raw in
-                let base = raw.baseAddress!.assumingMemoryBound(to: Float.self)
-                for v in xf.variations where v.weight != 0 {
-                    if let s = idxMap[v.name] { base[s] += Float(v.weight) }
+        for (i, n) in order.enumerated() { idxMap[n] = i }
+        let nXforms = flame.xforms.count
+        var flat = [Float](repeating: 0, count: nXforms * GPUXform.floatsPerXform)
+
+        for (xi, xf) in flame.xforms.enumerated() {
+            let base = xi * GPUXform.floatsPerXform
+            // 15 header floats.
+            flat[base + 0]  = Float(xf.affine.a)
+            flat[base + 1]  = Float(xf.affine.b)
+            flat[base + 2]  = Float(xf.affine.c)
+            flat[base + 3]  = Float(xf.affine.d)
+            flat[base + 4]  = Float(xf.affine.e)
+            flat[base + 5]  = Float(xf.affine.f)
+            flat[base + 6]  = Float(xf.postAffine.a)
+            flat[base + 7]  = Float(xf.postAffine.b)
+            flat[base + 8]  = Float(xf.postAffine.c)
+            flat[base + 9]  = Float(xf.postAffine.d)
+            flat[base + 10] = Float(xf.postAffine.e)
+            flat[base + 11] = Float(xf.postAffine.f)
+            flat[base + 12] = Float(xf.color)
+            flat[base + 13] = Float(xf.colorSpeed)
+            flat[base + 14] = Float(xf.opacity)
+
+            let wBase = base + GPUXform.headerFloats                  // 33 weights
+            let pBase = wBase + GPUXform.numSlots                     // 264 params
+
+            for v in xf.variations where v.weight != 0 {
+                guard let slot = idxMap[v.name] else { continue }
+                flat[wBase + slot] += Float(v.weight)
+                // Per-slot params: write each into varParams[slot*8 + intraIdx].
+                if let desc = VariationDescriptor.descriptor(for: v.name),
+                   !desc.parameters.isEmpty {
+                    // intraIdx == VariationDescriptor.slotIndex(variation:param:) but O(1)
+                    // (we're already iterating desc.parameters in declared order).
+                    for (intraIdx, key) in desc.parameters.enumerated() {
+                        guard intraIdx < GPUXform.slotWidth else { break }
+                        var val = v.parameters[key] ?? desc.defaults[key] ?? 0
+                        if key == "super_shape_rnd" { val = min(1, max(0, val)) }
+                        flat[pBase + slot * GPUXform.slotWidth + intraIdx] = Float(val)
+                    }
                 }
             }
-            return g
         }
+        return flat
     }
 
-    /// Build the optional final-xform buffer (nil if the flame has none).
-    static func buildGPUFinalXform(_ flame: Flame) -> GPUXform? {
+    /// Build the flat-packed final-xform buffer (single xform, length
+    /// `GPUXform.floatsPerXform`), or nil if the flame has no final xform.
+    static func packFinalXform(_ flame: Flame) -> [Float]? {
         guard flame.finalXform != nil else { return nil }
-        // Reuse buildGPUXforms on a synthetic single-xform flame to keep one code path.
-        let single = Flame(xforms: [flame.finalXform!])
-        return buildGPUXforms(single)[0]
+        return packXforms(Flame(xforms: [flame.finalXform!]))
     }
 
     /// Precompute every thread's 16-word ISAAC `randrsl` by serial draws from a

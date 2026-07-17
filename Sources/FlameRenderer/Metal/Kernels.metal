@@ -121,15 +121,21 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 
 // ---- Device mirrors of Swift GPUXform / GPUFrameParams (field order identical) ----
 //
-// These cross the Swift→MSL boundary as raw bytes, so field order, types, and
-// sizes MUST match the Swift structs in MetalHost.swift exactly. Both sides are
-// all-`float`/`uint` (4-byte aligned); GPUXform is 6+6+3+19 = 34 floats = 136 B.
+// These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
+// Swift side), so field order, types, and sizes MUST match the layout constants
+// in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
+// GPUXform is 6+6+3+33+(33*8) = 312 floats = 1248 B. MSL arrays are inline (no
+// heap indirection), so varWeights/varParams land contiguously inside the struct.
+
+#define NUM_XFORM_SLOTS_MS 33
+#define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[19];
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 33
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 33*8 = 264
 };
 
 struct GPUFrameParams {

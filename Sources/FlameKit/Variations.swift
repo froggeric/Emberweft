@@ -475,9 +475,11 @@ public enum Variations {
 }
 
 public extension Variations {
-    /// Fixed canonical slot order for the Metal kernel's variation table.
-    /// Only `julia` consumes the RNG; with a single RNG-consuming variation,
-    /// canonical-order iteration is RNG-equivalent to CPU genome-order.
+    /// Fixed canonical slot order for the Metal kernel's variation table and the
+    /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
+    /// (the 33-name authority: M1's 19 + the 14 special-sauce). Only `julia`
+    /// consumes the RNG; with a single RNG-consuming variation, canonical-order
+    /// iteration is RNG-equivalent to CPU genome-order.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -493,9 +495,11 @@ public extension Variations {
     ///     addition is commutative; zero terms contribute exactly). Genomes
     ///     with ≥3 active variations would diverge from CPU by FP-associativity
     ///     ULPs — still inside the statistical-parity envelope, not a bug.
-    public static let canonicalOrder: [String] = [
-        "bent", "cosine", "cylinder", "diamond", "disc", "ex", "exponential",
-        "fisheye", "handkerchief", "heart", "horseshoe", "hyperbolic", "julia",
-        "linear", "polar", "sinusoidal", "spherical", "spiral", "swirl"
-    ]
+    ///
+    /// Slots 19..32 are the special-sauce set; `apply_xform_body` reads them
+    /// positionally and pulls their params from `varParams[slot*8 + idx]`. The
+    /// if-chain growth + MSL `v_<name>` functions land in Task 6; until then
+    /// the chain stays at 19 lines and the frozen genomes (which touch none of
+    /// the new names) keep weight-0 in slots 19..32, so M2 output is unchanged.
+    public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }
