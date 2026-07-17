@@ -1,0 +1,9 @@
+<flame time="0" palette="41" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.78" url="http://www.coppercat.net" nick="coppercat">
+   <xform weight="0.5" color="0" linear="0.35" horseshoe="0.65" coefs="0.393242 1.02506 -1.84915 -0.118958 -1.04641 -0.28052"/>
+   <xform weight="0.5" color="1" disc="0.4" bent="0.6" coefs="-0.433989 -0.110988 0.110988 -0.433989 0.169071 -0.796008"/>
+</flame>
+<flame time="128" palette="21" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.0555412" parents="16217 8311">
+   <symmetry kind="4"/>
+   <xform weight="0.2" color="0.25" linear="0.08" sinusoidal="0.32" horseshoe="0.04" polar="0.58" bent="0.08" waves="0.35" fisheye="0.12" coefs="0.179041 -0.222592 2.40941 1.36567 -0.603049 -0.767875"/>
+   <xform weight="0.5" color="1" linear="1" coefs="0.230531 -0.19847 0.137553 0.59133 0.0403808 0.504047"/>
+</flame>

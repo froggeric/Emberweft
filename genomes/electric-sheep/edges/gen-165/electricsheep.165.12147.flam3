@@ -1,0 +1,10 @@
+<flame time="0" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.apophysis.org/" nick="Wub">
+   <xform weight="0.5" color="0.89" linear="0.36" waves="0.64" coefs="0.490329 1.05438 -0.819588 -0.020752 0.115738 0.027653"/>
+   <xform weight="0.5" color="1" spherical="0.33" waves="0.67" coefs="-0.570099 -0.213369 0.213369 -0.570099 0.046322 0.517857"/>
+</flame>
+<flame time="128" palette="13" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.785537" >
+   <symmetry kind="3"/>
+   <xform weight="0.333333" color="0.5" bent="1" coefs="-0.893349 -0.00728425 -0.959901 0.503049 0.898045 0.348462"/>
+   <xform weight="0.333333" color="1" popcorn="1" coefs="-0.865206 0.559497 0.214177 -0.0220317 0.0501622 0.617441"/>
+   <xform weight="0.333333" color="0" handkerchief="1" coefs="-0.0358597 0.334385 0.0144216 -0.733115 -0.448701 -0.590167"/>
+</flame>

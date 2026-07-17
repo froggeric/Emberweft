@@ -1,0 +1,17 @@
+<flame time="0" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.76" url="http\\\www.apophysis.org" nick="Don Ten">
+   <xform weight="0.104" color="0" diamond="0.3" julia="0.7" coefs="-0.463337 0.714114 0.725263 0.476041 -0.918471 -0.641376"/>
+   <xform weight="0.039" color="1" horseshoe="0.27" spiral="0.73" coefs="-0.269953 0.440802 -0.451484 -0.299682 0.893626 -0.692713"/>
+   <xform weight="0.143" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.143" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>
+<flame time="128" palette="58" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.277168" >
+   <symmetry kind="-3"/>
+   <xform weight="0.25" color="0.333333" ex="1" coefs="0.840591 -0.264144 -0.855121 0.0933631 -0.89214 -0.0139021"/>
+   <xform weight="0.25" color="0" ex="1" coefs="-0.427354 -0.373232 -0.766741 -0.432896 -0.155215 -0.157837"/>
+   <xform weight="0.25" color="0.666667" ex="1" coefs="-0.357904 0.626993 -0.789516 -0.612452 -0.101226 -0.928808"/>
+   <xform weight="0.25" color="1" ex="1" coefs="-0.981377 0.437431 -0.679776 -0.840906 0.490721 -0.968776"/>
+</flame>

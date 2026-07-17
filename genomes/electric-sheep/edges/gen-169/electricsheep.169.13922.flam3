@@ -1,0 +1,15 @@
+<flame time="0" palette="57" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Hauser">
+   <xform weight="0.14" color="0" sinusoidal="0.16" horseshoe="0.22" heart="0.35" bent="0.28" coefs="0.072681 0.351045 -0.462151 0.013332 0.20482 -1.0622"/>
+   <xform weight="0.138" color="0.52" swirl="0.01" handkerchief="0.36" heart="0.35" bent="0.28" coefs="-0.160311 -0.169046 -0.105246 0.357634 0.098284 -0.414591"/>
+   <xform weight="0.181" color="1" symmetry="1" linear="1" coefs="-0.913545 -0.406737 -0.406737 0.913545 0 0"/>
+   <xform weight="0.181" color="0" symmetry="1" linear="1" coefs="-0.406737 0.913545 -0.913545 -0.406737 0 0"/>
+   <xform weight="0.181" color="0.5" symmetry="1" linear="1" coefs="-0.913545 -0.406737 0.406737 -0.913545 0 0"/>
+   <xform weight="0.181" color="1" symmetry="1" linear="1" coefs="0.406737 -0.913545 0.913545 0.406737 0 0"/>
+</flame>
+<flame time="128" palette="83" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.69" url="http://www.coppercat.net" nick="coppercat">
+   <xform weight="0.342" color="0" linear="0.11" horseshoe="0.56" hyperbolic="0.15" fisheye="0.19" coefs="-0.052813 0.265225 -0.265082 -0.1662 -0.019055 0.716893"/>
+   <xform weight="0.388" color="0.58" linear="0.11" horseshoe="0.66" ex="0.04" fisheye="0.19" coefs="-0.250734 0.432567 0.344128 -0.07465 0.612139 -0.296747"/>
+   <xform weight="0.125" color="0.39" linear="0.11" horseshoe="0.39" handkerchief="0.01" waves="0.31" fisheye="0.19" coefs="0.07872 0.674781 -0.579824 0.494775 0.302301 0.404381"/>
+   <xform weight="0.123" color="0.58" linear="0.11" sinusoidal="0.14" horseshoe="0.39" heart="0.18" fisheye="0.19" coefs="0.409483 -0.054019 -0.040437 -0.075851 -0.436393 -0.003239"/>
+   <xform weight="0.021" color="0.11" linear="0.42" horseshoe="0.39" fisheye="0.19" coefs="0.069594 0.703385 -0.944556 0.238529 -0.059746 0.153873"/>
+</flame>

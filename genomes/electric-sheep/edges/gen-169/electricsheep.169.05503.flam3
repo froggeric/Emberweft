@@ -1,0 +1,15 @@
+<flame time="0" palette="22" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=crazywitko" nick="crazywitko">
+   <xform weight="0.112" color="0" waves="1" coefs="-0.043708 0.217414 0.102578 0.31959 0.101115 -0.032379"/>
+   <xform weight="0.112" color="0.25" waves="1" coefs="-0.03058 -0.282847 -0.104225 -0.010514 0.213758 0.029243"/>
+   <xform weight="0.112" color="0.5" waves="1" coefs="-0.166419 0.292792 0.050425 -0.147374 -1.0913 -0.237812"/>
+   <xform weight="0.112" color="0.75" waves="1" coefs="-0.021052 -0.034713 0.180086 -0.351639 0.148902 1.21296"/>
+   <xform weight="0.112" color="1" waves="1" coefs="-0.161019 0.146497 0.729858 -0.213975 -0.515847 -0.445019"/>
+   <xform weight="0.22" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.22" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>
+<flame time="128" palette="41" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="2956 5242">
+   <xform weight="0.872" color="0" linear="0.79" sinusoidal="0.19" fisheye="0.02" coefs="-0.930372 0.157143 -0.229908 -0.856556 0.0744309 0.250807"/>
+   <xform weight="0.25" color="0.333333" swirl="0.58" hyperbolic="0.42" coefs="0.271717 -0.458192 -0.458192 -0.271717 0.215985 0.845267"/>
+   <xform weight="0.064" color="0.666667" sinusoidal="0.98" fisheye="0.02" coefs="3.45242 3.78067 2.3026 7.51419 1.06963e+15 -1.74016e+15"/>
+   <xform weight="0.25" color="1" sinusoidal="0.99" hyperbolic="0.01" coefs="0.338864 0.753105 -0.753105 0.338864 -0.931755 0.850207"/>
+</flame>

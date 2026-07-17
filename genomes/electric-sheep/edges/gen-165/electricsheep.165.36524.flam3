@@ -1,0 +1,16 @@
+<flame time="0" palette="6" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.thechisa.com" nick="TheChisa">
+   <xform weight="0.528" color="0" horseshoe="0.79" popcorn="0.21" coefs="0.366076 -0.941039 0.81139 0.075368 -0.103362 -0.711908"/>
+   <xform weight="0.472" color="1" swirl="0.37" horseshoe="0.63" coefs="0.82354 -0.17279 0.17279 0.82354 0.918144 -0.031567"/>
+</flame>
+<flame time="128" palette="36" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://aurell.webcindario.com" nick="AURELL">
+   <xform weight="0.142" color="0" sinusoidal="0.25" polar="0.44" heart="0.04" spiral="0.04" julia="0.1" fisheye="0.14" coefs="0.746448 0.001866 0.633979 -0.180476 0.621909 0.235541"/>
+   <xform weight="0.142" color="0.38" sinusoidal="0.31" polar="0.44" heart="0.04" julia="0.08" fisheye="0.14" coefs="-0.600938 0.115878 0.044109 0.053961 0.104784 -0.128674"/>
+   <xform weight="0.082" color="0.4" sinusoidal="0.25" polar="0.44" heart="0.04" ex="0.13" waves="0.01" fisheye="0.14" coefs="0.437131 0.269823 0.054507 0.355127 -0.559856 -0.410007"/>
+   <xform weight="0.082" color="0.58" sinusoidal="0.25" spherical="0.03" polar="0.44" heart="0.04" waves="0.11" fisheye="0.14" coefs="0.124542 0.291468 -0.123407 -0.038395 -0.392108 0.948561"/>
+   <xform weight="0.092" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.092" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.092" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.092" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.092" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.092" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>

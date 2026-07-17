@@ -1,0 +1,12 @@
+<flame time="0" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="3465 5349">
+   <xform weight="0.93" color="0" horseshoe="0.77" coefs="-0.651708 -0.782858 -0.803027 0.468247 -0.386816 -0.465306"/>
+   <xform weight="0.885" color="0.5" symmetry="1" linear="1" coefs="0.975213 -0.22127 0.22127 0.975213 0.055655 0.175194"/>
+   <xform weight="0.035" color="1" linear="0.01" sinusoidal="0.98" bent="0.01" coefs="0.312112 -0.380038 -0.589358 0.368363 -0.037398 0.705322"/>
+</flame>
+<flame time="128" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.lunacie.com" nick="lunacie">
+   <xform weight="0.2" color="0" symmetry="1" spherical="0.88" polar="0.01" spiral="0.1" ex="0.12" waves="0.1" coefs="0.599128 -0.495388 0.495395 0.599116 0.55978 0.226204"/>
+   <xform weight="0.2" color="0.25" symmetry="1" spherical="1" horseshoe="1" spiral="0.91" ex="0.09" coefs="-0.456074 0.567572 -0.567572 -0.456074 -0.243785 -0.961768"/>
+   <xform weight="0.2" color="0.5" symmetry="1" spiral="0.48" waves="0.52" coefs="0.067085 0.553342 -0.474868 1.54739 0.565076 0.211557"/>
+   <xform weight="0.2" color="0.75" symmetry="1" linear="0.74" spiral="0.5" waves="0.26" coefs="-0.069886 0.916201 -0.207978 0.258658 0.163366 0.677581"/>
+   <xform weight="0.2" color="1" symmetry="1" handkerchief="0.79" spiral="2" fisheye="0.21" coefs="0.209411 0.156797 -0.156797 0.209411 -0.743769 -0.621512"/>
+</flame>

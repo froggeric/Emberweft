@@ -1,0 +1,14 @@
+<flame time="0" palette="43" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.635014" parents="13487 13767">
+   <xform weight="0.181068" color="0" symmetry="0.0135515" horseshoe="0.763252" diamond="0.19729" waves="0.236748" coefs="-0.138799 0.380611 0.366462 0.128419 -0.277276 -0.402975"/>
+   <xform weight="0.0770327" color="0.25" linear="0.85821" horseshoe="0.0135515" hyperbolic="0.128238" diamond="0.443902" waves="0.118374" coefs="-0.26136 -0.0761983 0.0761983 -0.26136 1.1128 -1.34876"/>
+   <xform weight="0.249661" color="0.5" symmetry="0.986449" linear="0.986449" horseshoe="0.0135515" coefs="-0.983064 -0.00117393 0.00117393 0.989833 -0.00657503 0.00186137"/>
+   <xform weight="0.246612" color="0.75" symmetry="0.986449" linear="1" coefs="-0.479673 0.854289 -0.854289 -0.479673 0 0"/>
+   <xform weight="0.246612" color="1" symmetry="0.986449" linear="1" coefs="-0.479673 -0.854289 0.854289 -0.479673 0 0"/>
+</flame>
+<flame time="128" palette="63" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.708633" parents="13553 13487">
+   <xform weight="0.209366" color="0" horseshoe="0.598483" spiral="0.04888" diamond="0.157496" waves="0.188995" fisheye="0.00212522" coefs="-0.347204 0.69482 -0.093081 -0.351502 -0.403778 -0.344984"/>
+   <xform weight="0.165322" color="0.25" linear="0.897628" sinusoidal="0.04888" horseshoe="0.00425044" hyperbolic="0.102372" diamond="0.354365" waves="0.0944974" coefs="-0.394428 -0.11993 0.000741294 -0.0682038 0.975312 -1.0109"/>
+   <xform weight="0.267639" color="0.5" symmetry="0.787478" linear="0.787478" swirl="0.0382539" polar="0.0148765" coefs="-0.993868 1.23666 -0.545429 0.325433 0.192812 0.0629523"/>
+   <xform weight="0.19687" color="0.75" symmetry="0.787478" linear="1" coefs="-0.181217 0.681976 -0.681976 -0.181217 0 0"/>
+   <xform weight="0.19687" color="1" symmetry="0.787478" linear="1" coefs="-0.181217 -0.681976 0.681976 -0.181217 0 0"/>
+</flame>

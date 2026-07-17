@@ -1,0 +1,11 @@
+<flame time="0" palette="67" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="HilltopDesign.Com">
+   <xform weight="0.26" color="0" spherical="1" coefs="0.118748 0.462059 -0.560604 0.286048 -0.51 0.59"/>
+   <xform weight="0.13" color="0.5" horseshoe="1" coefs="0.055918 -0.484431 0.271401 0.368838 0.07 0.97"/>
+   <xform weight="0.61" color="1" linear="1" coefs="0.254379 0.635445 -0.722437 0.405814 1.08 -0.37"/>
+</flame>
+<flame time="128" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="20798">
+   <symmetry kind="-2"/>
+   <xform weight="0.132" color="0.2" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" julia="0.22" coefs="-0.0309152 0.0722656 -1.32714 0.226467 0.555141 0.0670376"/>
+   <xform weight="0.937" color="0.4" linear="0.97" spherical="0.03" coefs="0.226445 -0.918813 0.893243 0.22751 0.56003 0.466023"/>
+   <xform weight="0.00348828" color="0.8" symmetry="0.0149498" linear="1" coefs="0.466723 0.0283483 -0.023802 0.440856 0.230342 0.00544122"/>
+</flame>

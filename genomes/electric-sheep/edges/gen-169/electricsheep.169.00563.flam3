@@ -1,0 +1,13 @@
+<flame time="0" palette="83" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.249447" >
+   <xform weight="0.2" color="0.5" horseshoe="1" coefs="0.67765 0.47037 0.728853 -0.0666876 0.757417 0.973049"/>
+   <xform weight="0.2" color="0.25" hyperbolic="1" coefs="0.211846 -0.247807 0.891837 -0.461064 0.290031 -0.096449"/>
+   <xform weight="0.2" color="1" bent="1" coefs="-0.320145 -0.301175 0.940089 0.374115 -0.645938 -0.128506"/>
+   <xform weight="0.2" color="0" spherical="1" coefs="-0.30574 0.655238 -0.0685953 -0.999937 0.0206755 -0.985943"/>
+   <xform weight="0.2" color="0.75" sinusoidal="1" coefs="-0.858202 -0.264789 0.361294 -0.613722 -0.1602 0.0151447"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=KITCHAOS" nick="Kit Chaos">
+   <xform weight="0.256" color="0" linear="0.75" horseshoe="0.12" handkerchief="0.06" bent="0.08" coefs="0.29618 -0.344066 -0.439434 -0.359268 -0.513758 0.26251"/>
+   <xform weight="0.256" color="0.46" linear="0.75" spherical="0.01" hyperbolic="0.05" bent="0.08" waves="0.12" coefs="0.01888 1.57222 -0.013328 -1.40174 0.153717 0.741898"/>
+   <xform weight="0.244" color="0" symmetry="1" linear="1" coefs="0.845723 -0.307818 0.307818 0.845723 0 0"/>
+   <xform weight="0.244" color="0" symmetry="1" linear="1" coefs="0.612836 -0.51423 0.51423 0.612836 0 0"/>
+</flame>

@@ -1,0 +1,20 @@
+<flame time="0" palette="17" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.hilltopdesign.com" nick="HilltopDesign.com">
+   <xform weight="0.03" color="0" disc="0.42" waves="0.58" coefs="0.09527 -0.265604 -0.373464 -0.502793 -0.476707 -0.270279"/>
+   <xform weight="0.03" color="0.09" polar="0.21" fisheye="0.79" coefs="0.167229 -0.15162 -0.052081 -0.277564 -0.231086 0.211237"/>
+   <xform weight="0.03" color="0.18" hyperbolic="0.22" ex="0.78" coefs="-0.41285 0.057452 -0.024936 -0.364074 0.18952 0.129392"/>
+   <xform weight="0.09" color="0.27" symmetry="1" linear="1" coefs="-0.99 0 0 0.99 0 0"/>
+   <xform weight="0.09" color="0.36" symmetry="1" linear="1" coefs="-0.99 0 0 -0.99 0 0"/>
+   <xform weight="0.269" color="0.45" symmetry="1" linear="1" coefs="-0.99 0 0 0.99 0 0"/>
+   <xform weight="0.077" color="0.55" symmetry="1" linear="1" coefs="0.99 0 0 0.99 0 0"/>
+   <xform weight="0.077" color="0.64" symmetry="1" linear="1" coefs="0.989998 -0.001728 0.001728 0.989998 0 0"/>
+   <xform weight="0.077" color="0.73" symmetry="1" linear="1" coefs="0.989994 -0.003456 0.003456 0.989994 0 0"/>
+   <xform weight="0.077" color="0.82" symmetry="1" linear="1" coefs="0.989986 -0.005184 0.005184 0.989986 0 0"/>
+   <xform weight="0.077" color="0.91" symmetry="1" linear="1" coefs="0.99 0 0 0.99 0 0"/>
+   <xform weight="0.077" color="1" symmetry="1" linear="1" coefs="0.99 0 0 0.99 0 0"/>
+</flame>
+<flame time="128" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="20798">
+   <symmetry kind="-2"/>
+   <xform weight="0.132" color="0.2" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" julia="0.22" coefs="-0.0309152 0.0722656 -1.32714 0.226467 0.555141 0.0670376"/>
+   <xform weight="0.937" color="0.4" linear="0.97" spherical="0.03" coefs="0.226445 -0.918813 0.893243 0.22751 0.56003 0.466023"/>
+   <xform weight="0.00348828" color="0.8" symmetry="0.0149498" linear="1" coefs="0.466723 0.0283483 -0.023802 0.440856 0.230342 0.00544122"/>
+</flame>

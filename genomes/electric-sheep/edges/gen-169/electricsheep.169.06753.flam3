@@ -1,0 +1,12 @@
+<flame time="0" palette="47" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.5" url="http://v2d5.sheepserver.net/cgi/status.cgi" nick="Deltaway">
+   <xform weight="0.078" color="0.5" heart="0.63" fisheye="0.37" coefs="0.851296 -0.180516 0.502245 -0.143368 0.49446 0.039576"/>
+   <xform weight="0.231" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.231" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.231" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.231" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 -0.045608"/>
+</flame>
+<flame time="128" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="3170">
+   <symmetry kind="3"/>
+   <xform weight="0.151" color="0.666667" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" julia="0.22" coefs="-0.0946529 -0.0376523 -1.38789 0.265068 0.625733 0.0584527"/>
+   <xform weight="0.333" color="1" sinusoidal="1" coefs="-0.306509 0.196258 -0.196258 -0.306509 -0.613968 0.703254"/>
+</flame>

@@ -1,0 +1,9 @@
+<flame time="0" palette="38" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.phidelity.com" nick="phidelity">
+   <xform weight="0.115" color="1" swirl="0.77" disc="0.64" waves="0.29" coefs="0.212544 -0.070928 -0.700533 0.128408 0.763037 -0.644023"/>
+   <xform weight="0.885" color="0" symmetry="1" linear="1" coefs="0.975213 -0.22127 0.22127 0.975213 0.055655 0.175194"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="3030 3560">
+   <symmetry kind="3"/>
+   <xform weight="0.938" color="0" symmetry="0.87" linear="0.01" spherical="0.98" horseshoe="0.01" coefs="1.27828 -0.227402 -0.359705 -1.1967 0.011649 0.330722"/>
+   <xform weight="0.049" color="1" polar="0.11" hyperbolic="0.61" bent="0.16" coefs="0.723994 -1.42941 -0.556625 0.711553 0.385985 -0.273701"/>
+</flame>

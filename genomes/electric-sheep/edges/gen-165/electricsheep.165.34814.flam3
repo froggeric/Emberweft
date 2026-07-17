@@ -1,0 +1,16 @@
+<flame time="0" palette="1" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.45" url="http://www.hallucinaut.com" nick="Hallucinaut">
+   <xform weight="0.167" color="0.77" linear="0.67" sinusoidal="0.33" coefs="-0.367754 0.833636 -0.833636 -0.367754 -0.901282 -0.352254"/>
+   <xform weight="0.167" color="0.44" linear="1" coefs="-0.149945 0.143041 -0.143041 -0.149945 -0.662686 -0.025809"/>
+   <xform weight="0.333" color="0.05" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.333" color="0.11" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>
+<flame time="128" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.514522" parents="33694 34630">
+   <xform weight="0.125303" color="0" sinusoidal="0.744855" handkerchief="0.12137" heart="0.133776" coefs="-0.786221 -0.311498 0.261828 -0.412273 0.262952 -0.0995232"/>
+   <xform weight="0.302187" color="0.142857" linear="0.378673" swirl="0.106805" hyperbolic="0.267551" waves="0.246971" coefs="-0.303186 -0.0465047 0.0870469 -0.32765 -0.351217 -0.52845"/>
+   <xform weight="0.0857136" color="0.285714" symmetry="0.514522" linear="0.514522" sinusoidal="0.364109" handkerchief="0.12137" coefs="0.526698 0.0421572 -0.653907 0.118451 0.652036 -0.0822793"/>
+   <xform weight="0.0857136" color="0.428571" symmetry="0.514522" linear="0.514522" sinusoidal="0.364109" handkerchief="0.12137" coefs="-0.502975 0.423653 -0.228079 0.160828 0.409143 0.372648"/>
+   <xform weight="0.154651" color="0.571429" symmetry="1" linear="1" coefs="-0.70388 0.639475 -0.639475 -0.70388 0 0"/>
+   <xform weight="0.154651" color="0.714286" symmetry="1" linear="1" coefs="-0.70388 -0.639475 0.639475 -0.70388 0 0"/>
+   <xform weight="0.0735766" color="0.857143" symmetry="0.514522" linear="1" coefs="0.370986 -0.501622 0.501622 0.370986 0 0"/>
+   <xform weight="0.0735766" color="1" symmetry="0.514522" linear="1" coefs="0.806277 -0.402269 0.402269 0.806277 0 0"/>
+</flame>

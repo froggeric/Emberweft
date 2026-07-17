@@ -1,0 +1,12 @@
+<flame time="0" palette="37" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="25032 27791">
+   <xform weight="0.25" color="0" spherical="0.48" handkerchief="0.52" coefs="-0.518678 -0.538931 0.523006 -0.511104 -0.728226 0.728901"/>
+   <xform weight="0.25" color="0.5" linear="1" coefs="-0.338986 -0.147846 0.147846 -0.338986 -0.07213 -0.801111"/>
+   <xform weight="0.5" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://fractalgarden.deviantart.com" nick="Mint">
+   <xform weight="0.249" color="0.45" linear="0.11" swirl="0.02" waves="0.86" coefs="0.336894 -0.266912 0.304894 0.266575 -0.548268 -0.557964"/>
+   <xform weight="0.249" color="0.17" sinusoidal="0.06" waves="0.95" coefs="-0.110987 0.505068 -0.055293 -0.261263 -0.296507 -0.021888"/>
+   <xform weight="0.275" color="0.45" symmetry="1" linear="0.87" horseshoe="0.06" fisheye="0.07" coefs="0.924169 -0.381983 0.381983 0.924169 -0.087892 0.046432"/>
+   <xform weight="0.011" color="0.08" linear="0.32" waves="0.68" coefs="0.153253 -0.067015 0.09765 0.493607 0.009779 0.116606"/>
+   <xform weight="0.429" color="0.36" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>

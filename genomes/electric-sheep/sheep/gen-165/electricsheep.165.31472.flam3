@@ -1,0 +1,5 @@
+<flame time="0" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.632464" >
+   <xform weight="0.333333" color="1" fisheye="1" coefs="-0.376931 0.753609 0.591463 0.918545 -0.370893 0.336485"/>
+   <xform weight="0.333333" color="0" spherical="1" coefs="-0.333573 -0.382173 0.78716 0.96452 -0.233071 0.129662"/>
+   <xform weight="0.333333" color="0.5" horseshoe="1" coefs="-0.649229 0.537104 -0.0473524 -0.0012565 -0.150567 0.392828"/>
+</flame>

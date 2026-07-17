@@ -1,0 +1,15 @@
+<flame time="0" palette="69" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.934684" >
+   <xform weight="0.25" color="0.666667" spiral="1" coefs="0.791375 -0.31119 0.386813 -0.2017 -0.316114 -0.808657"/>
+   <xform weight="0.25" color="0.333333" spiral="1" coefs="-0.097825 -0.942667 0.287348 0.873197 -0.297213 0.177374"/>
+   <xform weight="0.25" color="0" spiral="1" coefs="-0.101142 0.33615 -0.678061 -0.449252 -0.224104 -0.983459"/>
+   <xform weight="0.25" color="1" spiral="1" coefs="0.683269 0.261989 -0.279386 0.826856 -0.414373 0.228886"/>
+</flame>
+<flame time="128" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.106155" parents="3310 6473">
+   <xform weight="0.908876" color="0" symmetry="0.869965" linear="0.884288" ex="0.115712" coefs="-0.670772 -0.526988 0.395757 -0.704404 -0.0469644 -0.071434"/>
+   <xform weight="0.871984" color="0.166667" symmetry="0.84132" linear="0.877344" spherical="0.115712" handkerchief="0.00217009" bent="0.0047742" coefs="-0.731954 0.556567 -0.392337 -0.62766 -0.0317309 -0.0952311"/>
+   <xform weight="0.871984" color="0.333333" symmetry="0.840886" linear="0.877344" spherical="0.115712" handkerchief="0.00217009" bent="0.0047742" coefs="0.354334 0.738189 -0.804615 0.22348 -0.13213 0.134007"/>
+   <xform weight="0.869814" color="0.5" symmetry="0.840886" linear="0.884288" popcorn="0.115712" coefs="0.342746 -0.904259 0.910308 0.393475 0.100495 -0.0915745"/>
+   <xform weight="0.073998" color="0.666667" linear="0.159114" spherical="0.336354" bent="0.504532" coefs="0.685137 0.139392 -5.43924 0.600966 4.47683 -0.592283"/>
+   <xform weight="0.0916566" color="0.833333" linear="0.159114" sinusoidal="0.0672709" swirl="0.0504532" handkerchief="0.0672709" spiral="0.470896" hyperbolic="0.184995" coefs="-2.69283 -0.571812 -0.147857 0.0659843 -0.619851 3.32059"/>
+   <xform weight="0.302719" color="1" linear="0.815005" sinusoidal="0.0672709" swirl="0.0504532" handkerchief="0.0672709" coefs="0.867162 -0.00514202 -0.177248 0.856144 -0.306729 -0.00497552"/>
+</flame>

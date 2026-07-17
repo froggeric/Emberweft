@@ -1,0 +1,10 @@
+<flame time="0" palette="15" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.apophysis.org/" nick="Wub">
+   <xform weight="0.497" color="0" spherical="0.01" horseshoe="0.99" coefs="-0.669907 -0.528473 0.528473 -0.669907 0.294999 0.269335"/>
+   <xform weight="0.503" color="1" ex="0.28" bent="0.72" coefs="-0.540263 0.675706 -0.675706 -0.540263 -0.797229 0.716585"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.renderosity.com/homepage.ez?Who=etomchek" nick="etomchek">
+   <xform weight="0.25" color="0" linear="0.29" sinusoidal="0.25" spherical="0.46" disc="0.32" coefs="-0.523951 -0.388018 0.197123 -0.202667 0.420717 0.135236"/>
+   <xform weight="0.25" color="0.333333" linear="0.19" sinusoidal="0.25" julia="0.1" waves="0.47" coefs="-0.273508 -0.265259 0.154052 0.263474 -0.498475 0.833135"/>
+   <xform weight="0.25" color="0.666667" symmetry="1" linear="1" coefs="0.845723 -0.307818 0.307818 0.845723 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0.612836 -0.51423 0.51423 0.612836 0 0"/>
+</flame>

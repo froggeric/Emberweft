@@ -1,0 +1,16 @@
+<flame time="0" palette="65" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="11805 2908">
+   <xform weight="0.134" color="0" sinusoidal="0.06" polar="0.14" julia="0.25" waves="0.37" fisheye="0.19" coefs="0.066687 -0.146999 -0.120519 -0.300669 0.177272 1.01626"/>
+   <xform weight="0.276" color="0.125" sinusoidal="0.06" swirl="0.17" polar="0.29" handkerchief="0.22" bent="0.25" waves="0.06" popcorn="0.04" coefs="0.543535 0.149536 0.640887 -0.571352 -0.373364 -0.230376"/>
+   <xform weight="0.037" color="0.25" polar="0.14" spiral="0.08" hyperbolic="0.34" julia="0.25" fisheye="0.19" coefs="0.122584 0.539521 0.009319 0.078132 -1.1445 -0.478684"/>
+   <xform weight="0.243" color="0.375" symmetry="1" linear="1" coefs="0.612836 -0.51423 0.51423 0.612836 0 0"/>
+   <xform weight="0.051" color="0.5" linear="0.15" polar="0.14" julia="0.25" bent="0.27" fisheye="0.19" coefs="0.327972 0.637789 0.01353 0.141594 -0.124057 -0.449468"/>
+   <xform weight="0.177" color="0.75" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.177" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.09" url="http://www.coppercat.net" nick="coppercat">
+   <xform weight="0.323" color="0" sinusoidal="0.23" spherical="0.27" disc="0.5" coefs="0.26717 -0.320512 0.250176 0.533195 -0.317451 -0.861801"/>
+   <xform weight="0.323" color="0.48" sinusoidal="0.23" swirl="0.64" disc="0.08" hyperbolic="0.04" coefs="-0.09873 -0.625212 0.302994 -0.087867 0.688715 -0.548765"/>
+   <xform weight="0.323" color="0.96" sinusoidal="0.51" swirl="0.41" disc="0.08" coefs="0.217163 -0.437353 0.305885 -0.091592 -0.94153 0.242158"/>
+   <xform weight="0.016" color="0.06" linear="0.92" disc="0.08" coefs="-0.870785 -0.100254 0.066415 -0.837341 -0.042431 0.126953"/>
+   <xform weight="0.016" color="0.08" linear="0.92" disc="0.08" coefs="-0.927581 -0.111154 0.120051 -0.982367 -0.064953 -0.112652"/>
+</flame>

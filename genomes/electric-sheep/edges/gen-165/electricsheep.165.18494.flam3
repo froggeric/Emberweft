@@ -1,0 +1,10 @@
+<flame time="0" palette="42" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="v2d5.sheepserver.net" nick="GGG">
+   <xform weight="0.5" color="0.34" sinusoidal="0.75" horseshoe="0.25" coefs="0.570127 0.450277 -0.543053 0.71175 0.196858 -0.200954"/>
+   <xform weight="0.5" color="1" horseshoe="0.63" handkerchief="0.27" coefs="-0.358334 -0.361031 0.470796 -0.402305 -0.098896 -0.39633"/>
+</flame>
+<flame time="128" palette="79" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.287609" >
+   <symmetry kind="-1"/>
+   <xform weight="0.333333" color="1" swirl="1" coefs="-0.287744 -0.914523 -0.687816 0.0548891 -0.884864 -0.262369"/>
+   <xform weight="0.333333" color="0.5" swirl="1" coefs="-0.498379 -0.311787 0.133002 0.189296 -0.681015 0.488143"/>
+   <xform weight="0.333333" color="0" swirl="1" coefs="0.310369 -0.94882 0.719375 0.252852 0.723597 0.432968"/>
+</flame>

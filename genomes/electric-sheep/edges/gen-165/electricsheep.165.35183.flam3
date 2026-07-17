@@ -1,0 +1,19 @@
+<flame time="0" palette="80" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.595659" >
+   <xform weight="0.333333" color="0" spiral="1" coefs="-0.216064 -0.0645409 0.198665 -0.815034 -0.0121162 0.834216"/>
+   <xform weight="0.333333" color="1" spiral="1" coefs="0.3177 -0.11862 -0.0412559 0.994998 -0.89093 0.553945"/>
+   <xform weight="0.333333" color="0.5" spiral="1" coefs="0.172751 0.85216 -0.650305 0.255034 0.932319 -0.637585"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Burger">
+   <xform weight="0.045" color="0" swirl="0.67" horseshoe="0.33" coefs="0.424446 0.576248 -0.576248 0.424446 -0.3438 0.443446"/>
+   <xform weight="0.045" color="1" horseshoe="0.06" bent="0.94" coefs="0.823088 0.068372 0.037839 0.858577 -0.209347 -0.477727"/>
+   <xform weight="0.091" color="0" symmetry="1" linear="1" coefs="0.92388 0.382683 -0.382683 0.92388 0 0"/>
+   <xform weight="0.091" color="0.07" symmetry="1" linear="1" coefs="0.707107 0.707107 -0.707107 0.707107 0 0"/>
+   <xform weight="0.091" color="0.14" symmetry="1" linear="1" coefs="0.382683 0.92388 -0.92388 0.382683 0 0"/>
+   <xform weight="0.091" color="0.21" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.091" color="0.29" symmetry="1" linear="1" coefs="-0.382683 0.92388 -0.92388 -0.382683 0 0"/>
+   <xform weight="0.091" color="0.36" symmetry="1" linear="1" coefs="-0.707107 0.707107 -0.707107 -0.707107 0 0"/>
+   <xform weight="0.091" color="0.43" symmetry="1" linear="1" coefs="-0.92388 0.382683 -0.382683 -0.92388 0 0"/>
+   <xform weight="0.091" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.091" color="0.57" symmetry="1" linear="1" coefs="-0.92388 -0.382683 0.382683 -0.92388 0 0"/>
+   <xform weight="0.091" color="0.64" symmetry="1" linear="1" coefs="-0.707107 -0.707107 0.707107 -0.707107 0 0"/>
+</flame>

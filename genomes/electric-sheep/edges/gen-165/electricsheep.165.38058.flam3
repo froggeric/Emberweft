@@ -1,0 +1,18 @@
+<flame time="0" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="37764 16276">
+   <xform weight="0.083" color="0" ex="0.74" waves="0.26" coefs="0.415035 -0.532018 -0.01406 0.001526 -0.516172 -0.553827"/>
+   <xform weight="0.089" color="0.111111" sinusoidal="0.03" polar="0.53" heart="0.19" diamond="0.25" coefs="0.327623 -0.076895 0.351731 0.004259 0.092394 0.109743"/>
+   <xform weight="0.083" color="0.222222" linear="0.03" waves="0.97" coefs="-0.458403 0.484164 -0.484164 -0.458403 -0.812428 0.325877"/>
+   <xform weight="0.105" color="0.333333" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.334" color="0.444444" symmetry="1" linear="1" coefs="-0.220003 0.975499 -0.975499 -0.220003 0 0"/>
+   <xform weight="0.105" color="0.555556" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.105" color="0.777778" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.105" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>
+<flame time="128" palette="31" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="1" parents="36691 14729">
+   <xform weight="0.368" color="0" disc="1" coefs="0.4812 -0.619492 0.63432 0.496368 0.631946 0.168547"/>
+   <xform weight="1" color="0.142857" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.368" color="0.285714" disc="1" coefs="-0.4812 0.619492 -0.63432 -0.496368 -0.631946 -0.168547"/>
+   <xform weight="0.051" color="0.428571" julia="1" coefs="-0.151811 0.293373 0.290688 0.001272 -0.995912 -0.113989"/>
+   <xform weight="0.043" color="0.714286" linear="1" coefs="-0.008356 0.599943 -0.599943 -0.008356 0 0"/>
+   <xform weight="0.033" color="1" linear="1" coefs="-0.261378 0.302804 -0.302804 -0.261378 0 0"/>
+</flame>

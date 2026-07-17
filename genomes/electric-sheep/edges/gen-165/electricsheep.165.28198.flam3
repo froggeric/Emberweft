@@ -1,0 +1,17 @@
+<flame time="0" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="27866">
+   <xform weight="0.166" color="0" linear="0.14" sinusoidal="0.32" handkerchief="0.25" diamond="0.29" coefs="-0.359844 0.19992 0.231561 0.173742 0.803255 0.340842"/>
+   <xform weight="0.166" color="0.25" linear="0.14" horseshoe="0.11" handkerchief="0.25" heart="0.32" diamond="0.19" coefs="0.0370821 -0.0663151 -0.0332886 -0.264143 -0.0262288 0.906933"/>
+   <xform weight="0.241" color="0.5" symmetry="1" linear="1" coefs="0.0387771 0.93553 -1.08308 -0.0898261 -0.165965 0.210247"/>
+   <xform weight="0.241" color="0.75" symmetry="1" linear="1" coefs="-1 0 -0.000421 -0.992892 0.000421 -0.007108"/>
+   <xform weight="0.241" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.86" url="http://www.hilltopdesign.com" nick="HilltopDesign.Com">
+   <xform weight="0.233" color="0" linear="0.35" spherical="0.31" horseshoe="0.11" fisheye="0.23" coefs="0.229601 0.275369 -0.132099 0.012778 -0.667427 0.915568"/>
+   <xform weight="0.221" color="0.35" linear="0.44" spherical="0.13" diamond="0.2" fisheye="0.23" coefs="0.089222 0.30398 0.168629 0.209863 0.029217 -0.296247"/>
+   <xform weight="0.217" color="0.29" symmetry="1" linear="1" coefs="0 1.06733 -1.06733 0 0 0"/>
+   <xform weight="0.217" color="0.43" symmetry="1" linear="1" coefs="-1.06733 0 0 -1.06733 0 0"/>
+   <xform weight="0.217" color="0.57" symmetry="1" linear="1" coefs="0 -1.06733 1.06733 0 0 0"/>
+   <xform weight="0.029" color="0.53" linear="0.71" spherical="0.13" fisheye="0.16" coefs="0.177146 0.177517 -0.377861 -0.091237 0.176833 0.568936"/>
+   <xform weight="0.014" color="0.65" linear="0.71" spherical="0.13" fisheye="0.16" coefs="0.195621 -0.504289 -0.189329 0.350114 0.163243 0.676749"/>
+   <xform weight="0.014" color="0.75" linear="0.71" spherical="0.13" fisheye="0.16" coefs="0.261491 -0.019006 -0.121397 -0.20667 0.046244 0.88314"/>
+</flame>

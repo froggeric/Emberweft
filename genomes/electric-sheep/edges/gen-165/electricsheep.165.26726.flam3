@@ -1,0 +1,17 @@
+<flame time="0" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=KITCHAOS" nick="KitChaos">
+   <xform weight="0.054" color="0.01" linear="0.25" sinusoidal="0.5" polar="0.25" coefs="-0.850312 0.547939 -0.080326 -0.215647 -0.973455 1.84922"/>
+   <xform weight="0.054" color="0.22" linear="0.25" sinusoidal="0.5" polar="0.25" coefs="-0.60707 0.22988 -0.031704 0.432927 -0.316201 0.068255"/>
+   <xform weight="0.098" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.098" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.098" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.098" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+   <xform weight="0.5" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="26038 26556">
+   <xform weight="0.0672932" color="0" linear="0.163618" spherical="0.0908989" swirl="0.190888" horseshoe="0.272697" hyperbolic="0.0182023" diamond="0.0910113" fisheye="0.136348" coefs="0.350527 0.447992 -0.507163 0.304265 0.837132 -0.0812334"/>
+   <xform weight="0.680917" color="0.2" symmetry="0.0910113" linear="0.0910113" sinusoidal="0.78173" waves="0.127258" coefs="0.628614 -1.09962 1.06216 0.636544 -4.97456 -3.18077"/>
+   <xform weight="0.163618" color="0.4" symmetry="0.908989" linear="1" coefs="-0.817977 0 0 -0.817977 0 0"/>
+   <xform weight="0.0445404" color="0.6" linear="0.400068" swirl="0.190888" horseshoe="0.272697" fisheye="0.136348" coefs="0.118057 0.647499 -0.0728318 0.151241 -0.627209 0.17678"/>
+   <xform weight="0.0272697" color="0.8" linear="0.400068" swirl="0.190888" horseshoe="0.272697" fisheye="0.136348" coefs="0.00539187 0.120429 -0.0186797 -0.0797323 -0.207312 -0.0411208"/>
+   <xform weight="0.0163618" color="1" linear="0.727303" horseshoe="0.272697" coefs="0.318498 0.0693286 0.192948 0.0353421 0.934168 0.25837"/>
+</flame>

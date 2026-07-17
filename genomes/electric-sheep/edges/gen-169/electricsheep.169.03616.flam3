@@ -1,0 +1,15 @@
+<flame time="0" palette="2" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.929066" parents="2688">
+   <xform weight="0.25" color="0" heart="1" coefs="-0.7407 0.670314 0.251536 0.486984 0.892252 0.160464"/>
+   <xform weight="0.25" color="0.333333" heart="1" coefs="-0.0230301 0.86832 0.507857 0.051267 -0.988847 -0.552659"/>
+   <xform weight="0.25" color="0.666667" spherical="1" coefs="0.876713 0.234977 -0.521286 -0.00722763 0.347888 0.477807"/>
+   <xform weight="0.25" color="1" diamond="1" coefs="0.606191 0.672606 -0.776904 -0.182204 -0.663473 -0.851838"/>
+</flame>
+<flame time="128" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.97" url="http://www.renderosity.com/gallery.ez?ByArtist=Yes&amp;Artist=stotty" nick="Stotty">
+   <xform weight="0.161" color="0" linear="0.35" swirl="0.03" heart="0.29" ex="0.33" coefs="0.276791 0.052607 0.26736 0.330599 0.915611 0.476277"/>
+   <xform weight="0.161" color="0.34" linear="0.35" handkerchief="0.13" heart="0.2" ex="0.33" coefs="0.016967 0.217544 -0.074776 0.268604 -1.1333 -0.219627"/>
+   <xform weight="0.157" color="0.68" linear="0.35" ex="0.42" julia="0.23" coefs="-0.484772 0.288003 0.328468 -0.219193 0.377333 0.173554"/>
+   <xform weight="0.186" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.186" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.186" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.186" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>

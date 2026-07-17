@@ -1,0 +1,12 @@
+<flame time="0" palette="32" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="draves.org" nick="spot">
+   <xform weight="0.25" color="0" spherical="1" coefs="-0.711748 -0.783595 -0.309515 0.180791 0.896453 -0.940211"/>
+   <xform weight="0.25" color="0" linear="1" coefs="-0.378829 -0.430632 0.76595 -0.386831 0.952109 0.4844"/>
+   <xform weight="0.25" color="1" linear="1" coefs="0.905937 -0.233014 0.724529 0.776418 -0.176526 -0.841368"/>
+   <xform weight="0.25" color="0" linear="1" coefs="-0.203846 -0.995698 0.97812 0.181477 0.631545 -0.206451"/>
+</flame>
+<flame time="128" palette="62" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.645496" >
+   <xform weight="0.25" color="0" popcorn="1" coefs="0.687984 -0.947808 -0.988751 0.837452 -0.0786145 0.612434"/>
+   <xform weight="0.25" color="1" popcorn="1" coefs="0.442418 0.891413 0.068076 -0.574109 -0.565207 0.165519"/>
+   <xform weight="0.25" color="0.333333" popcorn="1" coefs="0.372686 0.748765 0.00963032 0.986916 -0.889378 0.0504524"/>
+   <xform weight="0.25" color="0.666667" popcorn="1" coefs="-0.456827 -0.700291 0.904575 0.008503 0.723016 -0.370269"/>
+</flame>

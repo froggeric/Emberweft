@@ -1,0 +1,12 @@
+<flame time="0" palette="51" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.94" url="http://www.hallucinaut.com" nick="Hallucinaut">
+   <xform weight="0.114" color="0" sinusoidal="0.98" spiral="0.02" coefs="0.337646 -0.559997 -0.219121 -0.366929 2.10385 3.67359"/>
+   <xform weight="0.293" color="0.53" sinusoidal="0.97" spiral="0.03" coefs="-0.108048 -1.03759 0.881098 -0.108506 18.7589 -0.410476"/>
+   <xform weight="0.093" color="0.9" sinusoidal="0.44" spiral="0.56" coefs="0.123369 -0.222784 -0.265544 -0.057419 -1.31249 1.41249"/>
+   <xform weight="0.5" color="0" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+</flame>
+<flame time="128" palette="76" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.165003" >
+   <symmetry kind="-2"/>
+   <xform weight="0.333333" color="1" popcorn="1" coefs="-0.791143 -0.458164 -0.841602 0.781693 -0.686391 0.837672"/>
+   <xform weight="0.333333" color="0" popcorn="1" coefs="-0.0423608 0.569602 -0.0983902 0.915308 -0.392726 0.0649932"/>
+   <xform weight="0.333333" color="0.5" popcorn="1" coefs="0.899655 0.867601 -0.424581 0.095119 0.00308894 -0.842004"/>
+</flame>

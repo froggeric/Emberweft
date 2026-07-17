@@ -1,0 +1,13 @@
+<flame time="0" palette="52" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.69" url="caballera.com" nick="llama">
+   <xform weight="0.379" color="0" sinusoidal="0.01" spherical="0.01" swirl="0.01" spiral="0.98" coefs="0.011617 -0.121807 0.195777 -0.269287 -0.462522 -0.666349"/>
+   <xform weight="0.379" color="0.67" swirl="0.01" polar="0.01" spiral="0.98" fisheye="0.01" coefs="0.190149 0.203298 -0.492687 0.403902 0.178479 1.04024"/>
+   <xform weight="0.163" color="0.47" spherical="0.01" swirl="0.01" spiral="0.98" ex="0.01" coefs="-0.245345 0.087915 0.240705 0.059324 -0.141294 -1.07429"/>
+   <xform weight="0.043" color="0.17" swirl="0.01" handkerchief="0.01" spiral="0.98" fisheye="0.01" coefs="-0.356794 -0.346259 -0.062232 0.282368 0.467694 0.137904"/>
+   <xform weight="0.023" color="0.11" swirl="0.01" spiral="0.98" hyperbolic="0.01" waves="0.01" coefs="0.614575 0.204399 -0.128899 -0.693316 -0.579987 -0.560561"/>
+   <xform weight="0.013" color="0.08" swirl="0.01" spiral="0.98" waves="0.01" fisheye="0.01" coefs="0.629972 0.218911 -0.305422 -0.109218 0.653781 0.484528"/>
+</flame>
+<flame time="128" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.333" color="0" handkerchief="0.38" bent="0.62" coefs="-1.02378 -0.535277 -0.642295 1.15036 0.921282 -0.907384"/>
+   <xform weight="0.333" color="0.5" spherical="0.31" heart="0.69" coefs="0.722213 -0.142528 0.114905 0.718132 -0.966271 0.826987"/>
+   <xform weight="0.333" color="1" sinusoidal="0.87" horseshoe="0.13" coefs="0.462646 0.3144 -0.304596 0.456567 -0.050923 0.659066"/>
+</flame>

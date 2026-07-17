@@ -1,0 +1,14 @@
+<flame time="0" palette="18" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.119411" >
+   <xform weight="0.2" color="0" fisheye="1" coefs="-0.0836976 -0.512186 -0.936394 0.90488 0.361972 0.463455"/>
+   <xform weight="0.2" color="1" waves="1" coefs="0.363375 -0.574177 -0.353871 -0.720323 -0.0863626 -0.290265"/>
+   <xform weight="0.2" color="0.75" sinusoidal="1" coefs="-0.0176704 0.0908967 -0.84771 -0.631897 0.709057 -0.733577"/>
+   <xform weight="0.2" color="0.25" handkerchief="1" coefs="-0.348717 0.994427 -0.173931 -0.351613 -0.0711376 0.0504731"/>
+   <xform weight="0.2" color="0.5" swirl="1" coefs="0.468073 -0.970493 0.759322 -0.242443 0.595111 0.68076"/>
+</flame>
+<flame time="128" palette="46" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://community.webshots.com/user/lilyas" nick="lilyas">
+   <xform weight="0.157" color="0" linear="0.33" swirl="0.14" hyperbolic="0.47" waves="0.06" coefs="-0.461148 -0.364591 0.271248 -0.24222 -0.462826 0.064696"/>
+   <xform weight="0.093" color="1" swirl="0.09" hyperbolic="0.06" ex="0.74" julia="0.11" coefs="-0.169803 0.214225 -0.227148 -0.156734 0.574929 -0.197802"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.25" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>

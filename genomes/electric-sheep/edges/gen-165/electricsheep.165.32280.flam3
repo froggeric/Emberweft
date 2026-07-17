@@ -1,0 +1,15 @@
+<flame time="0" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.358594" parents="31377 30893">
+   <xform weight="0.189717" color="0" linear="0.563328" spherical="0.0896484" horseshoe="0.103992" polar="0.0466172" ex="0.0717187" coefs="0.52618 0.313515 -0.333963 0.536402 -0.0569703 -0.334937"/>
+   <xform weight="0.151005" color="0.142857" linear="0.133586" spherical="0.108891" horseshoe="0.103992" heart="0.0448984" disc="0.352773" julia="0.176969" bent="0.0788906" coefs="-0.134044 0.0207826 -1.04466 0.230353 0.525812 -0.0180296"/>
+   <xform weight="0.449718" color="0.285714" symmetry="1" linear="0.993586" waves="0.00641406" coefs="0.192867 0.0622691 -0.291339 -0.059397 0.0852769 0.358162"/>
+   <xform weight="0.189307" color="0.428571" symmetry="1" linear="1" coefs="-0.288409 0.651708 -0.651708 -0.288409 -0.125508 0.107578"/>
+   <xform weight="0.113621" color="0.571429" symmetry="1" linear="1" coefs="-0.764053 0.336968 -0.336968 0.51876 -0.125508 -0.107578"/>
+   <xform weight="0.0372937" color="0.714286" symmetry="0.358594" linear="1" coefs="0.28826 0.0622691 -0.0622691 0.28826 -0.125508 -0.107578"/>
+   <xform weight="0.0372937" color="0.857143" symmetry="0.358594" linear="1" coefs="0.410907 -0.274699 0.274699 0.410907 0.125508 -0.107578"/>
+   <xform weight="0.0372937" color="1" symmetry="0.358594" linear="1" coefs="0.764053 -0.336968 0.336968 0.764053 0.125508 0.107578"/>
+</flame>
+<flame time="128" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="31999">
+   <xform weight="0.333" color="0" spiral="0.23" fisheye="0.01" coefs="-1.01777 1.8354 -1.89697 -2.29865 -0.876999 0.0109403"/>
+   <xform weight="0.5" color="0.5" linear="1" sinusoidal="0.23" horseshoe="0.02" coefs="-0.767508 -0.280416 -0.280416 0.767508 0.42325 0.318505"/>
+   <xform weight="0.333" color="1" swirl="0.18" polar="0.07" coefs="-0.971145 5.71898 -2.46646 -2.17411 0.907256 0.296216"/>
+</flame>

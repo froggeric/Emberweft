@@ -17,27 +17,74 @@ serve source or time out), and the current `infinidream.ai` API exposes **only
 rendered video (increasingly AI-generated) — no genomes**. The genomes live only
 on the legacy flat-file hosts below, which motivates archiving them now.
 
+## Structure
+
+Genomes are split by kind, since the two render differently:
+
+```
+genomes/electric-sheep/
+  sheep/gen-NNN/*.flam3   # 47,304 single-frame SHEEP (the renderable library; stills)
+  edges/gen-NNN/*.flam3   # 75,743 two-frame EDGES (stored A->B transitions)
+  edges.sqlite            # pair DB: every edge resolved to its two endpoint sheep
+  _malformed/             # 10 empty/invalid files (quarantined)
+  _provenance-earthbound19/
+```
+
+A **sheep** is a single `<flame>` (a still design — its motion is generated on
+the fly by `sheep_loop`, see [transitions.md](../../docs/rendering/transitions.md)).
+An **edge** is two `<flame>`s — a stored A→B transition. An edge is byte-identical
+to its two endpoint sheep (modulo `time`/edits), so Emberweft generates transitions
+**on the fly** and treats the edges only as a curation oracle.
+
 ## Inventory
 
-Organized by generation under `electric-sheep/gen-NNN/`, canonical filenames
-`electricsheep.<gen>.<id>.flam3` preserved.
+| Generation | Era | Sheep | Edges | Source |
+|------------|-----|------:|------:|--------|
+| 165 | historic | 7,316 | 23,217 | scraped best-page |
+| 169 | historic | 5,299 | 16,444 | scraped best-page |
+| 191 | historic | 1,491 | 0 | scraped best-page |
+| 198 | historic | 3,627 | 0 | scraped best-page |
+| 242 | modern | 1,168 | 2,220 | earthbound19 backup (complete) |
+| 243 | modern | 5,127 | 110 | backup + gap-filled |
+| 244 | modern | 6,298 | 14,364 | backup + gap-filled |
+| 245 | modern | 473 | 1,016 | direct from archive |
+| 247 | modern | 7,042 | 8,604 | backup + gap-filled |
+| 248 | **live** | 9,463 | 9,768 | direct from server (still growing) |
+| **Total** | | **47,304** | **75,743** | **~1.6 GB** |
 
-| Generation | Era | Genomes | Source |
-|------------|-----|---------|--------|
-| 165 | historic | 30,499 | scraped best-page (electricsheep.com) |
-| 169 | historic | 21,741 | scraped best-page |
-| 191 | historic | 1,491 | scraped best-page |
-| 198 | historic | 3,627 | scraped best-page |
-| 242 | modern | 3,388 | earthbound19 backup (complete) |
-| 243 | modern | 5,245 | backup (2,269) + 2,976 gap-filled |
-| 244 | modern | 20,527 | backup (17,014) + 3,513 gap-filled |
-| 245 | modern | 1,489 | direct from archive |
-| 247 | modern | 15,646 | backup (11,877) + 3,769 gap-filled |
-| 248 | **live** | 19,231 | direct from server (still growing) |
-| **Total** | | **~122,884** | **~1.6 GB** |
+173 sheep existed only as edge endpoints and were extracted into `sheep/` so the
+library is complete. Run `make fetch-sheep` to refresh (idempotent); `make
+sync-sheep` for the live flock.
 
-Run `make fetch-sheep` to refresh these (idempotent); `make sync-sheep` for the
-live flock.
+## Transition-pairs database (`edges.sqlite`)
+
+`Tools/rebuild_edges_db.py` resolves every edge to its two endpoint sheep (by
+content hash, falling back to name) and writes `edges.sqlite`:
+
+| column | meaning |
+|--------|---------|
+| `edge_gen`, `edge_id` | the edge file's own generation + id |
+| `a_gen`, `a_id`, `b_gen`, `b_id` | the two endpoint sheep |
+| `frames` | frame extent (2nd `time` value) |
+| `resolved` | 1 if both endpoints map to a standalone sheep |
+| `sim_score`, `curated` | **reserved** for future similarity scoring / manual curation |
+
+```sql
+sqlite3 genomes/electric-sheep/edges.sqlite \
+  "SELECT a_id,b_id FROM edge_pairs WHERE edge_gen='244' AND a_id='00980' LIMIT 5;"
+```
+
+All 75,743 edges resolve (0 unresolved). The DB is the efficient, enhanceable
+source for the "good transition pairs" oracle.
+
+### Pair selection (similarity, with exploration)
+
+ES likely picked pairs near-randomly within flocks. Emberweft will pick **on the
+fly by a similarity metric** for visually coherent morphs — but with a guard
+against getting trapped in a small similar cluster: selection must allow
+**exploration** (e.g. ε-greedy / temperature / occasional long-range jumps) so
+playback traverses the full diversity of the library, not just a tight
+neighborhood. The `sim_score`/`curated` columns are where that lands.
 
 ## Sources — three eras, three URL patterns
 
@@ -69,14 +116,15 @@ make sync-sheep                  # NEW genomes only, from the live flock (gen 24
 GEN=248 make sync-sheep
 ```
 
-`fetch-sheep` (`Tools/fetch-sheep-genomes.sh`) is **idempotent** — it skips
-genomes already present, so re-runs only fill gaps and pick up new generations.
-Add a generation by extending `cfg_for`.
+`fetch-sheep` (`Tools/fetch-sheep-genomes.sh`) is **idempotent** — it skips any
+ID already present in `sheep/` or `edges/`, downloads new ones, **classifies by
+flame count** (1→`sheep/`, 2→`edges/`), then rebuilds `edges.sqlite`. Add a
+generation by extending `cfg_for`.
 
 `sync-sheep` (`Tools/sync-live-flock.sh`) is the efficient path for the live
-flock: instead of re-enumerating 0..N every time, it finds the highest local ID,
-binary-searches the server's current max, and fetches **only the new tail**. Cheap
-to run often.
+flock: it finds the highest local ID (across `sheep/`+`edges/`), binary-searches
+the server's current max, fetches **only the new tail**, classifies it, and
+rebuilds the DB. Cheap to run often.
 
 ### Recurring backup
 

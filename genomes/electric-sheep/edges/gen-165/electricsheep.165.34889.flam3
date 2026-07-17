@@ -1,0 +1,13 @@
+<flame time="0" palette="74" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" parents="33694">
+   <xform weight="0.15" color="0" sinusoidal="0.75" handkerchief="0.25" coefs="-0.597503 -0.0597794 0.672575 0.123116 0.829344 -0.375836"/>
+   <xform weight="0.579" color="0.125" linear="0.78" swirl="0.22" coefs="-0.763199 -0.235244 0.315754 -0.85233 -0.103384 -0.244421"/>
+   <xform weight="0.025" color="0.25" sinusoidal="0.75" handkerchief="0.25" coefs="0.487963 -0.80735 -0.535303 -0.406828 1.38096 -0.253806"/>
+   <xform weight="0.025" color="0.5" sinusoidal="0.75" handkerchief="0.25" coefs="-0.800207 -0.160603 0.56345 0.567112 0.842764 0.76759"/>
+   <xform weight="0.167" color="0.75" symmetry="1" linear="1" coefs="-0.495 0.857365 -0.857365 -0.495 0 0"/>
+   <xform weight="0.167" color="1" symmetry="1" linear="1" coefs="-0.495 -0.857365 0.857365 -0.495 0 0"/>
+</flame>
+<flame time="128" palette="2" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://electricsheep.org/v2.5/" nick="Jack">
+   <xform weight="0.357" color="0" polar="1" coefs="0.347798 0.875568 -0.875568 0.347798 0.026149 0.516588"/>
+   <xform weight="0.264" color="0.5" polar="1" coefs="0.062634 -0.422088 0.427477 0.140635 -0.469397 -0.989346"/>
+   <xform weight="0.38" color="1" polar="1" coefs="-0.916648 0.207988 -0.281713 -0.967068 -0.930087 0.475924"/>
+</flame>

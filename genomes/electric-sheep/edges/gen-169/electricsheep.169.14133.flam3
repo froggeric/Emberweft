@@ -1,0 +1,13 @@
+<flame time="0" palette="40" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="www.thebunnysuicides.co.uk" nick="p1er5">
+   <xform weight="0.375" color="0" julia="0.25" bent="0.18" fisheye="0.57" coefs="0.495833 -0.566949 -0.328768 -0.350226 -0.684397 -0.011758"/>
+   <xform weight="0.375" color="0.63" spherical="0.19" julia="0.81" coefs="0.100729 -0.444086 0.198853 0.148147 0.242512 -0.414125"/>
+   <xform weight="0.25" color="0.75" polar="0.37" heart="0.38" julia="0.25" coefs="0.252133 -0.175713 0.696497 0.558657 -0.430522 0.013203"/>
+</flame>
+<flame time="128" palette="28" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0.100248" parents="13327 13547">
+   <xform weight="0.916594" color="0" symmetry="0.899752" linear="1" coefs="-0.851105 0.0265359 -0.0413102 0.963816 0.114112 -0.0187907"/>
+   <xform weight="0.91098" color="0.2" symmetry="0.899752" linear="1" coefs="-0.927211 -0.0335228 -0.0318227 -0.846781 0.0843464 0.0543537"/>
+   <xform weight="0.921907" color="0.4" symmetry="0.899752" linear="0.899752" disc="0.100248" coefs="0.0545536 0.869698 -1.03131 0.139296 0.174465 0.0743597"/>
+   <xform weight="0.949876" color="0.6" symmetry="1" linear="1" coefs="-0.100248 -0.899752 0.899752 0.100248 0 0"/>
+   <xform weight="0.167354" color="0.8" linear="0.100248" horseshoe="0.800779" fisheye="0.0989727" coefs="0.716928 -0.25297 0.100453 0.542962 0.370044 0.165613"/>
+   <xform weight="0.117867" color="1" linear="0.100248" horseshoe="0.224938" heart="0.341906" spiral="0.341906" coefs="0.172449 -0.165731 0.101354 0.0452985 0.152974 0.217911"/>
+</flame>

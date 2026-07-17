@@ -1,0 +1,15 @@
+<flame time="0" palette="26" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="v2d5.sheepserver.net" nick="GGG">
+   <xform weight="0.499" color="0" linear="0.44" sinusoidal="0.01" horseshoe="0.36" polar="0.01" disc="0.15" diamond="0.05" julia="0.01" bent="0.01" coefs="0.653995 0.248444 -0.19934 0.039254 0.209614 -0.414783"/>
+   <xform weight="0.499" color="0.99" linear="0.44" sinusoidal="0.01" horseshoe="0.36" polar="0.01" disc="0.15" hyperbolic="0.01" diamond="0.05" julia="0.01" bent="0.01" waves="0.01" coefs="0.442048 0.022002 0.050545 -0.119032 0.85118 0.121129"/>
+   <xform weight="0.001" color="0.01" linear="0.44" sinusoidal="0.01" horseshoe="0.36" polar="0.01" disc="0.15" hyperbolic="0.01" diamond="0.05" julia="0.01" bent="0.01" coefs="0.174349 -0.588833 0.045953 -0.654053 0.663787 1.12499"/>
+   <xform weight="0.143" color="0" symmetry="1" linear="1" coefs="0.62349 0.781831 -0.781831 0.62349 0 0"/>
+   <xform weight="0.143" color="0.2" symmetry="1" linear="1" coefs="-0.222521 0.974928 -0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="0.4" symmetry="1" linear="1" coefs="-0.900969 0.433884 -0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.6" symmetry="1" linear="1" coefs="-0.900969 -0.433884 0.433884 -0.900969 0 0"/>
+   <xform weight="0.143" color="0.8" symmetry="1" linear="1" coefs="-0.222521 -0.974928 0.974928 -0.222521 0 0"/>
+   <xform weight="0.143" color="1" symmetry="1" linear="1" coefs="0.62349 -0.781831 0.781831 0.62349 0 0"/>
+</flame>
+<flame time="128" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.hilltopdesign.com" nick="HilltopDesign.com">
+   <xform weight="0.711" color="0" spherical="0.97" heart="0.03" coefs="0.51866 0.732025 -0.732025 0.51866 0.250261 0.700278"/>
+   <xform weight="0.289" color="1" horseshoe="0.61" fisheye="0.39" coefs="1.03878 0.717978 -0.157771 0.382035 -0.142433 -1.33034"/>
+</flame>

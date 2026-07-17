@@ -1,0 +1,17 @@
+<flame time="0" palette="39" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="va@vaharoni.com" nick="falczx">
+   <xform weight="0.425" color="0" swirl="0.13" horseshoe="0.63" handkerchief="0.25" coefs="-0.380192 0.340635 -0.562716 -0.151037 -0.229263 1.05438"/>
+   <xform weight="0.425" color="0.81" linear="0.35" sinusoidal="0.21" horseshoe="0.19" handkerchief="0.25" coefs="0.470055 -0.067326 0.68775 0.235891 -0.390539 -0.392538"/>
+   <xform weight="0.05" color="0.13" linear="0.75" handkerchief="0.25" coefs="0.93345 -0.151078 -0.150919 0.693476 0.313054 -0.164969"/>
+   <xform weight="0.05" color="0.19" linear="0.75" handkerchief="0.25" coefs="0.527913 -0.133912 -0.092544 0.839549 -0.26968 0.276803"/>
+   <xform weight="0.05" color="0.25" linear="0.75" handkerchief="0.25" coefs="0.702835 -0.247423 -0.053582 0.552529 0.397792 -0.417688"/>
+</flame>
+<flame time="128" palette="73" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.2" url="" nick="AURELL">
+   <xform weight="0.055" color="0" handkerchief="0.15" ex="0.85" coefs="-0.010593 0.695626 -0.996788 -0.631031 0.615145 -0.753208"/>
+   <xform weight="0.048" color="0.5" sinusoidal="0.6" swirl="0.4" coefs="-0.227471 -0.841388 0.802903 -0.170036 0.7436 -0.53913"/>
+   <xform weight="0.063" color="1" linear="0.97" waves="0.03" coefs="0.98132 0.096507 -0.008915 -0.95005 0.668468 -0.800003"/>
+   <xform weight="0.167" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.167" color="0" symmetry="1" linear="1" coefs="0.309017 0.951057 -0.951057 0.309017 0 0"/>
+   <xform weight="0.167" color="0.33" symmetry="1" linear="1" coefs="-0.809017 0.587785 -0.587785 -0.809017 0 0"/>
+   <xform weight="0.167" color="0.67" symmetry="1" linear="1" coefs="-0.809017 -0.587785 0.587785 -0.809017 0 0"/>
+   <xform weight="0.167" color="1" symmetry="1" linear="1" coefs="0.309017 -0.951057 0.951057 0.309017 0 0"/>
+</flame>

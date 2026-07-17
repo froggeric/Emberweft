@@ -1,0 +1,11 @@
+<flame time="0" palette="60" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Deltaway">
+   <xform weight="0.13" color="0" linear="0.04" spherical="0.31" swirl="0.15" horseshoe="0.14" hyperbolic="0.25" julia="0.1" bent="0.06" fisheye="0.03" coefs="0.07679 -0.14354 0.277438 0.056833 1.02215 -0.662865"/>
+   <xform weight="0.14" color="0.43" linear="0.04" spherical="0.28" swirl="0.15" horseshoe="0.14" heart="0.01" hyperbolic="0.25" diamond="0.11" fisheye="0.03" coefs="-0.033232 -0.004781 -0.382494 0.077988 -0.480234 -0.077032"/>
+   <xform weight="0.127" color="0" symmetry="1" linear="1" coefs="-0.111396 0.47934 -0.132312 0.564315 0.367259 -1.15015"/>
+   <xform weight="0.603" color="1" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+</flame>
+<flame time="128" palette="3" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.281283">
+   <symmetry kind="-14"/>
+   <xform weight="0.5" color="0" hyperbolic="1" coefs="-0.334637 0.605656 0.278296 0.537935 0.561419 -0.513895"/>
+   <xform weight="0.5" color="1" hyperbolic="1" coefs="0.628787 0.845484 -0.730351 0.384423 0.484717 0.920346"/>
+</flame>

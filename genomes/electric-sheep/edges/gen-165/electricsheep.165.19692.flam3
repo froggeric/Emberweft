@@ -1,0 +1,13 @@
+<flame time="0" palette="77" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.96" parents="18743">
+   <symmetry kind="-2"/>
+   <xform weight="0.267" color="0" spherical="1" coefs="-0.499769 0 0 -0.499769 -0.00637 1"/>
+   <xform weight="0.267" color="0.33" spherical="1" coefs="-0.499769 0 0 -0.499769 -0.866025 -0.5"/>
+   <xform weight="0.267" color="0.67" spherical="1" coefs="-0.499769 0 0 -0.499769 0.866025 -0.5"/>
+</flame>
+<flame time="128" palette="27" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.hilltopdesign.com" nick="A man shrouded in Mr. Wheee">
+   <xform weight="0.184" color="0" sinusoidal="0.32" spherical="0.25" disc="0.43" coefs="-0.743897 -0.348867 0.468558 -0.520263 -0.761839 1.13857"/>
+   <xform weight="0.184" color="0.25" sinusoidal="0.24" spherical="0.25" julia="0.51" coefs="-0.756435 -0.37695 0.224465 -0.834995 0.401644 -0.130868"/>
+   <xform weight="0.21" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.21" color="0.75" symmetry="1" linear="1" coefs="-0.5 0.866025 -0.866025 -0.5 0 0"/>
+   <xform weight="0.21" color="1" symmetry="1" linear="1" coefs="-0.5 -0.866025 0.866025 -0.5 0 0"/>
+</flame>

@@ -1,0 +1,17 @@
+<flame time="0" palette="33" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.671134">
+   <symmetry kind="11"/>
+   <xform weight="0.333333" color="1" sinusoidal="1" coefs="0.675423 0.428972 0.883115 0.0652257 0.173203 -0.571641"/>
+   <xform weight="0.333333" color="0" sinusoidal="1" coefs="-0.150602 0.388651 -0.872108 0.835722 -0.822808 -0.0239783"/>
+   <xform weight="0.333333" color="0.5" sinusoidal="1" coefs="0.253077 -0.848533 0.998705 0.164878 0.490129 0.515694"/>
+</flame>
+<flame time="128" palette="66" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="1" gamma="4" vibrancy="0" hue="0" parents="36729 36505">
+   <xform weight="0.085" color="0" linear="0.01" sinusoidal="0.01" spherical="0.01" swirl="0.21" polar="0.01" handkerchief="0.1" spiral="0.01" ex="0.19" bent="0.49" coefs="0.126599 -0.0382846 1.7425 -0.11218 2.00061 -0.372762"/>
+   <xform weight="0.174" color="0.125" linear="0.02" handkerchief="0.48" heart="0.03" julia="0.42" bent="0.06" coefs="-0.427144 0.489423 -0.16347 -0.461727 0.734468 -1.35726"/>
+   <xform weight="0.06" color="0.25" symmetry="1" linear="1" coefs="0.89507 0.094076 -0.094076 0.89507 0 0"/>
+   <xform weight="0.174" color="0.375" linear="0.06" swirl="0.02" handkerchief="0.48" julia="0.39" bent="0.06" coefs="-0.311286 -0.087516 -0.069909 -0.349455 0.189146 -1.4225"/>
+   <xform weight="0.06" color="0.5" symmetry="1" linear="1" coefs="0.66574 0.216312 -0.216312 0.66574 0 0"/>
+   <xform weight="0.008" color="0.625" linear="0.02" handkerchief="0.48" ex="0.05" julia="0.39" bent="0.06" fisheye="0.02" coefs="0.924317 0.014451 -0.036541 0.983829 0.057578 0.017309"/>
+   <xform weight="0.085" color="0.75" linear="0.01" sinusoidal="0.01" spherical="0.01" swirl="0.21" polar="0.01" handkerchief="0.09" ex="0.19" bent="0.49" coefs="-0.442274 -0.29074 -0.238073 -0.318558 -0.359454 -0.228774"/>
+   <xform weight="0.002" color="0.875" linear="0.08" handkerchief="0.48" julia="0.39" bent="0.06" coefs="0.868773 -0.017222 0.031115 0.942432 0.07957 0.079862"/>
+   <xform weight="0.027" color="1" linear="1" coefs="-0.197435 0.03198 -0.03198 -0.197435 0 0"/>
+</flame>

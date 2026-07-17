@@ -1,0 +1,15 @@
+<flame time="0" palette="36" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="11311 11296">
+   <xform weight="0.901" color="0" linear="1" coefs="-0.358085 -0.897396 0.897396 -0.358085 -0.520555 0.193141"/>
+   <xform weight="0.1" color="0.2" linear="1" coefs="0.102072 0.429319 -0.378013 0.032247 0.204368 0.213425"/>
+   <xform weight="0.033" color="0.4" symmetry="1" linear="1" coefs="0.961265 0.275636 0.275636 -0.961265 0 0"/>
+   <xform weight="0.2" color="0.6" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.2" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="0" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.16" url="www.coppercat.net" nick="coppercat">
+   <xform weight="0.32" color="0" symmetry="1" linear="1" coefs="-0.464879 -0.184057 0.184057 -0.464879 0 0"/>
+   <xform weight="0.28" color="0.05" linear="0.75" julia="0.25" coefs="-0.50465 0.056565 -0.047284 -0.52788 0.674777 0.163399"/>
+   <xform weight="0.28" color="0.85" linear="0.75" julia="0.25" coefs="-0.259766 -0.063388 0.123505 -0.109 0.654483 -0.175643"/>
+   <xform weight="0.04" color="0.15" linear="0.75" julia="0.25" coefs="-0.327964 0.313917 -0.063613 0.489863 0.128538 -0.253233"/>
+   <xform weight="0.04" color="0.2" linear="0.75" julia="0.25" coefs="0.708334 0.09972 -0.175744 0.497216 -0.025683 0.346405"/>
+   <xform weight="0.04" color="0.25" linear="0.75" julia="0.25" coefs="0.706358 0.436433 -0.408582 0.34549 0.342843 0.426158"/>
+</flame>

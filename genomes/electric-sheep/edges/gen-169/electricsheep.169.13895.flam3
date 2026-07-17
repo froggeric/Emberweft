@@ -1,0 +1,16 @@
+<flame time="0" palette="53" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="" nick="Hauser">
+   <xform weight="0.041" color="0" spiral="0.64" ex="0.36" coefs="-0.634099 -0.382299 0.536083 -0.490278 -0.403331 -0.626089"/>
+   <xform weight="0.068" color="0.25" spherical="0.06" horseshoe="0.94" coefs="-0.928755 0.156036 -0.156036 -0.928755 0.276493 0.928214"/>
+   <xform weight="0.011" color="0.5" linear="0.87" ex="0.13" coefs="-0.069185 0.222628 -0.228527 -0.064913 -0.914927 0.200551"/>
+   <xform weight="0.073" color="0.75" linear="0.44" swirl="0.56" coefs="0.106405 0.974563 -0.974563 0.106405 0.626582 0.766735"/>
+   <xform weight="0.057" color="1" spherical="0.02" ex="0.98" coefs="-0.210021 -0.839167 0.839167 -0.210021 0.6244 0.988964"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0.71934 -0.694658 -0.694658 -0.71934 0 0"/>
+   <xform weight="0.25" color="0" symmetry="1" linear="1" coefs="-0.241922 -0.970295 0.970295 -0.241922 0 0"/>
+   <xform weight="0.25" color="1" symmetry="1" linear="1" coefs="0.961261 0.275637 -0.275637 0.961261 0 0"/>
+</flame>
+<flame time="128" palette="71" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://www.caballera.com" nick="la">
+   <xform weight="0.264" color="0" swirl="0.17" spiral="0.56" fisheye="0.26" coefs="0.167536 0.567513 -0.696978 0.656472 1.09937 -0.120026"/>
+   <xform weight="0.264" color="0.36" linear="0.78" swirl="0.17" handkerchief="0.05" coefs="0.610624 -0.528891 -0.42202 -0.52128 -0.106499 0.415977"/>
+   <xform weight="0.264" color="0.73" swirl="0.17" disc="0.64" fisheye="0.19" coefs="-0.260815 -0.181867 0.113814 -0.312016 0.844527 1.00992"/>
+   <xform weight="0.207" color="0.81" sinusoidal="0.44" swirl="0.17" diamond="0.39" coefs="-0.000135 0.579033 -0.579033 -0.000135 1.52853 0.109893"/>
+</flame>

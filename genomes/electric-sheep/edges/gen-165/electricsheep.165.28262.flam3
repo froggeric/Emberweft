@@ -1,0 +1,14 @@
+<flame time="0" palette="12" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.11" url="http://www.racephoto.com" nick="Silverbranch">
+   <xform weight="0.167" color="0" swirl="0.18" disc="0.77" ex="0.05" coefs="-0.192794 -0.750648 0.920951 0.486162 -0.095246 0.03058"/>
+   <xform weight="0.092" color="0.97" hyperbolic="0.33" diamond="0.62" ex="0.05" coefs="-0.294424 -0.198167 0.279131 -0.364715 0.693117 1.00357"/>
+   <xform weight="0.247" color="0" symmetry="1" linear="1" coefs="0 1 -1 0 0 0"/>
+   <xform weight="0.247" color="0.5" symmetry="1" linear="1" coefs="-1 0 0 -1 0 0"/>
+   <xform weight="0.247" color="1" symmetry="1" linear="1" coefs="0 -1 1 0 0 0"/>
+</flame>
+<flame time="128" palette="11" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.581523">
+   <symmetry kind="-11"/>
+   <xform weight="0.25" color="1" polar="1" coefs="-0.982827 0.0737149 0.508595 0.579488 0.452409 -0.0349391"/>
+   <xform weight="0.25" color="0.666667" polar="1" coefs="-0.709324 0.307961 -0.860396 0.378847 0.681193 0.530091"/>
+   <xform weight="0.25" color="0.333333" polar="1" coefs="0.65487 0.350786 0.698492 0.432325 -0.389111 -0.287547"/>
+   <xform weight="0.25" color="0" polar="1" coefs="0.798697 0.87779 -0.920239 0.878871 -0.523661 -0.792776"/>
+</flame>

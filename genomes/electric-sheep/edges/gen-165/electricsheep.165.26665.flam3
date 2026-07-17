@@ -1,0 +1,12 @@
+<flame time="0" palette="49" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.566053" >
+   <xform weight="0.5" color="1" horseshoe="1" coefs="0.678547 -0.0843938 -0.428557 0.141786 -0.21797 0.992077"/>
+   <xform weight="0.5" color="0" horseshoe="1" coefs="0.622504 -0.308793 0.616263 0.772004 0.653486 -0.784355"/>
+</flame>
+<flame time="128" palette="81" size="640 480" scale="240" oversample="3" filter="1" quality="1200" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0" url="http://www.phidelity.com" nick="phidelity">
+   <xform weight="0.164" color="0" linear="0.68" spherical="0.03" heart="0.07" julia="0.22" coefs="0.331442 0.321481 0.425522 -0.842241 -0.16211 1.81215"/>
+   <xform weight="0.131" color="0.28" linear="0.13" spherical="0.03" heart="0.07" disc="0.55" hyperbolic="0.15" julia="0.3" coefs="0.61626 0.194066 -1.16551 -0.351042 0.498098 0.376673"/>
+   <xform weight="0.118" color="0.4" symmetry="1" linear="1" coefs="0.309017 0.951057 -0.951057 0.309017 0 0"/>
+   <xform weight="0.235" color="0.6" symmetry="1" linear="1" coefs="-0.809017 0.587785 -0.587785 -0.809017 0 0"/>
+   <xform weight="0.235" color="0.8" symmetry="1" linear="1" coefs="-0.809017 -0.587785 0.587785 -0.809017 0 0"/>
+   <xform weight="0.118" color="1" symmetry="1" linear="1" coefs="0.309017 -0.951057 0.951057 0.309017 0 0"/>
+</flame>

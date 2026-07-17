@@ -1,0 +1,13 @@
+<flame time="0" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" url="http://electricyoyo.net" nick="agamenoar">
+   <xform weight="0.255" color="0" linear="1" coefs="0.408541 -0.253791 0.960691 0.604146 1.49429 0.643689"/>
+   <xform weight="0.215" color="0.5" linear="1" coefs="0.139275 0.362116 -0.373052 0.481334 -0.079541 -0.214153"/>
+   <xform weight="0.53" color="1" linear="1" coefs="0.804703 0.040235 0.662203 0.469308 0.361851 -1.47244"/>
+</flame>
+<flame time="128" palette="70" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.151676" parents="5490 13434">
+   <xform weight="1" color="0" symmetry="1" linear="1" coefs="-1 0 0 1 0 0"/>
+   <xform weight="0.932819" color="0.2" symmetry="0.865637" linear="0.865637" spherical="0.120927" diamond="0.0134363" coefs="-0.791367 0.0416435 -0.0416435 -0.791367 0.117827 -0.0666923"/>
+   <xform weight="0.214001" color="0.4" symmetry="0.134363" linear="0.471961" polar="0.121189" diamond="0.0259691" fisheye="0.328942" popcorn="0.0519382" coefs="-0.14428 0.140777 -0.291736 0.0657708 0.127952 0.0219768"/>
+   <xform weight="0.324152" color="0.6" symmetry="0.134363" linear="0.134363" spherical="0.865637" coefs="-0.728764 -0.59391 -0.251584 -0.19594 -0.765189 0.60944"/>
+   <xform weight="0.214001" color="0.8" symmetry="0.134363" linear="0.471961" horseshoe="0.0173127" polar="0.121189" diamond="0.00865637" waves="0.00865637" fisheye="0.328942" popcorn="0.0519382" coefs="0.340106 -0.321252 0.144712 0.230516 -0.282335 -0.267578"/>
+   <xform weight="0.0613328" color="1" linear="0.337598" polar="0.121189" diamond="0.0597143" ex="0.00865637" bent="0.00865637" waves="0.083305" fisheye="0.328942" popcorn="0.0519382" coefs="0.424183 0.300222 0.260857 -0.605949 0.224329 -0.226595"/>
+</flame>

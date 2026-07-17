@@ -1,0 +1,16 @@
+<flame time="0" palette="78" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="0.480828" parents="9634 9776">
+   <xform weight="0.674746" color="0" symmetry="0.633136" linear="0.633136" heart="0.0807101" spiral="0.282485" fisheye="0.00366864" coefs="0.0853607 0.631156 0.723674 0.0394105 -0.0272522 0.00173156"/>
+   <xform weight="0.138414" color="0.125" sinusoidal="0.0440237" disc="0.0440237" spiral="0.282485" julia="0.367219" bent="0.265917" coefs="-0.0528373 0.236439 0.335817 0.30546 -0.338461 -0.20856"/>
+   <xform weight="0.0331243" color="0.25" disc="0.137692" spiral="0.282485" diamond="0.00366864" ex="0.614142" popcorn="0.208935" coefs="-0.595649 0.384752 -0.778528 0.572308 0.534988 0.203355"/>
+   <xform weight="0.0256805" color="0.375" symmetry="0.366864" linear="1" coefs="0.323386 -0.196575 -0.196575 0.942887 0 0"/>
+   <xform weight="0.0256805" color="0.5" symmetry="0.366864" linear="1" coefs="0.958259 0.169968 -0.169968 0.958259 0 0"/>
+   <xform weight="0.0256805" color="0.625" symmetry="0.366864" linear="1" coefs="0.648505 0.366538 -0.366538 0.648505 0 0"/>
+   <xform weight="0.0256805" color="0.75" symmetry="0.366864" linear="1" coefs="0.323386 0.196575 -0.196575 0.323386 0 0"/>
+   <xform weight="0.0256805" color="0.875" symmetry="0.366864" linear="1" coefs="0.308014 -0.169968 0.169968 0.308014 0 0"/>
+   <xform weight="0.0256805" color="1" symmetry="0.366864" linear="1" coefs="0.617767 -0.366538 0.366538 0.617767 0 0"/>
+</flame>
+<flame time="128" palette="72" size="640 480" scale="240" oversample="3" filter="1" quality="1800" batches="200" brightness="4" gamma="4" vibrancy="1" hue="1" parents="8915">
+   <xform weight="0.892" color="0.98" linear="0.98" spherical="0.02" coefs="0.695121 0.689117 -0.678677 0.706178 -0.068512 -0.412816"/>
+   <xform weight="0.059" color="0.29" spherical="0.02" horseshoe="0.37" popcorn="0.61" coefs="0.388849 0.3615 0.383715 -0.399119 0.384811 -0.473353"/>
+   <xform weight="0.049" color="0.84" spherical="0.92" hyperbolic="0.08" coefs="0.167284 -0.374044 -0.265865 -0.368869 0.756615 -0.408591"/>
+</flame>
