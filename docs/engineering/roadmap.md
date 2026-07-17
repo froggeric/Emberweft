@@ -95,10 +95,10 @@
 **Definition of done:**
 - A sheep's `sheep_loop` (pure 360° affine rotation; palette static) plays seamlessly (frame N = frame 0)
 - Can play a sequence of genomes where loops and transitions alternate, with no two transitions consecutive
-- Realtime playback at target fps at 1080p *(preliminary: 60 fps on M2 Max)*
-- Adaptive quality adjusts based on thermal state
-- Transitions are visually smooth (no popping or discontinuities)
-- Unit tests for interpolation math (both within-genome loops and between-genome transitions); animated-frame parity
+- Realtime **engine capability**: `FlamePlayer` sustains ≥ target fps for a bounded window under nominal thermal state (capability gate, baseline-recorded); absolute fps under real UI load is deferred to M4
+- Adaptive-quality **controller logic** verified against simulated fps/thermal signals (deterministic gate); real thermal-throttle behavior verified manually (deferred to M4 as a hard gate)
+- Transitions are visually smooth (no popping or discontinuities) — objective continuity gate: genome-space `‖Δ‖` bounded + consecutive-frame PSNR ≥ 40 dB
+- Unit tests for interpolation math (both within-genome loops and between-genome transitions); animated-frame parity (vs-flam3 ≥ 30 dB; Metal↔CPU ≥ 38 dB)
 
 ### M4 — SwiftUI App and Library Browser
 
@@ -126,6 +126,7 @@
 - Settings are persisted and respected
 - Thumbnails are generated and cached
 - Basic accessibility support (VoiceOver labels)
+- **Hard realtime gate (inherited from M3):** playback sustains target fps *(preliminary: 60 fps @ 1080p on M2 Max)* under real app UI/compositing load, and real thermal-throttle behavior is verified (the absolute-fps-under-UI-load and real-thermal items deferred from M3)
 
 ### M5 — macOS Screensaver Bundle
 

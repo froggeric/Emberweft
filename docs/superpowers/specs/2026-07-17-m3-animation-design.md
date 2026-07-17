@@ -182,7 +182,17 @@ Oracle = locally-built `flam3-genome`/`flam3-animate` (pipeline above), set up l
 
 > **Threshold correction (v1 error):** v1 applied 38 dB to the flam3 comparison. testing.md sets the **flam3 oracle at ≥ 30 dB** (different RNG/filter) and **Metal↔CPU at ≥ 38 dB**. This revision splits them. Animated Metal↔CPU parity is neither harder nor easier than stills (same per-frame comparison), so 38 dB stands there.
 
-S7 perf/adaptive tests (regression guards via `EMBERWEFT_PERF=1`): realtime fps at 1080p per tier, frame-time p50/p95/p99, adaptive-quality step + hysteresis. **Per the review, at least one fps gate and one thermal-step test are promoted to gating for S7** (or the roadmap DoD is renegotiated to "perf best-effort in M3, hard-gated in M4") — flagged for owner confirmation.
+**S7 performance & adaptive-quality gates (split — gate what is deterministic, defer what is environment-dependent, per testing.md §6 "perf = regression guard, not absolute gate"):**
+
+*Gating in S7 (deterministic, M3 owns these):*
+- **Sustained-throughput capability proof** — `FlamePlayer` sustains ≥ target fps for a bounded window under *nominal* thermal state on the dev machine (recorded as a baseline). A capability gate, not a flaky absolute.
+- **Adaptive-quality controller logic** — fed *simulated* fps + thermal signals, the controller steps the iteration budget with the documented hysteresis (pure logic given inputs; deterministic, like the parity tests).
+
+*Non-gating in S7 (regression baselines via `EMBERWEFT_PERF=1`): frame-time p50/p95/p99, per-tier fps curves.*
+
+*Deferred to M4 as the hard gate (best-effort/baseline-only in M3):*
+- The absolute "60 fps @ 1080p under real UI load" — depends on M4's compositing/window load (not yet present) and the exact hardware variant; measuring it on the bare engine now is premature.
+- Real thermal-throttle behavior — cannot be reliably force-triggered; verify manually, do not gate.
 
 ### Edge & degenerate-input handling (added per review)
 - Empty/size-1 library → error exit (strict alternation needs ≥ 2 sheep).
