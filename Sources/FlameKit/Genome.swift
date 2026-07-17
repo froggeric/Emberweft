@@ -31,7 +31,10 @@ public struct AffineTransform: Sendable, Equatable {
 public struct Variation: Sendable, Equatable {
     public let name: String
     public let weight: Double
-    public init(name: String, weight: Double) { (self.name, self.weight) = (name, weight) }
+    public var parameters: [String: Double]
+    public init(name: String, weight: Double, parameters: [String: Double] = [:]) {
+        (self.name, self.weight, self.parameters) = (name, weight, parameters)
+    }
 }
 
 /// A single IFS transform: affine pre-transform, weighted variations, post-transform.
@@ -44,6 +47,9 @@ public struct Xform: Sendable, Equatable {
     public var variations: [Variation]
     public var chaos: [Double]?       // nil => uniform
     public var opacity: Double
+    public var animate: Double       // 0 => skip rotation (symmetry xforms); default 1.0
+    public var padding: Int          // nonzero => this xform is a flam3_align pad slot
+    public var wind: SIMD2<Double>   // refangle anchors for log unwrap (interpolation.c:759)
 
     public init(
         affine: AffineTransform = .identity,
@@ -53,7 +59,10 @@ public struct Xform: Sendable, Equatable {
         colorSpeed: Double = 0.5,
         variations: [Variation] = [],
         chaos: [Double]? = nil,
-        opacity: Double = 1.0
+        opacity: Double = 1.0,
+        animate: Double = 1.0,
+        padding: Int = 0,
+        wind: SIMD2<Double> = .zero
     ) {
         self.affine = affine
         self.postAffine = postAffine
@@ -63,6 +72,9 @@ public struct Xform: Sendable, Equatable {
         self.variations = variations
         self.chaos = chaos
         self.opacity = opacity
+        self.animate = animate
+        self.padding = padding
+        self.wind = wind
     }
 }
 
@@ -142,8 +154,15 @@ public struct Flame: Sendable, Equatable {
     public var xforms: [Xform]
     public var finalXform: Xform?
     public var palette: Palette
+    /// flam3 `hue` attr — palette hue shift; serialized as `hue="…"`. Round-trip only (not consumed by the renderer).
     public var hueShift: Double
     public var time: Double
+    public var interpolation: TempInterpolation
+    public var interpolationType: MatrixInterpolationType
+    public var paletteInterpolation: PaletteInterpolation
+    /// flam3 `hue_rotation` attr — per-frame hue rotation; wired into parser/serializer in Task 3, palette blend in Task 9.
+    public var hueRotation: Double
+    public var hsvRgbPaletteBlend: Double   // flam3 hsv_rgb_palette_blend (LIVE palette mix fraction)
 
     public init(
         name: String = "",
@@ -154,7 +173,12 @@ public struct Flame: Sendable, Equatable {
         finalXform: Xform? = nil,
         palette: Palette = .black,
         hueShift: Double = 0,
-        time: Double = 0
+        time: Double = 0,
+        interpolation: TempInterpolation = .linear,
+        interpolationType: MatrixInterpolationType = .log,
+        paletteInterpolation: PaletteInterpolation = .hsvCircular,
+        hueRotation: Double = 0,
+        hsvRgbPaletteBlend: Double = 0
     ) {
         self.name = name
         self.size = size
@@ -165,6 +189,11 @@ public struct Flame: Sendable, Equatable {
         self.palette = palette
         self.hueShift = hueShift
         self.time = time
+        self.interpolation = interpolation
+        self.interpolationType = interpolationType
+        self.paletteInterpolation = paletteInterpolation
+        self.hueRotation = hueRotation
+        self.hsvRgbPaletteBlend = hsvRgbPaletteBlend
     }
 }
 
