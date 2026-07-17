@@ -255,13 +255,13 @@ Playback is built from **two segment kinds** — the same two flam3/ES produce v
 the `flam3-genome` `spin` (loop) and `strand` (transition) functions, both driven
 by a `blend ∈ [0,1]` parameter over `nframes`:
 
-- **Loop** — animate a single sheep by **rotating its genome through a full 360°**
-  (`blend × 360°`, flam3 `sheep_loop`) while **cycling its palette circularly**
-  (HSV-circular). Because 360° = 0° and the palette wraps, the last frame equals
-  the first → a **seamless loop**. This is structural motion of one genome — the
-  same blend-interpolation pipeline transitions use. It is what animates **still,
+- **Loop** — animate a single sheep by **rotating the 2×2 linear part of each
+  xform's affine matrix through a full 360°** (flam3 `sheep_loop`, `blend × 360°`)
+  while **cycling its palette circularly** (HSV-circular). Because 360° = 0° and
+  the palette wraps, the last frame equals the first → a **seamless loop**. Same
+  `blend ∈ [0,1]` pipeline transitions use. This is what animates **still,
   single-keyframe sheep** (the archive's sheep are stills; their motion comes
-  entirely from this rotation+palette loop).
+  entirely from this rotation).
 - **Transition** — interpolate genome A → B over `blend ∈ [0,1]` (flam3
   `sheep_edge`): affine coefs, weights, and palette blend. This is the
   between-genome morph described in the rest of this document.
@@ -285,12 +285,20 @@ Electric Sheep): *"loop the A flame, then transition A→B, then loop the B flam
 loop(sheep_0) → transition(0→1) → loop(sheep_1) → transition(1→2) → … → loop(sheep_N) → transition(N→0) → loop(sheep_0) → …
 ```
 
-### Segment Length
+### Segment Length (from the original ES)
 
-- **Loop length:** `nframes` rendered at the target fps (flam3 `nframes` per
-  loop). Preliminary default: enough frames for a smooth 360° rotation (e.g. a
-  few seconds). Configurable.
-- **Transition duration:** **(preliminary default)** 3.0 seconds, configurable.
+Per the Draves papers and the archive, loops and transitions share one
+`nframes` (each segment = one loop OR one transition of that length):
+
+- **nframes:** **128** (classic ES) / **160** (modern archive; some 320). Historic
+  gen-169 2-frame files are all `time=128`; modern gens are dominantly `time=160`.
+- **fps:** **~23** (classic ES default).
+- **⇒ segment duration ≈ 5.5–7 s** (128–160 frames / 23 fps). Both loops and
+  transitions are this long — a gentle 360° rotation, not a fast spin.
+
+**Loops are played once, then transitioned** — ES "displays a continuously
+morphing sequence," not a loop repeated several times. (The loop is seamless, so
+repeating is possible if a longer dwell is desired.)
 
 **Adaptive transition:** Shorter transitions for similar sheep, longer for dissimilar.
 

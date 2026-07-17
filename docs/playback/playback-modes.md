@@ -165,10 +165,10 @@ class SegmentScheduler {
 }
 ```
 
-**Segment Timing:**
-- Loop length: `nframes` at the target fps (a full 360° `sheep_loop` rotation + palette cycle). Preliminary default: a few seconds; configurable.
-- Default transition length: **(preliminary)** 3 seconds (configurable)
-- Maximum transition for slow-morph aesthetic: 30 seconds
+**Segment Timing (from the original ES):**
+- Loops and transitions share one `nframes`: **128** (classic) / **160** (modern archive) at **~23 fps → ~5.5–7 s per segment** (a gentle 360° affine rotation + palette cycle).
+- Loops are played **once**, then the system morphs (transitions) to the next sheep — a "continuously morphing sequence," not a repeated loop.
+- Configurable; adaptive transitions may run shorter/longer for similar/dissimilar sheep.
 
 **Stills are animated, not filtered:** every sheep (still or otherwise) becomes a moving loop via flam3 `sheep_loop` (360° rotation + circular palette). See [transitions.md](../rendering/transitions.md).
 

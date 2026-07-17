@@ -76,7 +76,7 @@
 **Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
 
 **Two segment kinds (mirrors the original Electric Sheep):**
-- **Loop** — animate a single sheep by rotating its genome through a full 360° while cycling its palette circularly (flam3 `sheep_loop`, driven by `blend ∈ [0,1]`); seamless because 360°=0° and the palette wraps. This is structural motion of one genome via the same blend pipeline transitions use, and it is what animates still (single-keyframe) sheep. Loop length = `nframes` at the target fps.
+- **Loop** — animate a single sheep by rotating the 2×2 linear part of each xform's affine matrix through a full 360° while cycling its palette circularly (flam3 `sheep_loop`, driven by `blend ∈ [0,1]`); seamless because 360°=0° and the palette wraps. This is structural motion of one genome via the same blend pipeline transitions use, and it is what animates still (single-keyframe) sheep. Segment length matches the original ES: **128 (classic) / 160 (modern) frames at ~23 fps ≈ 5.5–7 s**, played once then transitioned.
 - **Transition** — a morph from genome A's parameters to genome B's over a short segment.
 
 **Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
