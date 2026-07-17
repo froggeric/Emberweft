@@ -1,6 +1,6 @@
-# M3 — Animation & Realtime Pipeline (Design Spec, v3 revised)
+# M3 — Animation & Realtime Pipeline (Design Spec, v4 revised)
 
-> **Status:** design — for owner approval · Emberweft · 2026-07-17 (v3: round-2 Principal-Engineer review + second flam3 source read)
+> **Status:** design — for owner approval · Emberweft · 2026-07-17 (v4: round-3 Principal-Engineer review + third flam3 source read)
 > Companion to [roadmap.md M3](../../engineering/roadmap.md), [development-approach.md S6–S7](../../engineering/development-approach.md), [testing.md](../../engineering/testing.md), [transitions.md](../../rendering/transitions.md), [playback-modes.md](../../playback/playback-modes.md).
 
 ## Goal
@@ -12,6 +12,8 @@ M3 is built on the proven M1/M2 core: per-frame, the renderer still consumes one
 > **v2 revision notes.** v1 deferred its load-bearing mechanics into "verified against the oracle." A Principal-Engineer review found 3 blockers; source research against `scottdrakes/flam3` then established ground truth. This revision (a) corrects the loop model — **the palette is static during a loop, not cycled**; (b) scopes the oracle correctly — `flam3-genome` (generate) → `flam3-animate` (render), env-var driven, built from source; (c) adds a **prerequisite slice** (widen the data model + port the special-sauce variations); (d) fixes the manifest schema, the determinism claim, the parity thresholds, and the scheduler split. All flam3 citations below are stable `file:line` refs into the cloned `scottdraves/flam3` master.
 
 > **v3 revision notes.** A second Principal-Engineer review (APPROVE-WITH-CHANGES) confirmed v1's blockers resolved at the CPU/spec level but found new issues; a second source read resolved the flam3-detail gaps. v3: (a) **F1** — the `Schedule` is **not** O(1)-seekable to arbitrary frames under `SimilarityExploration`; seek is O(1) within the materialized prefix, O(segments) to extend (two-level model); G1's purity signature amended; (b) **F2** — S6-pre now ports the 16 variations to **Metal** too (new `GPUXform` param channel + MSL mirror + host packer + stride), and the animated Metal↔CPU ≥38 dB gate is load-bearing in S6 on a mismatched-sheep transition; (c) **F3** — `stagger` added to G1's tuple and the manifest (default 0.0); (d) **F4** — `hueRotation` is a NEW field; existing `hueShift` (flam3 `hue`) is kept; (e) **F5** — feature-vector cache specified; (f) **F6** — temporal oversampling is disabled via **genome attrs** (`passes=1, temporal_samples=1`), not env vars; (g) **F7** — full `sheep_edge` step list + `wind` semantics; the palette-hack fields are **dead metadata and dropped** from the data model; (h) **F8** — M3 transitions use `.log` at the matrix level (the `:740` force-to-linear rule governs only `--animate` dense expansion, which Emberweft does not use); (i) **F9/F10** — edge cases expanded; flam3-build fallback = auto-skip vs-flam3 tests.
+
+> **v4 revision notes.** A third Principal-Engineer review (APPROVE-WITH-CHANGES) confirmed F1–F10 resolved and coherent, but found specification-precision gaps (no rework): (a) **G1 determinism bug** — Swift `Dictionary<String,_>`/`Set<String>` hashing is per-process randomized, so any FP accumulation over variation-name-keyed data is nondeterministic across launches → G1's "byte-reproducible" was literally false; **v4 adds a hard determinism rule** (sorted-order accumulation) + a cross-process bit-identical test; (b) **`GPUXform` param-channel layout** — was an "e.g."; **v4 pins it** to a concrete table (MAX_PARAMS_PER_SLOT=6, device slot width 8, per-variation ordered param table with names/defaults/rest/XML-attrs); (c) **unpinned thresholds** (`X`/`Y`, `τ_g`, S7 fps-floor) — **v4 pins concrete numbers**; (d) minor cleanups — `hueShift` declared round-trip-only, feature-cache rebuild trigger specified, `interpolationType` nulled on loop manifest rows.
 
 ## Owner decisions (locked)
 
@@ -57,7 +59,7 @@ M3 is built on the proven M1/M2 core: per-frame, the renderer still consumes one
 ### Palette in transitions
 The render-time palette blend is **inline in `flam3_interpolate_n`** (`interpolation.c:377-427`) on the two endpoints' already-resolved `palette[256]` RGB arrays — governed by `palette_interpolation` (`sweep`/`rgb`/`hsv`/`hsv_circular`, `flam3.h:75-78`; **default `hsv_circular`**) and `hsv_rgb_palette_blend` (`flam3.h:456`, consumed at `interpolation.c:384`). `hue_rotation` is linearly interpolated across keyframes (`INTERP(hue_rotation)`, `interpolation.c:478`); at palette-fetch time it is an HSV hue shift `hsv[0] += hue_rotation*6.0` (`palettes.c:176-178`). *(Note: `interpolate_cmap` `interpolation.c:149` is parse-time only — it resolves old-format `<palette>` gradient-index tags into the 256-LUT; it is NOT part of animate/render. The `palette_index0/1`+`hue_rotation0/1`+`palette_blend` quadruple is dead metadata — see Transition step 7.)*
 
-> **F4 — `hueRotation` vs `hueShift`.** `hueRotation` is a NEW field for flam3's `hue_rotation` (above). The existing `Flame.hueShift` (flam3's `hue` attribute, `Flam3Parser.swift`) is a **different** field and is kept unchanged. Parser reads both attributes; serializer emits both.
+> **F4 — `hueRotation` vs `hueShift`.** `hueRotation` is a NEW field for flam3's `hue_rotation` (above) — the **live** field consumed by transition palette HSV interpolation. The existing `Flame.hueShift` (flam3's `hue` attribute, `Flam3Parser.swift`) is a **different** field, retained for **round-trip fidelity only** — it is not consumed by the M1/M2/M3 render path (confirmed: neither `ReferenceRenderer` nor the MSL `displayPipeline` reads it). Parser reads both attributes; serializer emits both. Do not wire `hueShift` into the palette path (it would double-apply hue and break the vs-flam3 gate on saturated palettes).
 
 ### Special-sauce padding — VERIFIED table (`flam3_align`, `interpolation.c:768-1032`)
 First, parametric-variation params (variation index ≥ 23) are copied from a neighbour genome that has the variation (`interpolation.c:812-844`). Then a rest position is chosen per padded xform:
@@ -166,9 +168,47 @@ Owner-approved. Scope:
 2. **Add `Flame` fields:** `interpolation` (default `.linear`), `interpolationType` (default `.log`), `paletteInterpolation` (default `.hsvCircular`), `hueRotation` (default 0). **Do NOT** add the palette-hack fields (`paletteIndex0/1`, `hueRotation0/1`, `paletteBlend`) — they are dead metadata (F7). **F4:** `hueRotation` is new; the existing `hueShift` (flam3 `hue`) is kept unchanged. **Add `Xform` fields:** `animate` (default 1.0), `padding`, `wind: SIMD2<Double>` (default 0; load-bearing — anchors `.log` unwrap for asymmetric xform pairs). Extend parser + serializer + round-trip tests.
 3. **Port the 16 special-sauce variations** (+ keep `linear`) to **both backends** (F2): spherical, polar, rings, fan, blob, fan2, rings2, perspective, julian, juliascope, ngon, curl, rectangles, super_shape, wedge_julia, wedge_sph — each with its parameter set + faithful formula.
    - **CPU:** add to `Variations.swift`, TDD'd per-variation like the M1 set.
-   - **Metal (F2):** `GPUXform` currently has `varWeights` (19-float tuple) and **no parameter channel** (`MetalHost.swift`, `Kernels.metal`). Add a per-slot parameter block (e.g. packed `[Float]` with a fixed layout, or `SIMD4<Float>` × N slots) + its MSL mirror in `Kernels.metal`, update the host packer to read `Variation.parameters` into the device layout, and bump the `GPUXform` stride assertion. Port the 16 MSL variation functions. This is mandatory here (not S7): S7 renders transitions via Metal, and special-sauce padding instantiates parametric variations in padded xforms — without the Metal port, S7 cannot render any mismatched-sheep transition.
+   - **Metal (F2):** `GPUXform` currently has `varWeights` (19-float tuple) and **no parameter channel** (`MetalHost.swift`, `Kernels.metal`). Add the per-slot parameter block + its MSL mirror, the host packer (name→index map), and bump the `GPUXform` stride assertion — **layout fully pinned in the "Param-channel layout" subsection below** (MAX_PARAMS_PER_SLOT=6, device slot width 8, per-variation table). Port the 16 MSL variation functions. This is mandatory here (not S7): S7 renders transitions via Metal, and special-sauce padding instantiates parametric variations in padded xforms — without the Metal port, S7 cannot render any mismatched-sheep transition.
 
 **S6-pre gates:** (a) round-trip parse/serialize of parametric genomes; (b) per-variation CPU unit tests; (c) **the existing M2 Metal↔CPU parity gate stays green** AND a fuzz run that **excludes the 16 new names** (proving the widening is additive, not a regression); (d) per-variation **Metal↔CPU parity** for each of the 16 on a constructed genome. If the flam3 build is unavailable, the vs-flam3 tests auto-skip (F10); Metal↔CPU remains the hard gate.
+
+### Param-channel layout (F2 — pinned, not "e.g.")
+The `GPUXform` extension is structurally clean against the real code: today it is `6 (pre-affine) + 6 (post) + 3 (color/colorSpeed/opacity) + 19 (varWeights) = 34` floats, stride 136 B, asserted at `MetalHost.swift:74` and mirrored in `Kernels.metal:128-133`. The selection logic (`distrib[isaac_next & CHAOS_GRAIN_M1]`) is host-precomputed and untouched; none of the 16 variations consumes the ISAAC stream, so RNG alignment holds. The blast radius is: the struct grows a params block, the host packer gains a name→index map, and the MSL `apply_xform_body` if-chain grows from 19 to 35 guarded lines.
+
+- **`MAX_PARAMS_PER_SLOT = 6`** (driven by `super_shape`: rnd, m, n1, n2, n3, holes). **Device slot width = 8 floats** (6 params + 2 spare for natural float4 alignment and an optional per-slot weight/index tag without a second bind).
+- **Device layout:** append `float varParams[NUM_XFORM_SLOTS][8]` to `GPUXform`; bump the stride assertion on both Swift and MSL sides. `varWeights` (the 99-entry weight array) stays a separate channel.
+- **Host packer:** maps each xform's `Variation.parameters: [String:Double]` into positional `varParams[slot][index]` via a **compile-time, fixed name→(slot,index) table per variation** (below). Unused tail slots are zeroed; the shader indexes by the same table, so unused reads are harmless.
+- **Parameterless variations** (linear, spherical, polar, rings, fan) consume no param slot — only a weight entry.
+- **Precache fields** (e.g. `persp_vsin`, `julian_rN`, `super_shape_pm_4`) are NOT user params — they are host-computed or computed on-device; do not slot them as inputs.
+- **Clamp rules** propagate to the right layer: `super_shape_rnd` clamped to [0,1] (`parser.c:1076-1079`) in the packer; flam3 EPS guards (`rings2_val²+EPS`, `fan2_x²+EPS`, curl denominator) in the kernel.
+
+**Per-variation param table** (XML attr == struct field name for all 12; source-cited to `flam3.h` / `parser.c` / `variations.c`). "rest" = special-sauce value from `flam3_align` (`interpolation.c`); "—" = stays at flam3 default (Group A variations get rotated-identity affine only, no param rest):
+
+| variation (idx) | param / XML attr | default | rest | slot index |
+|---|---|---|---|---|
+| **blob** (23) | `blob_low` | 0.0 | **1.0** | 0 |
+| | `blob_high` | 1.0 | **1.0** | 1 |
+| | `blob_waves` | 1.0 | **1.0** | 2 |
+| **curl** (39) | `curl_c1` | 1.0 | **0.0** | 0 |
+| | `curl_c2` | 0.0 | **0.0** | 1 |
+| **rectangles** (40) | `rectangles_x` | 1.0 | **0.0** | 0 |
+| | `rectangles_y` | 1.0 | **0.0** | 1 |
+| **fan2** (25) | `fan2_x` | 0.0 | **0.0** | 0 |
+| | `fan2_y` | 0.0 | **0.0** | 1 |
+| **rings2** (26) | `rings2_val` | 0.0 | **0.0** | 0 |
+| **perspective** (30) | `perspective_angle` | 0.0 | **0.0** | 0 |
+| | `perspective_dist` | 0.0 | **kept** | 1 |
+| **super_shape** (50) | `super_shape_rnd` | 0.0 | **0.0** | 0 |
+| | `super_shape_m` | 0.0 | **kept** | 1 |
+| | `super_shape_n1` | 1.0 | **2.0** | 2 |
+| | `super_shape_n2` | 1.0 | **2.0** | 3 |
+| | `super_shape_n3` | 1.0 | **2.0** | 4 |
+| | `super_shape_holes` | 0.0 | **0.0** | 5 |
+| **ngon** (38) | `ngon_sides`/`ngon_power`/`ngon_circle`/`ngon_corners` | 5.0/3.0/1.0/2.0 | — | 0–3 |
+| **julian** (32) | `julian_power`/`julian_dist` | 1.0/1.0 | — | 0–1 |
+| **juliascope** (33) | `juliascope_power`/`juliascope_dist` | 1.0/1.0 | — | 0–1 |
+| **wedge_julia** (78) | `wedge_julia_angle`/`_count`/`_power`/`_dist` | 0.0/1.0/1.0/0.0 | — | 0–3 |
+| **wedge_sph** (79) | `wedge_sph_angle`/`_count`/`_hole`/`_swirl` | 0.0/1.0/0.0/0.0 | — | 0–3 |
 
 ## The math (behavior ported + cited; pinned by the oracle)
 
@@ -176,10 +216,11 @@ Owner-approved. Scope:
 - **Transition:** `Transition.blend(A, B, t, stagger)` → `align(A,B)` (pad to equal count + special-sauce rest positions + copy parametric params from the neighbour that has them) → rotate both by `t·360°` → `interpolate(2cp, smoother(t), stagger)` with `.log` matrix blending and HSV palette interpolation.
 - **Schedule (F1 — two-level seek, not O(1)):** segment *lengths* are constant per tier, so global-frame → `segmentId` is O(1) division; `segmentId` → `blend` is O(1). But `segmentId` → `(fromSheep, toSheep)` requires the selector walk, which for `SimilarityExploration` is sequential (ε-greedy consumes the seeded RNG + accumulates recency). So seek is **O(1) within the already-materialized prefix**, **O(segments) to extend the prefix forward** to a target beyond it, and **O(log segments) backward** within the prefix (binary search). The S7 dispatcher keeps a memory-bounded ring of the played prefix; a long forward jump replays the deterministic selector walk up to the target (reproducible, not instant). `Sequential` is O(1) everywhere (no RNG walk).
 - **PairSelector:** `Sequential` (test scaffold) and `SimilarityExploration` (ε-greedy: with prob ε pick uniformly-random sheep = escape; else most-similar not-recently-used; recency penalty). `edges.sqlite` is a gold-set validator + optional classic-flock mode, not a render dependency.
+- **Determinism rule (F1 — load-bearing):** every feature-vector component that accumulates over variation/parameter **name-keyed** data MUST be stored and summed in a **fixed, total order** — variation names sorted lexicographically into an array; the cache record stores that array, **never** a `Dictionary<String,_>` or `Set<String>`. **No floating-point accumulation may iterate a `Dictionary<String,_>`/`Set<String>`** (Swift's per-process hash seed randomizes their order, so the FP sum — and thus the argmax at near-ties — would differ across process launches, breaking G1). Sheep selection and recency are integer-indexed (`Set<Int>`, deterministic) so the RNG walk itself is fine; only the metric's sum order is constrained. A unit test asserts the metric for a fixed pair is **bit-identical across N separate process launches**.
 
 ## Determinism (G1/G2/G3 — split, do not conflate)
 
-- **G1 — Schedule + per-frame genome:** a pure, **reproducible** function of `(library, selectorConfig, seed, tier, stagger, frameIndex)` **and the deterministic selector walk up to `frameIndex`**. Reproducible in **both S6 and S7** (not O(1) to reach an arbitrary frame under `SimilarityExploration` — see Schedule above — but byte-reproducible when replayed). `stagger` is in the tuple because it changes the interpolated genome (F3). The interpolated `Flame` is byte-identical across CPU and Metal (the S7 adaptive controller mutates only render params — `samplesPerPixel` — never the genome).
+- **G1 — Schedule + per-frame genome:** a pure, **reproducible** function of `(library, selectorConfig, seed, tier, stagger, frameIndex)` **and the deterministic selector walk up to `frameIndex`**. Reproducible in **both S6 and S7** — *provided* the F1 determinism rule holds (sorted-order metric accumulation; no String-dict/Set FP sums). `stagger` is in the tuple because it changes the interpolated genome (F3). **Interpolation runs once in FlameKit (CPU, `Double`)** and the resulting `Flame` is handed to both renderers, so the genome is byte-identical across CPU and Metal; the S7 adaptive controller mutates only render params (`samplesPerPixel`), never the genome. (If interpolation ran on-device in FP32, this identity would break — it does not.)
 - **G2 — S6 rendered frames:** byte-deterministic given backend + fixed quality (offline path).
 - **G3 — S7 rendered frames:** **NOT byte-deterministic.** The adaptive-quality controller varies `samplesPerPixel` per frame from measured fps + `thermalState`, so the *image* depends on runtime state. Only the *genome* is reproducible; realtime↔offline parity is statistical over a fixed quality, not a per-frame identity. (v1 wrongly implied realtime frames were reproducible.)
 
@@ -193,11 +234,12 @@ Oracle = locally-built `flam3-genome`/`flam3-animate` (pipeline above), set up l
 | `sheep_loop` vs `flam3-genome rotate` | our loop genome/frame vs flam3's | **PSNR ≥ 30 dB, SSIM ≥ 0.95** (vs-flam3, M1 precedent) |
 | `sheep_edge` vs `flam3-genome inter` | our transition vs flam3's | **PSNR ≥ 30 dB, SSIM ≥ 0.95** (vs-flam3) |
 | Special-sauce padding | mismatched pairs (incl. a stored ES edge) | morph does not pop; finiteness holds |
-| Transition continuity (objective) | consecutive frames A→B | (a) genome-space `‖G(t+δ)−G(t)‖ < τ_g`; (b) image-space consecutive-frame **PSNR ≥ 40 dB** (transitions vary slowly) |
+| Transition continuity (objective) | consecutive frames A→B | (a) genome-space `‖G(t+δ)−G(t)‖ < 1e-3` on **normalized** coefficients (scale-independent); (b) image-space consecutive-frame **PSNR ≥ 40 dB** (transitions vary slowly) |
 | Scheduler alternation | any schedule prefix | invariant: no two consecutive transitions |
-| PairSelector exploration | long walk | visits ≥ X distinct sheep in Y segments; reproducible under fixed seed |
+| PairSelector exploration | a 50-segment walk over the full library | visits **≥ max(⌈0.5·librarySize⌉, 10)** distinct sheep (proves the ε-greedy escape is not trapped); reproducible under fixed seed (F1) |
 | Animated-frame Metal↔CPU parity | per-frame `RGBA8Image`, incl. a **mismatched-sheep transition** (exercises special-sauce padding + the 16 Metal variations — F2 load-bearing) | **PSNR ≥ 38 dB, SSIM ≥ 0.95** (Metal↔CPU gate — distinct from the vs-flam3 30 dB) |
 | Determinism (G2) | full S6 PNG sequence across runs | byte-identical |
+| Metric determinism (F1) | similarity score for a fixed sheep pair, computed in **N separate process launches** | bit-identical (proves no String-dict/Set FP-sum leakage) |
 | Finiteness | every animated frame | no NaN/Inf |
 | Near-singular affine during `log` morph | constructed degenerate pair | port flam3's determinant guard → fallback to linear; frames finite |
 | CLI snapshot | `emberweft animate` sequence + manifest | byte-stable; manifest schema stable |
@@ -209,7 +251,7 @@ Oracle = locally-built `flam3-genome`/`flam3-animate` (pipeline above), set up l
 **S7 performance & adaptive-quality gates (split — gate what is deterministic, defer what is environment-dependent, per testing.md §6 "perf = regression guard, not absolute gate"):**
 
 *Gating in S7 (deterministic, M3 owns these):*
-- **Sustained-throughput capability proof** — `FlamePlayer` sustains ≥ target fps for a bounded window under *nominal* thermal state on the dev machine (recorded as a baseline). A capability gate, not a flaky absolute.
+- **Sustained-throughput capability proof** — `FlamePlayer` sustains **≥ 58 fps (0.5× below the 60 target, to absorb transient dips) over a 30 s window at 1080p** under *nominal* thermal state on the dev machine (recorded as a baseline). A capability gate, not a flaky absolute; the hard 60 fps-under-UI-load gate is M4's.
 - **Adaptive-quality controller logic** — fed *simulated* fps + thermal signals, the controller steps the iteration budget with the documented hysteresis (pure logic given inputs; deterministic, like the parity tests).
 
 *Non-gating in S7 (regression baselines via `EMBERWEFT_PERF=1`): frame-time p50/p95/p99, per-tier fps curves.*
@@ -251,20 +293,21 @@ Writes `frames/000000.png …` + `frames/manifest.json`:
   "manifestVersion": 1,
   "tier": 160, "seed": 0, "selector": "sequential", "stagger": 0.0,
   "frames": [
-    { "frame": 0,   "segmentId": 0, "kind": "loop",       "fromSheep": 0, "toSheep": 0, "blend": 0.0,    "interpolationType": "log" },
+    { "frame": 0,   "segmentId": 0, "kind": "loop",       "fromSheep": 0, "toSheep": 0, "blend": 0.0,    "interpolationType": null },
     { "frame": 160, "segmentId": 1, "kind": "transition", "fromSheep": 0, "toSheep": 1, "blend": 0.0,    "interpolationType": "log" }
   ]
 }
 ```
 
-(`fromSheep == toSheep` for loops; both populated for transitions; `frame` is the global index; `blend` is the raw `t`; `stagger` is top-level because it is per-run, not per-frame — F3.) This is the deterministic contract M6's encoder consumes.
+(`fromSheep == toSheep` for loops; both populated for transitions; `frame` is the global index; `blend` is the raw `t`; `stagger` is top-level because it is per-run, not per-frame — F3; `interpolationType` is `null` on loop rows — a loop uses pure rotation, no matrix interpolation — F6.) This is the deterministic contract M6's encoder consumes.
 
 ### Feature-vector cache (F5)
 `SimilarityExploration` over ~47k sheep needs precomputed feature vectors; a 1.6 GB scan per run is impractical. Specified:
 - **Location:** `genomes/.feature_cache/` (gitignored derived data, one record per sheep id).
-- **Build:** `emberweft animate --rebuild-cache` or a `make feature-cache` target; computes the feature vector (variation-set, palette mean-hue/luma, xform-count, summed affine Frobenius) per sheep.
-- **Invalidation:** per-record mtime check against the source `.flam3`; the daily `com.emberweft.sheep-sync` adds new gen-248 sheep → the cache rebuilds only the new/changed records (incremental).
-- **Fallback:** `--selector sequential` needs no cache; `--selector similarity` errors with a clear message if the cache is absent and `--rebuild-cache` was not passed.
+- **Record format:** the variation-set component is stored as a **lexicographically-sorted `(name, weight)` array**, never a dictionary (F1 determinism rule — the metric sums this array in fixed order). Other components (palette mean-hue/luma scalars, xform-count, summed affine Frobenius) are plain scalars.
+- **Build:** `emberweft animate --rebuild-cache` or a `make feature-cache` target; computes the feature vector per sheep.
+- **Incremental rebuild trigger:** `--selector similarity` **scans the library directory** at start; any `.flam3` with no cache record or a newer mtime triggers an incremental rebuild of that record *before* selection begins. So new gen-248 sheep landed by the daily `com.emberweft.sheep-sync` are picked up automatically on the next similarity run — no manual rebuild needed for incremental growth.
+- **Fallback:** `--selector sequential` needs no cache. A **fully-absent** cache still requires explicit `--rebuild-cache` (to avoid a multi-minute stall on first run); `--selector similarity` errors with a clear message in that case. Stated in `--help`.
 
 ## S6-pre / S6 / S7 split
 
@@ -296,7 +339,7 @@ Writes `frames/000000.png …` + `frames/manifest.json`:
 - **flam3 build/oracle availability.** *Mitigation:* S6-pre-adjacent task builds flam3 from source, pins the commit, and runs the literal env-var commands by hand once before any parity test depends on them. **F10 fallback:** if the build is unavailable in the current environment (e.g. an OS/Xcode update breaks autotools/libpng), the vs-flam3 parity tests **auto-skip with a printed warning, not fail**; Metal↔CPU parity (≥38 dB) remains the hard gate. The build is a dev-machine prerequisite documented in `docs/engineering/testing.md`, not a CI step.
 - **Metal parity regression from new variations (F2).** Porting 16 variations to Metal could regress the M2 ≥38 dB gate if a fuzz genome uses one. *Mitigation:* S6-pre gates on the existing M2 parity staying green **plus** a fuzz run that excludes the 16 new names (proving additivity), and adds per-variation Metal↔CPU parity for each of the 16.
 - **Near-singular affine NaN in `log` morphs.** *Mitigation:* port flam3's determinant guard (fallback to linear); constructed-degenerate-pair test in the frozen set.
-- **Similarity traps playback.** *Mitigation:* ε-greedy escape is structural and tested before metric tuning ("visits ≥ X distinct in Y segments").
+- **Similarity traps playback.** *Mitigation:* ε-greedy escape is structural and tested before metric tuning ("visits ≥ max(⌈0.5·librarySize⌉,10) distinct sheep in 50 segments").
 - **Special-sauce across structurally different pairs.** *Mitigation:* verified table ported faithfully; mismatched-pair continuity test; if a pair still pops, that's metric tuning (penalize structural distance), not an algorithm failure.
 - **Realtime fps at 1080p × 160-frame loops.** *Mitigation:* per-frame cost unchanged from M2 (animation adds a cheap genome interpolation); adaptive quality is the safety net; 160-tier sized to M2's measured single-frame budget.
 - **Data-model widening ripple.** *Mitigation:* S6-pre lands first as an isolated, gate-keeping slice; M1/M2 stay green via the `.linear` interpolation shim and additive variation set.
