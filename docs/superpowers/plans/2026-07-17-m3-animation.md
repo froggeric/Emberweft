@@ -465,11 +465,24 @@ for (k, v) in attr where !reserved.contains(k) {
     // A parametric attr is "<varname>_<paramname>" where <varname> is a known
     // descriptor whose parameter list contains the full attr. Try the longest
     // matching known variation prefix.
+    // The matcher returns the FULL xml name as `hit.param` (e.g. "blob_low"),
+    // matching the descriptor's full-name storage, so the dict key is what
+    // `evaluate`/`v_blob` will read back. Try the unique matching variation.
     if let hit = VariationDescriptor.matchParamAttribute(k) {
         paramsByVariation[hit.variation, default: [:]][hit.param] = val
     } else {
         weights.append((k, val))
     }
+}
+// Param-without-weight edge case (pinned): a parametric attr whose base weight
+// attr is absent (e.g. <xform blob_low="0.2"/> with no blob="…") must still
+// round-trip. Synthesize a weight-0 entry for any variation that appears ONLY
+// in paramsByVariation so the map below creates a Variation for it (the
+// serializer's separate param-emission loop then emits its params regardless
+// of weight).
+let weightedNames = Set(weights.map { $0.0 })
+for (varName, _) in paramsByVariation where !weightedNames.contains(varName) {
+    weights.append((varName, 0))
 }
 x.variations = weights.sorted { $0.0 < $1.0 }.map { name, w in
     Variation(name: name, weight: w, parameters: paramsByVariation[name] ?? [:])
@@ -479,14 +492,23 @@ x.variations = weights.sorted { $0.0 < $1.0 }.map { name, w in
 Add to `VariationDescriptor` a helper that returns the `(variation, param)` for an attribute key, preferring a known-variation prefix:
 
 ```swift
-/// Resolve "<varname>_<paramname>" against the known tables. Returns nil for a
-/// plain variation-weight attr (e.g. "linear", "curl" with no suffix).
+/// Resolve a parametric XML attr key against the known tables. Returns nil for
+/// a plain variation-weight attr (e.g. "linear", "curl" with no suffix).
+///
+/// The descriptor stores each param under its FULL XML name (`blob_low`,
+/// `fan2_x`, `super_shape_n3`, …) — NOT the short suffix — so that the
+/// serializer's `for p in d.parameters` emit loop produces `blob_low="…"`
+/// verbatim and `evaluate`/`v_blob` read the same key from `params`. Therefore
+/// the matcher checks the FULL `key` against `d.parameters` (after the
+/// `<varname>_` prefix gate rules out plain weight attrs). Stripping the prefix
+/// and checking the short suffix would ALWAYS miss (there is no "low" entry,
+/// only "blob_low") — do not revert to that. The 12 parametric prefixes are
+/// pairwise-distinct once the parameterless `fan`/`rings`/`julia` are excluded
+/// (empty `parameters`), so iteration order is irrelevant: at most one hit.
 public static func matchParamAttribute(_ key: String) -> (variation: String, param: String)? {
     for (varName, d) in table where !d.parameters.isEmpty {
-        let prefix = varName + "_"
-        if key.hasPrefix(prefix) {
-            let param = String(key.dropFirst(prefix.count))
-            if d.parameters.contains(param) { return (varName, param) }
+        if key.hasPrefix(varName + "_") && d.parameters.contains(key) {
+            return (varName, key)   // param == full XML name (e.g. "blob_low")
         }
     }
     return nil
@@ -1368,6 +1390,8 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 **Files:**
 - Create: `Tests/FlameReferenceTests/AnimationParityTests.swift`
 - Create: `Tests/FlameRendererTests/AnimatedFrameParityTests.swift`
+
+> **Test-target split (compile-critical).** `FlameReferenceTests` depends only on `[FlameReference, FlameKit]` (see `Package.swift`) — it has NO `FlameRenderer` dep and cannot call `MetalRenderer.render`. Put every **CPU-only / vs-flam3** row (loop+transition vs the oracle, genome-space `‖Δ‖`, CPU finiteness) in `AnimationParityTests.swift`. Put every **Metal-touching** row (rendered seamlessness PSNR, mismatched-sheep Metal↔CPU parity, consecutive-frame image PSNR, G2 Metal byte-determinism) in `AnimatedFrameParityTests.swift` (`FlameRendererTests`, which already deps `FlameRenderer`). Do NOT add `FlameRenderer` to `FlameReferenceTests`'s dependency list — that would let reference tests reach Metal and defeat the point of the CPU oracle living in a pure target.
 
 **Acceptance Criteria:**
 - [ ] `sheep_loop` vs `flam3-genome rotate`: our loop frame vs flam3's, PSNR ≥ 30 dB / SSIM ≥ 0.95 (skip if oracle absent).
