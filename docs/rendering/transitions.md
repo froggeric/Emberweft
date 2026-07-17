@@ -329,6 +329,35 @@ edge genomes only as:
 Stored edges stay in the archive for preservation; they are not required for
 rendering.
 
+### Transition interpolation fidelity (flam3 wiki: Interpolation)
+
+On-the-fly `sheep_edge(A, B)` morphs must follow flam3's interpolation rules for
+visual parity (per the flam3 wiki "Interpolation" page + `flam3-genome.c`):
+
+- **`interpolation_type` = `log` (polar), not linear.** Coefficients interpolate
+  in log/polar space so rotations and scaling morph smoothly instead of
+  distorting through the linear path. (Linear is the legacy fallback.)
+- **"Special sauce" padding for xform-count / variation mismatch.** When A and B
+  differ in xform count or active variations, pad the missing side with a
+  variation-specific rest position so the morph doesn't pop:
+  - `spherical`, `ngon`, `julian`, `juliascope`, `polar`, `wedge_sph`,
+    `wedge_julia` (log only) → rest `linear=-1, coefs=(-1 0 0 -1 0 0)`.
+  - `rect`, `rings2`, `fan2`, `blob`, `supershape`, `curl`, `perspective` →
+    identity using that variation with rest coefs and params set to look like
+    `linear=1` (e.g. `curl` with `c1=0, c2=0`).
+  - `fan`, `rings` → kept (their rest position is a no-op).
+  This matters most for our similarity-based pairing, which may pair
+  structurally different sheep.
+- **`interpolation` = `smooth` (Catmull-Rom) vs `linear`** — the animation path.
+  `smooth` removes the "jolts" at keyframes (can't apply to the first/last
+  keyframe of a sequence). A 2-keyframe A→B transition is a single segment, so
+  it is effectively linear; `smooth` is relevant for multi-keyframe sequences.
+- **`stagger`** — desynchronizes the timing of per-xform interpolation across the
+  segment, so all xforms don't hit their endpoints in lockstep.
+
+These are M3 implementation items for `sheep_edge`; the display pipeline (log
+density, palette, gamma) is unchanged from M2.
+
 ### Stills are the loops
 
 Every archived sheep is a still (single keyframe) — and that is exactly what the
