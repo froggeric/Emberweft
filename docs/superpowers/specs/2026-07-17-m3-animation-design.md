@@ -1,221 +1,255 @@
-# M3 — Animation & Realtime Pipeline (Design Spec)
+# M3 — Animation & Realtime Pipeline (Design Spec, v2 revised)
 
-> **Status:** design — for owner approval · Emberweft · 2026-07-17
+> **Status:** design — for owner approval · Emberweft · 2026-07-17 (revised after Principal-Engineer review + flam3 source research)
 > Companion to [roadmap.md M3](../../engineering/roadmap.md), [development-approach.md S6–S7](../../engineering/development-approach.md), [testing.md](../../engineering/testing.md), [transitions.md](../../rendering/transitions.md), [playback-modes.md](../../playback/playback-modes.md).
 
 ## Goal
 
 Make the renderer **move**, faithfully to flam3 and the original Electric Sheep: seamless **loops** of a single still sheep, smooth **transitions** between two sheep, and a **realtime Metal playback engine** that plays an endless, strictly alternating loop→transition→loop sequence with adaptive quality. This is roadmap slices **S6** (CLI animation) and **S7** (realtime engine).
 
-M3 is built on the proven M1/M2 core: per-frame, the renderer still consumes one `Flame` genome and produces one `RGBA8Image` via `ReferenceRenderer` (CPU) or `MetalRenderer` (Metal). **Animation is the layer that decides *which* `Flame` to feed per frame** — it does not change the chaos game, the display pipeline, or the parity model. This keeps M3 a clean, low-risk extension of the validated renderer.
+M3 is built on the proven M1/M2 core: per-frame, the renderer still consumes one `Flame` genome and produces one `RGBA8Image` via `ReferenceRenderer` (CPU) or `MetalRenderer` (Metal). **Animation is the layer that decides *which* `Flame` to feed per frame** — it does not change the chaos game, the display pipeline, or the parity model.
 
-## Owner decisions (locked during prior design conversation)
+> **v2 revision notes.** v1 deferred its load-bearing mechanics into "verified against the oracle." A Principal-Engineer review found 3 blockers; source research against `scottdraves/flam3` then established ground truth. This revision (a) corrects the loop model — **the palette is static during a loop, not cycled**; (b) scopes the oracle correctly — `flam3-genome` (generate) → `flam3-animate` (render), env-var driven, built from source; (c) adds a **prerequisite slice** (widen the data model + port the special-sauce variations); (d) fixes the manifest schema, the determinism claim, the parity thresholds, and the scheduler split. All flam3 citations below are stable `file:line` refs into the cloned `scottdraves/flam3` master.
 
-These were settled across the M3 design discussion (captured in [transitions.md](../../rendering/transitions.md) and the `m3-animation-design` memory) and are treated as locked inputs to this spec:
+## Owner decisions (locked)
 
-1. **Two segment kinds, faithfully ported from flam3** — `sheep_loop` (loop) and `sheep_edge` (transition), both driven by a single `blend ∈ [0,1]` parameter. *Quotable:* "we need to animate the still frames, using a similar methodology and visual appearance as the one used for edge animations — how does the original project do it?"
-2. **Loops and transitions alternate; never two transitions in a row.** Every transition is bracketed by loops. *Quotable:* "we cannot have multiple transitions in a row."
-3. **Stills are animated, not filtered/discarded.** Every archived sheep (all are single-frame stills) becomes a moving loop via `sheep_loop`. *Quotable:* "discarded from being used, not deleted from the archive" — and later superseded in favor of animating them.
-4. **Transitions generated on the fly** from two still sheep; a stored ES edge carries no render information (it is just its two endpoint stills), so on-the-fly `sheep_edge(A,B)` reproduces the stored edge's frames. *Quotable:* "on-the-fly is definitely much better."
-5. **Pair selection = similarity metric + exploration guard.** Pairs chosen for smooth morphs, but with an explicit escape mechanism (ε-greedy / long-range jumps) so playback is not trapped in one small cluster of sheep. *Quotable:* "we need to be careful that this would not restrict us to only a small subset of all the sheeps if we cannot exit the similarity."
-6. **Tiered frame budget applied uniformly to all sheep** (loops are generated live, so a sheep's era does not constrain it): **160** (realtime), **320** (standard), **900** (premium). Loops are played **once**, then transitioned. *Quotable:* "We should use the best version of it, no matter if we use older classic sheeps or the latest ones" + "we also need the intermediate model, 320 frames."
-7. **Faithful port, no source copy.** The `sheep_loop`/`sheep_edge` logic is ported (read) from `flam3-genome.c`; flam3 is **never** linked into or distributed with the repo. The animation parity oracle is dev-only `flam3-animate`, exactly analogous to the M1 golden harness. (Carries the faithful-port directive from M1/M2.)
-8. **CPU and Metal remain statistical twins, not byte-identical** (M2 rule #2). Animated-frame parity inherits this: per-frame, Metal matches CPU within the existing ≥38 dB gate; the *interpolation math* lives in `FlameKit` and is byte-identical across backends.
+1. **Two segment kinds, faithfully ported from flam3** — `sheep_loop` (loop) and `sheep_edge` (transition), both driven by a single `blend ∈ [0,1]`.
+2. **Loops and transitions alternate; never two transitions in a row.** Every transition is bracketed by loops.
+3. **Stills are animated, not filtered/discarded.** Every archived sheep (all single-frame stills) becomes a moving loop via `sheep_loop`.
+4. **Transitions generated on the fly** from two still sheep; a stored ES edge is just its two endpoint stills, so on-the-fly `sheep_edge(A,B)` reproduces the stored edge's frames.
+5. **Pair selection = similarity metric + exploration guard** (ε-greedy escape so playback is not trapped in one cluster).
+6. **Tiered frame budget applied uniformly** (loops are generated live, so a sheep's era doesn't constrain it): **160 / 320 / 900**. Loops played **once**, then transitioned.
+7. **Faithful port, no source copy.** `sheep_loop`/`sheep_edge` logic is ported (read) from `flam3-genome.c`/`flam3.c`; flam3 is **never** linked into or distributed with the repo. The animation oracle is a locally-built `flam3-genome`/`flam3-animate`.
+8. **Add a prerequisite slice** (owner decision, this revision): widen `Variation` to carry parameters and add the `Flame`/`Xform` animation fields, and port the **16** special-sauce variations, **before** S6. The data model cannot support faithful transitions without it.
 
-## Open decisions (resolved with defaults — confirm at spec review)
+## Research-grounded facts (from `scottdraves/flam3` source) — these replace v1's hedged "to be verified" items
 
-These are the implementation-level choices the design docs left open. Each is given a reasoned default so the spec is plan-ready; flag any you want changed.
+### Loop — `sheep_loop` is a pure affine rotation; the palette is STATIC
+- `sheep_loop` (`flam3.c:396-429`) copies the parent, applies motion elements, then calls `flam3_rotate(result, blend*360.0, interpolation_type)` (`flam3.c:426`).
+- `flam3_rotate` (`flam3.c:512-557`) touches **only the pre-affine 2×2** `c[0][0], c[0][1], c[1][0], c[1][1]` (XML `a,b,c,d`), via **left-multiplication `R(θ)·M`** (`flam3.c:551` `mult_matrix`, θ = blend·360°). Translation `e,f` (`c[2][*]`) is **never** touched; **post-affine and camera are untouched**; **final xforms are skipped unconditionally** (`flam3.c:540-542`).
+- **Per-xform gate:** rotate iff `xform.animate != 0` (`flam3.c:521` — *replicate the code, not the contradictory comment on line 520*). Random xforms default `animate=1.0` (rotate); symmetry xforms `animate=0.0` (skip).
+- **Padding xforms** rotate only under `interpolation_type=log` (the `//continue` at `flam3.c:536` is commented out under log; skipped under linear/compat/older).
+- **Everything else is constant across loop keyframes:** `weight`, `color`, `color_speed`, `opacity`, `chaos`, `var[]`, **the palette**, and `hue_rotation`. **There is no palette cycling in `sheep_loop`.**
+- **Seamlessness** comes purely from `R(360°)·M = R(0°)·M = M` → `frame(blend=1)` genome == `frame(blend=0)` genome. v1's "palette wraps" rationale is dropped.
 
-- **A. `emberweft animate` output = a deterministic PNG frame sequence** (`--out dir/`), not a video file. Rationale: video encoding is slice **S10 / M6** (`FlameExport`); S6 should ship the *schedule + frames*, not the muxer. A frame sequence + a `manifest.json` (segment boundaries, blend per frame) is testable, diffable, and directly feeds the future encoder. *Alternative:* also emit an MP4 now via AVFoundation — rejected as scope creep into M6.
-- **B. S6 pair selection ships with the similarity metric from day one**, but behind a `PairSelector` protocol with a trivial `Sequential` implementation used first to TDD the *scheduler* and *interpolation* in isolation, then the real `SimilarityExploration` selector. This de-risks: the math is provable before the metric is tuned.
-- **C. Palette cycle mechanism = faithful flam3 hue rotation** (the same `hue_rotation` flam3 loops use), **not** an ad-hoc HSV shift. Exact mechanism (hue-rotation matrix vs. index shift) is confirmed from `flam3-genome.c` during implementation and pinned by the `flam3-animate` oracle — both yield a seamless wrap, so the *behavior* (frame N ≈ frame 0) is settled even though the internal formula is a verify-against-oracle item.
-- **D. Tier selection is a preset/mode**, not auto-chosen: realtime playback defaults to **160**, screensaver to **900**, export/user to a chosen tier. No magic.
-- **E. Similarity feature vector (preliminary, tunable):** variation-set cosine similarity + palette mean-hue/mean-luma distance + xform-count difference + summed affine-matrix Frobenius distance, weighted. Exploration = ε-greedy with a repeat/recency penalty (avoid the last K sheep). Tuning constants are preliminary and marked `(preliminary)` in tests.
+> **Correction propagated to other docs.** roadmap.md M3, transitions.md, playback-modes.md, and CLAUDE.md all previously said "loop = rotate 360° + circular palette cycle." That is wrong; this revision corrects them to "loop = pure 360° affine rotation; palette static." (Palette motion exists **only in transitions**, via HSV LUT interpolation — see below.)
+
+### Transition — `sheep_edge` (align → rotate both → interpolate)
+`sheep_edge` (`flam3.c:434-508`): copies both parents into `prealign[]`, calls `flam3_align` (pads xforms to equal count + applies special-sauce), sets times 0 and 1, calls `establish_asymmetric_refangles`, **rotates both parents by `blend*360°`**, then `flam3_interpolate(spun, 2, smoother(blend), stagger, result)` (`flam3.c:487`) where `smoother(t) = 3t² − 2t³` (`interpolation.c:339-341`). So both endpoints are themselves spinning during the morph — the "continuously morphing" aesthetic.
+
+### Interpolation modes & defaults (`flam3.h:67-73`)
+- `interpolation` (temporal smoothing of the blend scalar): `linear=0` / `smooth=1`. **Default `linear`** (`flam3.c:1284`). (`sheep_edge` applies `smoother()` regardless, so a 2-keyframe edge is effectively eased.)
+- `interpolation_type` (how xform matrices blend): `linear=0` / `log=1` / `compat=2` / `older=3`. **Default `log`** (`flam3.c:1312`). Log path = polar decomposition (angle + `log(magnitude)`, exponentiate) (`interpolation.c:657-679`). Post-matrix special case: if all parents' post is identity, result post forced identity (`interpolation.c:668-679`). Frames not at an exact control point and not adjacent to one are **forced to `linear` type** (`flam3-genome.c:740`).
+
+### Palette in transitions
+The 256-entry LUT is interpolated between the two parents in HSV space (`interpolate_cmap`, `interpolation.c:149-192`); modes `hsv`, `hsv_circular`, `rgb`, `sweep` (`flam3.h:75-78`); **default `hsv_circular`**. `hue_rotation` itself is linearly interpolated across keyframes (`INTERP(hue_rotation)`, `interpolation.c:478`). `hue_rotation` applied at palette-fetch time is an HSV hue shift: `hsv[0] += hue_rotation*6.0` (`palettes.c:176-178`).
+
+### Special-sauce padding — VERIFIED table (`flam3_align`, `interpolation.c:768-1032`)
+First, parametric-variation params (variation index ≥ 23) are copied from a neighbour genome that has the variation (`interpolation.c:812-844`). Then a rest position is chosen per padded xform:
+
+| Group | Applies under | Variations (flam3 index) | Rest position |
+|---|---|---|---|
+| **A** | `log` only | spherical(2), polar(5), ngon(38), julian(32), juliascope(33), wedge_sph(79), wedge_julia(78) | `linear=-1`, coefs `[-1,0;0,-1;0,0]` (180° identity); **not renormalized** |
+| **B** | all types | rectangles(40), rings2(26), fan2(25), blob(23), perspective(30), curl(39), super_shape(50) | `var=1.0` with rest params (rectangles `x=y=0`; rings2 `val=0`; fan2 `x=y=0`; blob `low=high=waves=1`; perspective `angle=0`, distance kept; curl `c1=c2=0`; supershape `n1=n2=n3=2, rnd=0, holes=0`, `m` kept); **renormalized** |
+| **C** | all types | fan(22), rings(21) | `var=1.0` **AND** coefs `[0,1;1,0;0,0]` (90° swap); **renormalized** |
+| **default** | all types | anything else | `linear=1.0` (identity) |
+
+**v1 errors corrected:** Group C is NOT "kept" — it gets `var=1.0` + swap-affine + renormalization. Group B rest values are load-bearing (blob `1,1,1`; supershape `2,2,2`), not generic "0". **The faithful padder must implement exactly these 16 variations** (plus `linear` as fallback): indices 2, 5, 21, 22, 23, 25, 26, 30, 32, 33, 38, 39, 40, 50, 78, 79.
+
+### stagger
+Not a genome field — a render/interpolate parameter (`flam3.h:562`, threaded through `flam3_interpolate(... double stagger ...)`); in `flam3-animate` it comes from an env var, **default 0.0** (`flam3-genome.c:289`). Mechanism: `get_stagger_coef` (`interpolation.c:343-367`) gives each xform a staggered sub-interval of [0,1] with `smoother()` inside; applies **only for ncp==2, stagger>0, and not the final xform** (`interpolation.c:522-527`). Transitions only, never loops. **Model `stagger` as a render parameter, not a `Flame` field.**
+
+### Oracle pipeline (the corrected parity backbone)
+- **flam3 is not installed and has no Homebrew formula.** Build from source: autotools (`./configure && make`) with deps `zlib`, `libpng`, `libxml2` (`brew install libpng libxml2 zlib automake autoconf libtool`). Pin a repo commit.
+- **No CLI flags** — everything is **env vars** (`flam3-genome.c:451-475`). Modes: `sequence` (whole loop+edge chain for N stills), `rotate` (one loop), `inter` (one edge, requires exactly 2 control points).
+- Literal commands:
+  ```
+  # generate a full loop+edge motion genome for a list of stills:
+  env sequence=stillA.flam3 nframes=160 flam3-genome > seq.flam3
+  # generate one loop / one edge:
+  env rotate=stillA.flam3 frame=80 nframes=160 flam3-genome > loop80.flam3
+  env inter=pair.flam3    frame=80 nframes=160 flam3-genome > edge80.flam3
+  # render the motion genome to a PNG sequence (with temporal oversampling / motion blur):
+  env begin=0 end=160 prefix=out. flam3-animate < seq.flam3
+  ```
+- The harness generates reference motion genomes/frames with `flam3-genome`/`flam3-animate` and compares Emberweft's output. `flam3` is never linked or distributed.
+
+## Open decisions (remaining; confirm at spec review)
+
+- **A. `emberweft animate` output = a deterministic PNG frame sequence + `manifest.json`**, not a video (encoding is S10/M6). *Alternative:* emit MP4 now — rejected as scope creep.
+- **B. S6 ships with the similarity metric from day one**, but behind a `PairSelector` protocol with a trivial `Sequential` impl used first to TDD the scheduler/interpolation in isolation, then `SimilarityExploration`.
+- **C. Tier selection is a preset/mode** (realtime→160, screensaver→900, export→chosen), not auto-chosen.
+- **D. Similarity feature vector (preliminary, tunable):** variation-set cosine + palette mean-hue/luma distance + xform-count difference + summed affine Frobenius distance, weighted; ε-greedy escape with recency penalty.
 
 ## Architecture
 
 ```
+   PREREQUISITE SLICE (S6-pre): widen data model + port 16 special-sauce variations
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │  Flame:  + interpolation, interpolation_type(log), palette_interpolation,│
+   │          + hue_rotation, palette_index0/1 + hue_rotation0/1 + palette_blend│
+   │  Xform:  + animate(rotation gate), padding, wind[2]                      │
+   │  Variation: + named parameters (curl_c1, blob_low, …) — NOT a var[] array │
+   │  Port variations: spherical, polar, ngon, julian, juliascope, wedge_sph, │
+   │    wedge_julia, rectangles, rings2, fan2, blob, perspective, curl,        │
+   │    super_shape, fan, rings   (+ linear fallback)                          │
+   └─────────────────────────────────────────────────────────────────────────┘
                        FlameKit (pure, deterministic — the animation brain)
    ┌─────────────────────────────────────────────────────────────────────────┐
-   │  Loop.blend(sheep, t)            Transition.blend(A, B, t)               │
-   │   = sheep_loop port               = sheep_edge port                      │
-   │   (360° affine rotation +          (log/polar coefs, special-sauce       │
-   │    palette cycle)                   padding, stagger, smooth)            │
+   │  Loop.blend(sheep, t)            Transition.blend(A, B, t, stagger)       │
+   │   = sheep_loop port               = sheep_edge port                       │
+   │   (R(θ)·M, θ=t·360°; pre-affine   (align+special-sauce; rotate both;      │
+   │    2×2 only; palette STATIC)       log/polar interp; smoother(t))         │
    │                                                                         │
-   │  SegmentScheduler  ──►  endless strictly-alternating stream:            │
-   │     .loop(s) → .transition(s→s') → .loop(s') → …                        │
+   │  GenomeInterpolator (REWRITE of Interpolation.swift):                    │
+   │     switch interpolation_type { .linear | .log(=polar) };                │
+   │     thin interpolate(a,b,t) shim delegates to .linear (M1/M2 unbroken)   │
    │                                                                         │
+   │  Schedule (pure, materializable, O(1) seekable by global frame):         │
+   │     frame → (segmentId, kind, fromSheep, toSheep, blend)                 │
    │  PairSelector (protocol): Sequential | SimilarityExploration            │
-   │     (similarity metric + ε-greedy exploration guard)                    │
-   │                                                                         │
-   │  Schedule:  (segment, blend) per output frame, given a frame budget     │
    └─────────────────────────────────────────────────────────────────────────┘
           │  per frame: one interpolated Flame genome
           ├──────────────────────► ReferenceRenderer (CPU)   [parity oracle]
           └──────────────────────► MetalRenderer (Metal)     [production]
 
    S6:  emberweft animate  ──►  PNG frame sequence + manifest.json  (offline, deterministic)
-   S7:  FlamePlayer (actor) + FlameUI (CAMetalLayer)  ──►  realtime @ target fps, adaptive quality
+   S7:  PlaybackDispatcher (actor) + FlameUI (CAMetalLayer)  ──►  realtime @ target fps, adaptive quality
 ```
 
-**Where things live:**
+### Gap analysis (current FlameKit vs. M3 needs) — revised
 
-- **`FlameKit`** — the pure animation math (the whole top box). It is backend-agnostic and `Sendable`. This is the load-bearing, oracle-validated part of M3. New files: `Sources/FlameKit/Loop.swift`, `Transition.swift` (or `Animation.swift` consolidating both + padding), `SegmentScheduler.swift`, `PairSelector.swift`. The existing `Interpolation.swift` is **promoted**: its linear `interpolate` becomes the substrate that `Transition` wraps with log/polar + special-sauce padding; nothing in M1/M2 that calls it breaks.
-- **`EmberweftCLI`** — adds `animate` (S6).
-- **`FlamePlayer`** (currently a placeholder) — the realtime engine (S7).
-- **`FlameUI`** — new (S7): a `CAMetalLayer`-backed view wrapper. (Architecture doc already names it; it does not yet exist as a target.)
-
-### Current FlameKit state vs. what M3 adds (gap analysis)
-
-| Capability | Current state (M2) | M3 work |
+| Capability | Current (M2) | M3 work |
 |---|---|---|
-| Linear genome interpolation | ✅ `Interpolation.interpolate(a,b,t)` — coefs, weights, color, opacity, camera (scale in log-space), palette RGB blend, xform-count padding (extra xform passed through unchanged) | **Reused** as the linear substrate. |
-| Interpolation type `log` (polar coefs) | ❌ coefs lerp linearly | **Add** polar/log coefficient interpolation (smooth rotation/scale morphs). |
-| Special-sauce variation padding | ❌ missing xforms/vvars dropped or passed through | **Add** variation-specific rest positions (spherical/ngon/julian/juliascope/polar/wedge_* → `linear=-1,(-1 0 0 -1 0 0)`; rect/rings2/fan2/blob/supershape/curl/perspective → identity-with-rest-params; fan/rings kept). |
-| `interpolation = smooth` (Catmull-Rom) | ❌ (n/a — single-segment) | **Add** for multi-keyframe sequences; a 2-keyframe A→B edge is effectively linear. |
-| `stagger` (per-xform timing desync) | ❌ | **Add**. |
-| `sheep_loop` (360° rotation + palette cycle) | ❌ | **Add** — the loop primitive. |
-| Palette seamless cycle | ❌ (only flat RGB blend) | **Add** flam3 hue rotation (verify vs oracle). |
-| Segment sequencing (alternation) | ❌ | **Add** `SegmentScheduler`. |
-| Pair selection (similarity + exploration) | ❌ | **Add** `PairSelector`. |
-| `emberweft animate` | ❌ (`render` only) | **Add** (S6). |
-| Realtime engine / adaptive quality / Metal-layer UI | ❌ (placeholder) | **Add** (S7). |
+| `Variation` with named parameters | ❌ `{name, weight}` only | **Prerequisite:** add parameters |
+| Special-sauce variations (16) | ❌ none implemented | **Prerequisite:** port the 16 |
+| `Flame` animation fields | ❌ | **Prerequisite:** add `interpolation`/`interpolation_type`/`palette_interpolation`/`hue_rotation`/palette-hack |
+| `Xform.animate` / `padding` / `wind` | ❌ | **Prerequisite:** add |
+| Linear genome interpolation | ✅ `Interpolation.interpolate` | **Rewrite** as type-switched `GenomeInterpolator`; keep `.linear` shim |
+| `interpolation_type=log` (polar) | ❌ | **Add** |
+| Special-sauce padding (`flam3_align`) | ❌ | **Add** (verified table above) |
+| `stagger` (render param) | ❌ | **Add** (render param, not a field) |
+| `sheep_loop` (pure rotation) | ❌ | **Add** |
+| Transition palette HSV interp | ❌ | **Add** |
+| `Schedule` (pure, seekable) | ❌ | **Add** |
+| `PairSelector` | ❌ | **Add** |
+| `emberweft animate` | ❌ | **Add** (S6) |
+| Realtime engine / adaptive quality / UI | ❌ (placeholder) | **Add** (S7) |
 
-## The math (behavior settled; internals verified against the oracle)
+> **On "reuse Interpolation.swift":** v1 said "promote/reuse as a substrate." That was wrong — `Interpolation.interpolate`'s `mergeVariations` (drops zero-weight vars, re-sorts), xform-count padding (passes extras through unchanged), and one-sided `finalXform` fade are **all incorrect for `log` transitions**. It is a **rewrite** into a `GenomeInterpolator` with an `interpolation_type` switch; a thin `interpolate(a,b,t)` shim delegates to `.linear` so M1/M2 call sites compile and existing tests stay green.
 
-> **Faithfulness posture.** The *behavior* of each primitive is settled and grounded in flam3 source + wiki + Draves papers. The *exact per-xform rotation formula and palette mechanism* are faithful-port items — read from `flam3-genome.c`, written in Swift, and **pinned by byte/PSNR comparison against dev-only `flam3-animate` output**, exactly as M1's affine/atan bugs were pinned by the still-frame oracle. The spec asserts behavior; the plan asserts "port + oracle"; neither asserts unverified internals as fact.
+## Prerequisite slice (S6-pre, before S6)
 
-### Loop — `sheep_loop`
+Owner-approved. Scope:
 
-Animate one still sheep by **rotating the 2×2 linear part of each xform's affine coefficient matrix through a full 360°** across `blend ∈ [0,1]`, while **cycling its palette** (flam3 hue rotation). Because 360° ≡ 0° and the palette wraps, **frame(blend=1) ≈ frame(blend=0)** → a seamless loop. This is the *structural motion of a single genome through the same `blend` pipeline transitions use*; it is what animates every still sheep in the archive.
+1. **Widen `Variation`** to carry named parameters (a keyed dictionary of `Double`, e.g. `["c1": 0, "c2": 0]` for curl), parsed from the flat `varN="value"` XML attributes (`parser.c`). `var[99]` holds weights only; params are separate.
+2. **Add `Flame` fields:** `interpolation` (default `.linear`), `interpolationType` (default `.log`), `paletteInterpolation` (default `.hsvCircular`), `hueRotation` (default 0), and the transition palette-hack (`paletteIndex0/1`, `hueRotation0/1`, `paletteBlend`). **Add `Xform` fields:** `animate` (default 1.0), `padding`, `wind: SIMD2<Double>`. Extend the parser + serializer + round-trip tests.
+3. **Port the 16 special-sauce variations** (+ keep `linear`): spherical, polar, rings, fan, blob, fan2, rings2, perspective, julian, juliascope, ngon, curl, rectangles, super_shape, wedge_julia, wedge_sph — each with its parameter set and faithful formula, added to `Variations.swift`/the Metal variation set, TDD'd per-variation like the M1 set.
 
-- Applied to each xform's affine `a,b,c,d` (the linear part; `e,f` translation handled per flam3).
-- Post-affine and final-xform handling follow flam3 exactly (verified against the oracle).
-- Palette cycle via flam3 hue rotation (seamless by construction).
+This slice ships independently (no animation yet) and is verified by: round-trip parse/serialize of parametric genomes, per-variation unit tests, and the existing M1/M2 parity gates staying green.
 
-### Transition — `sheep_edge`
+## The math (behavior ported + cited; pinned by the oracle)
 
-Morph genome A → B over `blend ∈ [0,1]`, following flam3's interpolation rules ([transitions.md §Transition interpolation fidelity](../../rendering/transitions.md)):
+- **Loop:** `Loop.blend(sheep, t)` → for each non-final xform with `animate != 0`, set affine = `R(t·360°)·M` on the 2×2 only (translation, post, palette, color, weight, chaos unchanged). Padding xforms rotate only under `.log`. Output genome has `frame(t=1) == frame(t=0)`.
+- **Transition:** `Transition.blend(A, B, t, stagger)` → `align(A,B)` (pad to equal count + special-sauce rest positions + copy parametric params from the neighbour that has them) → rotate both by `t·360°` → `interpolate(2cp, smoother(t), stagger)` with `.log` matrix blending and HSV palette interpolation.
+- **Schedule:** a pure value computed from `(library, selectorConfig, seed, tier)`; materialized to a segment list with prefix-summed lengths so any global frame maps to `(segment, blend)` in **O(1)** (seekable, unlike a pull-iterator).
+- **PairSelector:** `Sequential` (test scaffold) and `SimilarityExploration` (ε-greedy: with prob ε pick uniformly-random sheep = escape; else most-similar not-recently-used; recency penalty). `edges.sqlite` is a gold-set validator + optional classic-flock mode, not a render dependency.
 
-- **`interpolation_type = log`** (polar), not linear, so rotations/scaling morph smoothly instead of distorting through the linear path.
-- **Special-sauce padding** for xform-count / variation mismatch (the table in the gap analysis above) — essential because our similarity-based pairing may pair structurally different sheep.
-- **`stagger`** to desynchronize per-xform timing.
-- **`interpolation = smooth`** (Catmull-Rom) for multi-keyframe sequences; a 2-keyframe A→B edge is a single segment, effectively linear.
+## Determinism (G1/G2/G3 — split, do not conflate)
 
-### Sequencing — `SegmentScheduler`
+- **G1 — Schedule + per-frame genome:** a pure function of `(library, selectorConfig, seed, tier, frameIndex)`. Reproducible in **both S6 and S7**. The interpolated `Flame` is byte-identical across CPU and Metal.
+- **G2 — S6 rendered frames:** byte-deterministic given backend + fixed quality (offline path).
+- **G3 — S7 rendered frames:** **NOT byte-deterministic.** The adaptive-quality controller varies `samplesPerPixel` per frame from measured fps + `thermalState`, so the *image* depends on runtime state. Only the *genome* is reproducible; realtime↔offline parity is statistical over a fixed quality, not a per-frame identity. (v1 wrongly implied realtime frames were reproducible.)
 
-An endless, **strictly alternating** stream. A transition is always bracketed by loops; the scheduler is a hard state machine, not a suggestion:
+## Parity & testing
 
-```
-loop(A) → transition(A→B) → loop(B) → transition(B→C) → … → loop(N) → transition(N→A) → loop(A) → …
-```
-
-`blend` advances 0→1 over each segment's frame budget; at blend=1 the segment yields to the next. Loops are played **once**, then transitioned (ES: "a continuously morphing sequence").
-
-### Pair selection — `PairSelector`
-
-Protocol with two implementations:
-
-- **`Sequential`** (test scaffold): round-robin / fixed order. Used first to prove scheduler + interpolation in isolation.
-- **`SimilarityExploration`** (production): pick the next sheep by a similarity metric (feature vector, open decision E) **with an exploration guard** — ε-greedy: with probability ε pick a uniformly-random sheep from the whole library (the escape); otherwise pick the most-similar not-recently-used sheep. A recency penalty prevents immediate repeats. The escape probability guarantees the walk is **not trapped** in one cluster regardless of metric tuning.
-
-`edges.sqlite` (the curated ES edge graph) is available as: (a) a **gold set** to validate/seed the similarity metric (do ES-linked pairs score as similar?), and (b) an optional **classic-flock playback mode** that follows the authored graph. It is **not** a render dependency.
-
-### Frame budget
-
-Per-segment frame count, applied uniformly (loops are generated live, so a sheep's era is irrelevant):
-
-| Tier | Frames | ≈ Duration @ 23 fps | Use case |
-|---|---|---|---|
-| Realtime | 160 | ~5.5–7 s | default playback |
-| Standard | 320 | ~11–14 s | intermediate dwell |
-| Premium | 900 | ~15–39 s | screensaver / export / "stately" |
-
-Both loops and transitions use the same budget. Configurable; adaptive transitions may run shorter/longer for similar/dissimilar pairs (post-MVP lever).
-
-## Determinism
-
-Animation inherits M1/M2 determinism and adds two guarantees:
-
-1. **Per-frame genome is a pure function of `(schedule, frameIndex)`** — no wall-clock, no scheduling-dependent state. Same schedule + frame index → same `Flame` → same frame, within each backend, machine to machine.
-2. **The schedule is a pure function of `(library, selector config, seed, tier)`** — `PairSelector` draws from a seeded RNG (FlameKit's existing `ISAAC`/`RNG`), so the *sequence of sheep* is reproducible. `flam3-animate` parity and `emberweft animate` byte-stable output both rest on this.
-
-The interpolated `Flame` fed to the renderer is **byte-identical across CPU and Metal** (the math lives in `FlameKit`); only the subsequent chaos game differs statistically (M2 parity model).
-
-## Parity & testing (the heart of M3)
-
-The animation oracle is dev-only **`flam3-animate`** (Homebrew), set up exactly like the M1 still-frame golden harness: a checked-in script renders reference frames at frozen `blend`/genome points; `flam3` is never linked or distributed.
-
-New tests (S6 lives mostly in `Tests/FlameKitTests/`; parity in `Tests/FlameReferenceTests/` + `Tests/FlameRendererTests/`):
+Oracle = locally-built `flam3-genome`/`flam3-animate` (pipeline above), set up like the M1 still-frame harness.
 
 | Test | Compares | Metric / threshold |
 |---|---|---|
-| `sheep_loop` seamlessness | frame(blend=0) vs frame(blend=1) of the same sheep | genome equality / near-equality; rendered frames within still-frame parity |
-| `sheep_loop` vs `flam3-animate` | our loop frame at `blend=t` vs flam3's | **PSNR ≥ 38 dB** (faithful-port gate) |
-| `sheep_edge` vs `flam3-animate` | our transition frame at `blend=t` vs flam3's | **PSNR ≥ 38 dB** |
-| Transition continuity | consecutive frames across A→B | no popping; finite everywhere; per-frame Δ bounded |
-| `log` interpolation type | rotation/scale morph path | smoothness vs linear (no distortion through origin) |
-| Special-sauce padding | mismatched xform-count/variation pairs | morph does not pop; weight fades through the rest position |
-| Scheduler alternation | any prefix of the schedule | invariant: no two consecutive `.transition` segments |
-| PairSelector exploration | long schedule walk | visits ≥ X distinct sheep within Y segments (not trapped); reproducible under fixed seed |
-| Determinism | full PNG frame sequence across runs | byte-identical |
-| Animated-frame Metal↔CPU parity | per-frame `RGBA8Image` | **PSNR ≥ 38 dB, SSIM ≥ 0.95** over the frozen animated set |
+| `sheep_loop` seamlessness | `frame(t=0)` vs `frame(t=1)`, same sheep, same seed | genome equality; rendered frames within **Metal↔CPU parity** |
+| `sheep_loop` vs `flam3-genome rotate` | our loop genome/frame vs flam3's | **PSNR ≥ 30 dB, SSIM ≥ 0.95** (vs-flam3, M1 precedent) |
+| `sheep_edge` vs `flam3-genome inter` | our transition vs flam3's | **PSNR ≥ 30 dB, SSIM ≥ 0.95** (vs-flam3) |
+| Special-sauce padding | mismatched pairs (incl. a stored ES edge) | morph does not pop; finiteness holds |
+| Transition continuity (objective) | consecutive frames A→B | (a) genome-space `‖G(t+δ)−G(t)‖ < τ_g`; (b) image-space consecutive-frame **PSNR ≥ 40 dB** (transitions vary slowly) |
+| Scheduler alternation | any schedule prefix | invariant: no two consecutive transitions |
+| PairSelector exploration | long walk | visits ≥ X distinct sheep in Y segments; reproducible under fixed seed |
+| Animated-frame Metal↔CPU parity | per-frame `RGBA8Image` | **PSNR ≥ 38 dB, SSIM ≥ 0.95** (Metal↔CPU gate — distinct from the vs-flam3 30 dB) |
+| Determinism (G2) | full S6 PNG sequence across runs | byte-identical |
 | Finiteness | every animated frame | no NaN/Inf |
-| CLI snapshot | `emberweft animate` frame sequence | byte-stable PNGs committed; manifest schema stable |
+| Near-singular affine during `log` morph | constructed degenerate pair | port flam3's determinant guard → fallback to linear; frames finite |
+| CLI snapshot | `emberweft animate` sequence + manifest | byte-stable; manifest schema stable |
 
-The frozen animation set reuses the existing `Tests/Goldens/genomes/` sheep plus a few representative A→B pairs (including a stored ES edge, to validate on-the-fly = stored-frame equivalence).
+> **Threshold correction (v1 error):** v1 applied 38 dB to the flam3 comparison. testing.md sets the **flam3 oracle at ≥ 30 dB** (different RNG/filter) and **Metal↔CPU at ≥ 38 dB**. This revision splits them. Animated Metal↔CPU parity is neither harder nor easier than stills (same per-frame comparison), so 38 dB stands there.
 
-S7 adds performance/benchmark tests (regression guards, non-gating, `EMBERWEFT_PERF=1`): realtime fps at 1080p per tier, frame-time p50/p95/p99, adaptive-quality step behavior, mode-switch hysteresis.
+S7 perf/adaptive tests (regression guards via `EMBERWEFT_PERF=1`): realtime fps at 1080p per tier, frame-time p50/p95/p99, adaptive-quality step + hysteresis. **Per the review, at least one fps gate and one thermal-step test are promoted to gating for S7** (or the roadmap DoD is renegotiated to "perf best-effort in M3, hard-gated in M4") — flagged for owner confirmation.
+
+### Edge & degenerate-input handling (added per review)
+- Empty/size-1 library → error exit (strict alternation needs ≥ 2 sheep).
+- Malformed/unrenderable sheep mid-walk → skip-and-log with bounded retry; ε-greedy escape never hard-fails on one bad sheep.
+- Similarity NaN (empty variation set → zero-norm vector) → cosine fallback ε.
+- Near-singular affine in `log` interp → port flam3's determinant guard, fall back to linear.
+- Realtime frame-budget overrun → display best-available histogram each vsync (accept noise); never hold/duplicate a frame during a transition.
 
 ## CLI (S6)
 
-`emberweft animate <genome.flam3...> [opts]` — produces an alternating loop/transition PNG frame sequence.
-
 ```
-emberweft animate a.flam3 b.flam3 c.flam3 \
+emberweft animate <still.flam3...> \
+  --library <dir>          # default genomes/electric-sheep/sheep; precomputed feature-vector cache, not a 1.6 GB scan per run
   --out frames/ \
-  --frames 160 \                  # per-segment budget (tier)
-  --segments 5 \                  # how many segments to render (loop+transition pairs)
-  --selector sequential \         # sequential | similarity   (similarity = SimilarityExploration)
+  --frames 160 \           # per-segment budget (tier)
+  --segments 5 \
+  --selector sequential \  # sequential | similarity
   --seed 0 \
   --backend cpu|metal \
   --size WxH --quality N
 ```
 
-Writes `frames/000000.png …` plus `frames/manifest.json` (`[{frame, segmentKind, sheepIndex, blend}]`) — the deterministic contract the future encoder (M6) consumes. Same exit-code/error conventions as `render`; same per-backend parity expectations.
+Writes `frames/000000.png …` + `frames/manifest.json`:
 
-## S6 vs S7 split
+```json
+{
+  "manifestVersion": 1,
+  "tier": 160, "seed": 0, "selector": "sequential",
+  "frames": [
+    { "frame": 0,   "segmentId": 0, "kind": "loop",       "fromSheep": 0, "toSheep": 0, "blend": 0.0,    "interpolationType": "log" },
+    { "frame": 160, "segmentId": 1, "kind": "transition", "fromSheep": 0, "toSheep": 1, "blend": 0.0,    "interpolationType": "log" }
+  ]
+}
+```
 
-- **S6 — CLI animation (FlameKit + CLI).** The pure animation math (`sheep_loop`, `sheep_edge` with log/polar + special-sauce + stagger + smooth, palette cycle), `SegmentScheduler`, `PairSelector` (Sequential + SimilarityExploration), the `flam3-animate` parity oracle, animated-frame parity/continuity/determinism tests, and `emberweft animate`. **Ships a complete, oracle-validated, deterministic offline animation path.** This is the load-bearing slice.
-- **S7 — Realtime engine (FlamePlayer + FlameUI).** An actor-isolated `FlamePlayer` that drives the scheduler at target fps, rendering each interpolated genome via `MetalRenderer`; a `CAMetalLayer`-backed `FlameUI` view; the adaptive-quality controller (iteration-budget feedback, thermal/power-aware, with the hysteresis already drafted in [playback-modes.md](../../playback/playback-modes.md)); triple-buffered frame pacing; prefetch of the upcoming sheep mid-loop. Perf benchmarks as regression guards.
+(`fromSheep == toSheep` for loops; both populated for transitions; `frame` is the global index; `blend` is the raw `t`.) This is the deterministic contract M6's encoder consumes.
 
-S7 reuses the S6 scheduler/selector verbatim — it only adds the *realtime* rendering loop and quality adaptation. No animation math changes in S7.
+## S6-pre / S6 / S7 split
+
+- **S6-pre — prerequisite (FlameKit data model + variations).** Widen `Variation`/`Flame`/`Xform`, extend parser/serializer, port the 16 special-sauce variations. Verified by round-trip + per-variation tests + green M1/M2 gates.
+- **S6 — CLI animation (FlameKit math + CLI).** `Loop`, `Transition` (with `log`/polar + special-sauce + stagger + smoother), `GenomeInterpolator` rewrite, `Schedule`, `PairSelector`, the `flam3-genome`/`flam3-animate` oracle, animated-frame parity/continuity/determinism tests, `emberweft animate`. **Ships a complete, oracle-validated, deterministic offline animation path.**
+- **S7 — Realtime engine (PlaybackDispatcher + FlameUI).** An actor-isolated dispatcher driving the `Schedule` at target fps via `MetalRenderer`; `CAMetalLayer`-backed `FlameUI`; the adaptive-quality controller (iteration-budget feedback, thermal/power-aware, hysteresis per playback-modes.md); triple-buffered pacing; prefetch of the upcoming sheep mid-loop. Reuses S6's `Schedule`/`PairSelector` verbatim — no animation-math change in S7.
 
 ## Docs updated as part of M3
 
-- **[transitions.md](../../rendering/transitions.md)** — promote from "preliminary" to the implemented reality; reconcile the early "linear interpolation / smooth=0/1/2 table" draft sections with the faithful `log` + special-sauce + `sheep_loop` model (some early sections predate the flam3 grounding and now contradict the settled design — they are corrected, not kept).
-- **[playback-modes.md](../../playback/playback-modes.md)** — confirm `SegmentScheduler`, tier presets, and the S7 adaptive-quality wiring as built.
-- **[roadmap.md](../../engineering/roadmap.md)** — flip M3 to ✅ on completion; mark S6/S7 delivered.
-- **[testing.md](../../engineering/testing.md)** — add the animation-parity test layer (the table above) and the `flam3-animate` oracle; record the ≥38 dB animated-frame gate.
-- **[architecture.md](../architecture.md)** — add `FlameUI` target; describe `FlameKit` animation subsystem and the `FlamePlayer` realtime path as built.
-- **`CLAUDE.md`** — already carries the M3 animation bullet; review on completion.
-- **`CHANGELOG.md`** — M3 entry.
+- **[transitions.md](../../rendering/transitions.md)** — promote to implemented reality; **drop the "circular palette cycle" loop claim** and the early draft sections (smooth=0/1/2 table, linear-interp rationale, renormalization, crossfade, quaternion) that contradict the faithful `log`+special-sauce+`sheep_loop` model; document the static-palette loop and HSV-transition palette.
+- **[playback-modes.md](../../playback/playback-modes.md)** — correct the loop/palette wording; replace the stateful `SegmentScheduler` sketch with the pure `Schedule` (O(1) seekable) + S7 `PlaybackDispatcher`; confirm adaptive-quality controller wiring.
+- **[roadmap.md](../../engineering/roadmap.md)** M3 — drop "circular palette"; flip M3 to ✅ on completion.
+- **[testing.md](../../engineering/testing.md)** — add the animation-parity layer (table above) and the `flam3-genome`/`flam3-animate` oracle; record 30 dB (vs-flam3) vs 38 dB (Metal↔CPU).
+- **[architecture.md](../../architecture.md)** — add `FlameUI`; describe the FlameKit animation subsystem + `PlaybackDispatcher`.
+- **CLAUDE.md** — correct the M3 bullet's palette wording.
+- **CHANGELOG.md** — M3 entry (incl. S6-pre prerequisite).
 
 ## Out of scope for M3 (deferred)
 
-- Video muxing / codec / export UI — slice **S10 / M6** (`FlameExport`). S6 stops at the frame sequence + manifest.
-- SwiftUI library browser, metadata editor, import — **M4**.
-- Screensaver bundle, multi-monitor, power-event handling — **M5** (though S7's adaptive quality is the foundation M5 builds on).
-- Audio-reactive parameter modulation — **M7**.
-- HDR / 10-bit / ProRes / AV1 — **M8**.
-- Faithful (non-approximation) density estimation — separate work (unchanged from M1/M2; radius=0 goldens don't exercise it, and the animation path doesn't depend on it).
-- Variations beyond the M1 set of 19 — the special-sauce padding table covers the relevant ones; new variations are additive later.
+- Video muxing/codec/export UI — S10/M6. S6 stops at frame sequence + manifest.
+- SwiftUI browser/metadata/import — M4. Screensaver/multi-monitor/power events — M5.
+- Audio-reactive — M7. HDR/10-bit/ProRes/AV1 — M8.
+- Temporal oversampling / motion blur (`flam3-animate`'s sub-frame sampling) — a fidelity refinement; S6 renders at exact `blend`. Flagged for a later pass.
+- Variations beyond the M1-19 + the 16 special-sauce = 35 total — additive later.
+- Faithful (non-approximation) density estimation — unchanged from M1/M2.
 
 ## Risks & mitigations
 
-- **Unverified flam3 internals (rotation formula, palette mechanism).** *Mitigation:* the `flam3-animate` oracle lands first; `sheep_loop`/`sheep_edge` are not "done" until parity passes. This is the same posture that caught the affine/atan bugs in M1.
-- **`flam3-animate` availability/oracle drift.** *Mitigation:* mirror the M1 golden-harness approach — frozen reference frames checked in, dev-only regeneration script, no silent re-goldening.
-- **Similarity metric traps playback in a cluster.** *Mitigation:* the ε-greedy escape is structural and tested (the "visits ≥ X distinct sheep in Y segments" test passes *before* metric tuning). Even a degenerate metric cannot trap the walk.
-- **Special-sauce padding across mismatched pairs.** Our similarity pairing may pair structurally very different sheep (flam3's authored edges rarely did). *Mitigation:* padding is ported faithfully and exercised by a deliberate mismatched-pair continuity test; if a pair still pops, that is a metric-tuning problem (penalize structural distance more), not an algorithm failure.
-- **Realtime fps at 1080p × 160-frame loops (S7).** *Mitigation:* per-frame cost is unchanged from M2 (animation adds only a cheap genome interpolation per frame); the adaptive-quality controller is the safety net. The 160-frame realtime tier is sized to M2's measured single-frame budget.
-- **S6 scope creep into encoding.** *Mitigation:* open decision A explicitly bounds S6 at the frame sequence + manifest.
+- **flam3 build/oracle availability.** *Mitigation:* S6-pre-adjacent task builds flam3 from source, pins the commit, and runs the literal env-var commands by hand once before any parity test depends on them.
+- **Near-singular affine NaN in `log` morphs.** *Mitigation:* port flam3's determinant guard (fallback to linear); constructed-degenerate-pair test in the frozen set.
+- **Similarity traps playback.** *Mitigation:* ε-greedy escape is structural and tested before metric tuning ("visits ≥ X distinct in Y segments").
+- **Special-sauce across structurally different pairs.** *Mitigation:* verified table ported faithfully; mismatched-pair continuity test; if a pair still pops, that's metric tuning (penalize structural distance), not an algorithm failure.
+- **Realtime fps at 1080p × 160-frame loops.** *Mitigation:* per-frame cost unchanged from M2 (animation adds a cheap genome interpolation); adaptive quality is the safety net; 160-tier sized to M2's measured single-frame budget.
+- **Data-model widening ripple.** *Mitigation:* S6-pre lands first as an isolated, gate-keeping slice; M1/M2 stay green via the `.linear` interpolation shim and additive variation set.

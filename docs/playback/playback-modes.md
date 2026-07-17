@@ -132,9 +132,9 @@ The playback system orchestrates **two segment kinds** — loops and transitions
 using the interpolation engine described in
 [`../rendering/transitions.md`](../rendering/transitions.md).
 
-- **Loop:** a single sheep animated via flam3 `sheep_loop` — rotate the genome
-  0→360° + circular palette cycle over `nframes` (seamless; this is what animates
-  still sheep).
+- **Loop:** a single sheep animated via flam3 `sheep_loop` — **purely rotate**
+  each xform's pre-affine 2×2 0→360° (`R(θ)·M`) over `nframes` (seamless; the
+  **palette is static** during a loop). This is what animates still sheep.
 - **Transition:** a morph from sheep A's genome to sheep B's via `sheep_edge`
   (interpolate coefs + palette over `blend`).
 
@@ -171,7 +171,7 @@ class SegmentScheduler {
 - **Transitions are generated on the fly** (`sheep_edge(A, B)` from two still sheep, pairs chosen by similarity); stored ES edges are an optional curation oracle / classic-flock mode, not a render requirement (an edge is just its two endpoint stills + a time extent).
 - Configurable; adaptive transitions may run shorter/longer for similar/dissimilar sheep.
 
-**Stills are animated, not filtered:** every sheep (still or otherwise) becomes a moving loop via flam3 `sheep_loop` (360° rotation + circular palette). See [transitions.md](../rendering/transitions.md).
+**Stills are animated, not filtered:** every sheep (still or otherwise) becomes a moving loop via flam3 `sheep_loop` (pure 360° affine rotation; palette static). See [transitions.md](../rendering/transitions.md).
 
 ## Frame Pacing
 

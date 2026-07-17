@@ -252,19 +252,27 @@ interpolate(
 ## Segment Sequencing
 
 Playback is built from **two segment kinds** — the same two flam3/ES produce via
-the `flam3-genome` `spin` (loop) and `strand` (transition) functions, both driven
-by a `blend ∈ [0,1]` parameter over `nframes`:
+the `flam3-genome` `spin`/`sheep_loop` (loop) and `spin_inter`/`sheep_edge`
+(transition) functions (`flam3-genome` env modes `rotate`/`inter`/`sequence`),
+both driven by a `blend ∈ [0,1]` parameter over `nframes`:
 
-- **Loop** — animate a single sheep by **rotating the 2×2 linear part of each
-  xform's affine matrix through a full 360°** (flam3 `sheep_loop`, `blend × 360°`)
-  while **cycling its palette circularly** (HSV-circular). Because 360° = 0° and
-  the palette wraps, the last frame equals the first → a **seamless loop**. Same
+- **Loop** — animate a single sheep by **purely rotating the 2×2 linear part of
+  each xform's pre-affine matrix through a full 360°**, as a left-multiply
+  `R(θ)·M` with θ = `blend × 360°` (flam3 `sheep_loop`, `flam3.c:396-557`).
+  **The palette is static during a loop** — it does not cycle. The rotation
+  touches only the pre-affine 2×2 (`a,b,c,d`): translation `e,f`, post-affine,
+  and camera are untouched, and final xforms are skipped; non-final xforms rotate
+  iff `animate ≠ 0`. Because `R(360°)·M = R(0°)·M = M`, the last frame's genome
+  equals the first → a **seamless loop** (no palette wrap involved). Same
   `blend ∈ [0,1]` pipeline transitions use. This is what animates **still,
   single-keyframe sheep** (the archive's sheep are stills; their motion comes
   entirely from this rotation).
 - **Transition** — interpolate genome A → B over `blend ∈ [0,1]` (flam3
-  `sheep_edge`): affine coefs, weights, and palette blend. This is the
-  between-genome morph described in the rest of this document.
+  `sheep_edge`): align + special-sauce-pad to equal xform count, **rotate both
+  endpoints by `blend×360°`**, then interpolate affine coefs (`interpolation_type=log`,
+  polar), weights, and **palette (HSV blend between the two parents)**. This is
+  the between-genome morph described in the rest of this document — and the only
+  place the palette moves.
 
 > The 2-keyframe `.flam3` files in the archive (62% of it) are **stored
 > transitions** (`sheep_edge` endpoints, two different sheep); the 1-keyframe
@@ -362,15 +370,17 @@ density, palette, gamma) is unchanged from M2.
 
 Every archived sheep is a still (single keyframe) — and that is exactly what the
 loop animates. There is **no filtering of stills**: each sheep, still or
-otherwise, is turned into a seamless moving loop via `sheep_loop` (360° rotation
-+ circular palette). The "discard stills / synthesize motion" idea from earlier
-drafts is obsolete — `sheep_loop` *is* the motion, and it is faithful to flam3.
+otherwise, is turned into a seamless moving loop via `sheep_loop` (pure 360°
+affine rotation; palette static). The "discard stills / synthesize motion" idea
+from earlier drafts is obsolete — `sheep_loop` *is* the motion, and it is
+faithful to flam3.
 
 ### Schedule Computation
 
 A loop segment applies `sheep_loop(sheep, blend)` over `loop_duration_frames`
-(blend 0→1 = rotate 0→360° + palette cycle), seamless by construction. A
-transition segment applies `sheep_edge(A, B, blend)` over `transition_duration`.
+(blend 0→1 = rotate the pre-affine 2×2 0→360°, `R(θ)·M`; palette static),
+seamless by construction. A transition segment applies `sheep_edge(A, B, blend)`
+over `transition_duration`.
 
 ```
 current_sheep = 0
@@ -379,7 +389,7 @@ transition_end_frame = loop_end_frame + transition_duration_frames
 
 for frame in 0...:
     if frame < loop_end_frame:
-        # LOOP: rotate this sheep 0->360deg + circular palette (sheep_loop)
+        # LOOP: rotate this sheep's pre-affine 0->360deg (sheep_loop); palette static
         blend = (frame - (loop_end_frame - loop_duration_frames)) / loop_duration_frames
         render(sheepLoop(sheep[current_sheep], blend))
     else if frame < transition_end_frame:

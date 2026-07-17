@@ -76,13 +76,13 @@
 **Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
 
 **Two segment kinds (mirrors the original Electric Sheep):**
-- **Loop** — animate a single sheep by rotating the 2×2 linear part of each xform's affine matrix through a full 360° while cycling its palette circularly (flam3 `sheep_loop`, driven by `blend ∈ [0,1]`); seamless because 360°=0° and the palette wraps. This is structural motion of one genome via the same blend pipeline transitions use, and it is what animates still (single-keyframe) sheep. Frame budget (applied uniformly to all sheep since loops are generated live): **160 (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium** — following the ES evolution 128→160→320→900; played once then transitioned.
+- **Loop** — animate a single sheep by **purely rotating the 2×2 linear part of each xform's pre-affine matrix through a full 360°** as a left-multiply `R(θ)·M`, θ = `blend·360°` (flam3 `sheep_loop`). The **palette is static** during a loop — seamless because `R(360°)·M = R(0°)·M` (not because of a palette wrap; palette motion exists only in transitions). Translation, post-affine, and camera are untouched; final xforms are skipped; non-final xforms rotate iff `animate ≠ 0`. This is structural motion of one genome via the same blend pipeline transitions use, and it animates still (single-keyframe) sheep. Frame budget (applied uniformly to all sheep since loops are generated live): **160 (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium** — following the ES evolution 128→160→320→900; played once then transitioned.
 - **Transition** — a morph from genome A's parameters to genome B's over a short segment.
 
 **Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
 
 **Key deliverables:**
-- **Loop playback** — animate each (still) sheep via flam3 `sheep_loop`: rotate the genome 0→360° + circular palette cycle over `nframes` (seamless). Same blend pipeline as transitions.
+- **Loop playback** — animate each (still) sheep via flam3 `sheep_loop`: **purely rotate** each xform's pre-affine 2×2 0→360° (`R(θ)·M`) over `nframes` (seamless; palette static). Same blend pipeline as transitions.
 - Genome interpolation for smooth **transitions** between genomes, **generated on the fly** from two still sheep (`sheep_edge(A, B)`); a similarity metric picks coherent pairs (stored ES edges are an optional curation oracle / classic-flock mode, not a render requirement — an edge is just its two endpoint stills) ([transitions.md](../rendering/transitions.md))
 - `emberweft animate` (CLI) producing alternating loop/transition segments (S6)
 - **FlamePlayer** realtime adaptive engine (S7)
@@ -93,7 +93,7 @@
 **Dependencies:** M2 complete
 
 **Definition of done:**
-- A sheep's `sheep_loop` (360° rotation + palette cycle) plays seamlessly (frame N = frame 0)
+- A sheep's `sheep_loop` (pure 360° affine rotation; palette static) plays seamlessly (frame N = frame 0)
 - Can play a sequence of genomes where loops and transitions alternate, with no two transitions consecutive
 - Realtime playback at target fps at 1080p *(preliminary: 60 fps on M2 Max)*
 - Adaptive quality adjusts based on thermal state
