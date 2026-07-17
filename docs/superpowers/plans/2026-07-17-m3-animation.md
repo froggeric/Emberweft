@@ -530,72 +530,107 @@ git commit -m "feat(flamekit): parse/serialize variation params + animation attr
 
 **Goal:** Implement the 14 new special-sauce variation formulas (spherical/polar already exist) in the CPU `Variations` table, faithful to flam3 `variations.c`, each TDD'd with a known-input check. `knownNames` grows; unknown-name warnings for these names stop.
 
+> **VERIFIED GROUND TRUTH (read before implementing).** A direct read of `scottdrakes/flam3` `variations.c` settles two facts the spec's prose gets wrong, and both are load-bearing for the M1 RNG-alignment + parity model:
+>
+> 1. **Four of the 16 ARE RNG-consuming** — `var32_juliaN_generic` (1 `flam3_random_isaac_01` draw), `var33_juliaScope_generic` (1 draw), `var50_supershape` (1 draw, **unconditional** — `myrnd*random(...)` is evaluated even when `super_shape_rnd==0`), `var78_wedge_julia` (1 draw). The spec line "none of the 16 variations consumes the ISAAC stream, so RNG alignment holds" is **FALSE**; treat the flam3 source as authoritative. These four MUST be special-cased in `evaluate` exactly as `julia` is, consuming the ISAAC stream in genome-order when reached, or CPU↔Metal RNG alignment (the core M1 invariant) silently breaks.
+> 2. **`rings`(21) and `fan`(22) are COEFFICIENT-DEPENDENT** — they read the xform's affine translation `c[2][0]` (= `e`) and `fan` also reads `c[2][1]` (= `f`). They are NOT pure `(p, w)` closures. (This is why the M1 `Variations.swift` header comment defers them to "M2".) The closure signature must carry `(e, f)`; the Metal side already has `x.e, x.f` in the struct.
+>
+> Consequently the table closure signature is `(SIMD2<Double>, Double, [String:Double], SIMD2<Double>) -> SIMD2<Double>` — `(p, weight, params, ef)` where `ef = SIMD2(x.affine.e, x.affine.f)` — and `evaluate` gains an `ef:` parameter. The four RNG-consuming variations are special-cased in `evaluate` (not in the table) following the existing `julia` pattern, because `inout ISAAC` cannot escape a stored closure.
+
 **Files:**
 - Modify: `Sources/FlameKit/Variations.swift`
+- Modify: `Sources/FlameReference/ChaosGame.swift` (the single CPU call site `Variations.evaluate(x.variations, at: pre, rng: &rng)` gains `ef: SIMD2(x.affine.e, x.affine.f)`)
 - Test: `Tests/FlameKitTests/VariationsTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `Variations.knownNames` includes all 16 special-sauce names; `evaluate` dispatches each via a `(p, weight, params) -> SIMD2<Double>` closure keyed by name.
-- [ ] Each of the 14 new formulas matches a hand-computed expected output on a fixed `(x,y)` input (tests cite the flam3 formula).
+- [ ] `Variations.knownNames` includes all 16 special-sauce names; `evaluate` dispatches each via a `(p, weight, params, ef) -> SIMD2<Double>` closure keyed by name, PLUS in-function special cases for the RNG-consuming `julia` (existing), `julian`, `juliascope`, `super_shape`, `wedge_julia` (each consumes the ISAAC stream once per reached variation, in genome order).
+- [ ] **RNG alignment pin:** a unit test constructs an xform with `[julia, julian]` (both weight 1) and asserts CPU `evaluate` consumes exactly the same ISAAC words as a port of flam3's variation loop (`julia` draws first because it appears first in genome order). The four RNG-consuming special-sauce each draw exactly 1 word.
+- [ ] `evaluate` signature is `evaluate(_ variations:, at:, ef: SIMD2<Double>, rng: inout ISAAC)`; the ChaosGame call site passes `ef: SIMD2(x.affine.e, x.affine.f)`.
+- [ ] Each of the 14 new formulas matches the expected output recomputed from the **actual flam3 `varN_*` body** (cite the C line-by-line in the test comment). Self-invented formulas and self-consistent-but-unfaithful tests are forbidden (the round-2 review caught a 2×-frequency blob, a fabricated curl, a 2×-denominator rectangles, and a fabricated rings this way).
 - [ ] `evaluate` no longer warns for any of the 16 names.
-- [ ] flam3 EPS guards present where the source has them (`rings2_val²+EPS`, `fan2_x²+EPS`, curl denominator, `perspective` distance).
+- [ ] flam3 EPS guards present where the source has them (`rings` `dx=e²+EPS`; `fan` `dx=π·(e²+EPS)`; `rings2_val²+EPS`; `fan2_x²+EPS`; curl `re²+im²` denominator; `perspective` distance).
 
 **Verify:** `swift test --filter VariationsTests` → PASS.
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests** (append to `VariationsTests.swift`; one per variation). Example shapes:
+- [ ] **Step 1: Write failing tests** (append to `VariationsTests.swift`; one per variation). **Recompute every expected value from the real flam3 `varN_*` body** (the C is quoted inline). Do NOT write the test from the implementation — that is how round 1 shipped a 2×-frequency blob and a fabricated curl.
 
 ```swift
-private func eval(_ name: String, _ p: SIMD2<Double>, _ w: Double, _ params: [String:Double] = [:]) -> SIMD2<Double> {
-    Variations.evaluate([Variation(name: name, weight: w, parameters: params)], at: p, rng: &ISAAC(isaacSeed: "t"))
+private func eval(_ name: String, _ p: SIMD2<Double>, _ w: Double,
+                  _ params: [String:Double] = [:], _ ef: SIMD2<Double> = .zero) -> SIMD2<Double> {
+    Variations.evaluate([Variation(name: name, weight: w, parameters: params)],
+                        at: p, ef: ef, rng: &ISAAC(isaacSeed: "t"))
 }
-func testRings() {            // var21_rings: r = w/(tx²+ty²+EPS); m = 2*PI*r²*(tx²+ty²); (m*tx, m*ty) per flam3
-    let out = eval("rings", SIMD2(0.5, 0.0), 1.0)
-    let sumsq = 0.25; let eps = 1e-10
-    let r = 1.0/(sumsq+eps); let m = 2.0 * .pi * r*r * sumsq
-    XCTAssertEqual(out.x, m*0.5, accuracy: 1e-9); XCTAssertEqual(out.y, 0, accuracy: 1e-9)
+// var21_rings (variations.c): dx = e*e + EPS; r = sqrt(x²+y²);
+//   r = w*( fmod(r+dx, 2*dx) - dx + r*(1-dx) ); (r*cos(a), r*sin(a)) where a=atan2(x,y).
+func testRings() {
+    let p = SIMD2<Double>(0.5, 0.0); let e = 0.7; let eps = 1e-10
+    let out = eval("rings", p, 1.0, [:], SIMD2(e, 0.0))
+    let dx = e*e + eps; let r = sqrt(p.x*p.x + p.y*p.y); let a = atan2(p.x, p.y)
+    let rr = 1.0 * (fmod(r+dx, 2*dx) - dx + r*(1-dx))
+    XCTAssertEqual(out.x, rr*cos(a), accuracy: 1e-9)
+    XCTAssertEqual(out.y, rr*sin(a), accuracy: 1e-9)
 }
-func testFan() {              // var22_fan: fan via atan + rings-style; cite variations.c
-    let out = eval("fan", SIMD2(0.3, 0.4), 1.0)
-    XCTAssertEqual(out.x.isFinite, true); XCTAssertEqual(out.y.isFinite, true)
-    // anchor: fan = rings(r) but angle-quantized; compare to a recomputed expected.
-    let a = atan2(0.3,0.4); let r = sqrt(0.09+0.16)+1e-10
-    let r2 = 1.0/(0.25+1e-10); let m = 2.0*.pi*r2*r2*0.25
-    // (compute the fan-quantized angle per flam3 var22 and assert == out) ...
-    _ = (a, r, m)
+// var22_fan (variations.c): dx = π*(e*e+EPS); dy = f; dx2 = dx/2; a = atan2(x,y);
+//   a += (fmod(a+dy,dx) > dx2) ? -dx2 : dx2; r = w*sqrt(x²+y²); (r*cos a, r*sin a).
+func testFan() {
+    let p = SIMD2<Double>(0.3, 0.4); let e = 0.5; let f = 0.2
+    let out = eval("fan", p, 1.0, [:], SIMD2(e, f))
+    let dx = .pi*(e*e + 1e-10); let dy = f; let dx2 = 0.5*dx
+    var a = atan2(p.x, p.y); let r = 1.0*sqrt(p.x*p.x+p.y*p.y)
+    a += (fmod(a+dy, dx) > dx2) ? -dx2 : dx2
+    XCTAssertEqual(out.x, r*cos(a), accuracy: 1e-9)
+    XCTAssertEqual(out.y, r*sin(a), accuracy: 1e-9)
 }
-func testBlob() {             // var23_blob: low/high/waves radial modulation
-    let out = eval("blob", SIMD2(0.6, 0.0), 1.0, ["blob_low":0.3,"blob_high":1.0,"blob_waves":2.0])
-    let r = sqrt(0.36); let a = atan2(0.6,0.0)
-    let rad = 0.3 + (1.0-0.3)*(sin(2.0*a*2.0)+1.0)*0.5
-    XCTAssertEqual(out.x, 1.0*r*rad*cos(a), accuracy: 1e-9)
+// var23_blob: r = sqrt(x²+y²); a = atan2(x,y);
+//   r *= low + (high-low)*(0.5 + 0.5*sin(waves*a));  (w*sin(a)*r, w*cos(a)*r).
+func testBlob() {
+    let p = SIMD2<Double>(0.6, 0.0)
+    let out = eval("blob", p, 1.0, ["blob_low":0.3,"blob_high":1.0,"blob_waves":2.0])
+    var r = sqrt(p.x*p.x+p.y*p.y); let a = atan2(p.x, p.y)
+    r *= 0.3 + (1.0-0.3)*(0.5 + 0.5*sin(2.0*a))      // NOTE: waves*a, NOT 2*waves*a
+    XCTAssertEqual(out.x, 1.0*sin(a)*r, accuracy: 1e-9)  // NOTE: sin on x, cos on y
+    XCTAssertEqual(out.y, 1.0*cos(a)*r, accuracy: 1e-9)
 }
+// var39_curl: complex reciprocal. re = 1 + c1*x + c2*(x²-y²); im = c1*y + 2*c2*x*y;
+//   r = w/(re²+im²); ( (x*re + y*im)*r, (y*re - x*im)*r ).
 func testCurl() {
-    let out = eval("curl", SIMD2(0.5, 0.2), 1.0, ["curl_c1":0.5,"curl_c2":0.0])
-    // var39_curl: denom c1²+c2²+... ; cite variations.c, recompute expected.
-    let x=0.5,y=0.2,c1=0.5,c2=0.0
-    let t = 1.0 + c1*x + c2*y
-    let nx = (x + c1*(x*x - y*y))/t
-    XCTAssertEqual(out.x, 1.0*nx, accuracy: 1e-9)
+    let p = SIMD2<Double>(0.5, 0.2)
+    let out = eval("curl", p, 1.0, ["curl_c1":0.5,"curl_c2":0.1])
+    let (x,y,c1,c2) = (p.x,p.y,0.5,0.1)
+    let re = 1.0 + c1*x + c2*(x*x - y*y)
+    let im = c1*y + 2.0*c2*x*y
+    let r = 1.0/(re*re + im*im)
+    XCTAssertEqual(out.x, (x*re + y*im)*r, accuracy: 1e-9)
+    XCTAssertEqual(out.y, (y*re - x*im)*r, accuracy: 1e-9)
 }
+// var40_rectangles: if x==0: w*x  else  w*((2*floor(x/rx)+1)*rx - x).  NOTE: floor(x/rx), not floor(x/(2*rx)).
 func testRectangles() {
-    let out = eval("rectangles", SIMD2(1.3, 0.7), 1.0, ["rectangles_x":0.4,"rectangles_y":0.6])
-    XCTAssertEqual(out.x, 1.0*(0.4*(2*floor(1.3/(2*0.4))+1) - 1.3), accuracy: 1e-9)
+    let p = SIMD2<Double>(1.3, 0.7)
+    let out = eval("rectangles", p, 1.0, ["rectangles_x":0.4,"rectangles_y":0.6])
+    XCTAssertEqual(out.x, 1.0*((2*floor(1.3/0.4)+1)*0.4 - 1.3), accuracy: 1e-9)
+    XCTAssertEqual(out.y, 1.0*((2*floor(0.7/0.6)+1)*0.6 - 0.7), accuracy: 1e-9)
 }
-func testSuperShapeFinite() {
+// RNG-consuming: draw exactly 1 ISAAC word, finite output, matches a re-derived expectation.
+func testSuperShapeDrawsOneAndFinite() {
+    var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+    _ = rng1.next()   // baseline
     let out = eval("super_shape", SIMD2(0.4,0.0), 1.0,
         ["super_shape_rnd":0,"super_shape_m":4,"super_shape_n1":2,"super_shape_n2":2,"super_shape_n3":2,"super_shape_holes":0])
+    _ = rng2.next()   // super_shape consumed one word
     XCTAssertTrue(out.x.isFinite); XCTAssertTrue(out.y.isFinite)
+    XCTAssertEqual(rng1.next(), rng2.next())   // stream offset by exactly 1
 }
-func testJulianFinite() {
+func testJulianDrawsOneAndFinite() {
     let out = eval("julian", SIMD2(0.3,0.1), 1.0, ["julian_power":2,"julian_dist":1.0])
     XCTAssertTrue(out.x.isFinite)
 }
-// + juliascope, ngon, fan2, rings2, perspective, wedge_julia, wedge_sph — one finite/anchored test each.
+// + juliascope, ngon, fan2, rings2, perspective, wedge_julia, wedge_sph — one finite/anchored test each,
+//   each recomputed from the variations.c body. wedge_julia/juliascope assert the 1-word RNG draw.
 ```
 
-(For each variation, complete the expected-value computation in the test body by following the flam3 formula cited in the inline comment. The finite checks are mandatory; the anchored equality checks are mandatory for `rings`/`blob`/`curl`/`rectangles` and any other with a clean closed form.)
+(The finite checks are mandatory for ALL 14; the anchored equality checks are mandatory for `rings`, `fan`, `blob`, `curl`, `rectangles`, `rings2`, `fan2`, `ngon`, `perspective` — the ones with a clean closed form.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -604,51 +639,54 @@ Expected: FAIL (names warn-unknown / return zero).
 
 - [ ] **Step 3: Write minimal implementation**
 
-Change the table value type to carry params: `(SIMD2<Double>, Double, [String: Double]) -> SIMD2<Double>`, and update `evaluate` to pass `v.parameters`. Then add the 14 closures (port from flam3 `variations.c`; EPS = 1e-10). Representative ports (write all 14):
+(a) Change `evaluate` to `evaluate(_ variations:, at:, ef: SIMD2<Double>, rng: inout ISAAC)`. Special-case `julian`, `juliascope`, `super_shape`, `wedge_julia` in the function body (each draws one ISAAC word via `rng.isaac01()` in the flam3-documented position) BEFORE the table lookup, exactly as `julia` already is. Order matters: walk `variations` in genome order and draw RNG when an RNG-consuming variation is reached, so CPU matches flam3's variation loop.
+
+(b) Table closure type: `(SIMD2<Double>, Double, [String:Double], SIMD2<Double>) -> SIMD2<Double>` — `(p, w, params, ef)`. Port each formula line-for-line from `variations.c` (EPS = 1e-10). The faithful rings/fan/blob/curl/rectangles bodies (quoted so the implementer cannot get them wrong):
 
 ```swift
 let eps = 1e-10
-t["rings"] = { p, w, _ in          // var21_rings
-    let sumsq = p.x*p.x + p.y*p.y; let r = w / (sumsq + eps)
-    let m = 2.0 * .pi * r * r * sumsq
-    return SIMD2(m * p.x, m * p.y)
+t["rings"] = { p, w, _, ef in       // var21_rings — COEFFICIENT-DEPENDENT (ef.x = e)
+    let dx = ef.x*ef.x + eps
+    var r = (p.x*p.x + p.y*p.y).squareRoot()        // precalc_sqrt
+    let a = atan2(p.x, p.y)                          // precalc_atan
+    r = w * (fmod(r+dx, 2*dx) - dx + r*(1 - dx))
+    return SIMD2(r * cos(a), r * sin(a))
 }
-t["fan"] = { p, w, _ in            // var22_fan
-    let a = atan2(p.x, p.y); let sumsq = p.x*p.x + p.y*p.y
-    let r = w / (sumsq + eps); let m = 2.0 * .pi * r * r * sumsq
-    let dy = m * p.y; let dx = m * p.x
-    let frac = a / .pi            // fan quantization; full flam3 form:
-    let n = floor(frac * 2.0)     // (use exact flam3 var22 expression here)
-    _ = (dy, dx, n)
-    // Replace the placeholder lines above with the exact var22_fan body from
-    // variations.c (atan-based two-arm fan). Compute and return (x,y).
-    return SIMD2(dx, dy)          // placeholder line removed in real impl
+t["fan"] = { p, w, _, ef in         // var22_fan — COEFFICIENT-DEPENDENT (ef.x=e, ef.y=f)
+    let dx = .pi * (ef.x*ef.x + eps); let dy = ef.y; let dx2 = 0.5*dx
+    var a = atan2(p.x, p.y)
+    let r = w * (p.x*p.x + p.y*p.y).squareRoot()
+    a += (fmod(a+dy, dx) > dx2) ? -dx2 : dx2
+    return SIMD2(r * cos(a), r * sin(a))
 }
-t["blob"] = { p, w, par in         // var23_blob
+t["blob"] = { p, w, par, _ in       // var23_blob
     let low = par["blob_low"] ?? 0; let high = par["blob_high"] ?? 1; let waves = par["blob_waves"] ?? 1
-    let r = (p.x*p.x + p.y*p.y).squareRoot(); let a = atan2(p.x, p.y)
-    let rad = low + (high - low) * (sin(waves * a * 2.0) + 1.0) * 0.5
-    return SIMD2(w * r * rad * cos(a), w * r * rad * sin(a))
+    var r = (p.x*p.x + p.y*p.y).squareRoot()
+    let a = atan2(p.x, p.y)
+    r *= low + (high - low) * (0.5 + 0.5*sin(waves*a))   // 0.5+0.5*sin(waves*a), NOT (sin(2*waves*a)+1)*0.5
+    return SIMD2(w * sin(a) * r, w * cos(a) * r)         // sin on x, cos on y
 }
-t["curl"] = { p, w, par in         // var39_curl
+t["curl"] = { p, w, par, _ in       // var39_curl — complex reciprocal
     let c1 = par["curl_c1"] ?? 1; let c2 = par["curl_c2"] ?? 0
-    let t1 = 1 + c1*p.x + c2*p.y
-    let nx = (p.x + c1*(p.x*p.x - p.y*p.y)) / t1
-    let ny = (p.y + c2*(p.x*p.x - p.y*p.y)) / t1
-    return SIMD2(w * nx, w * ny)
+    let re = 1.0 + c1*p.x + c2*(p.x*p.x - p.y*p.y)
+    let im = c1*p.y + 2.0*c2*p.x*p.y
+    let r = w / (re*re + im*im)
+    return SIMD2((p.x*re + p.y*im)*r, (p.y*re - p.x*im)*r)
 }
-t["rectangles"] = { p, w, par in   // var40_rectangles
+t["rectangles"] = { p, w, par, _ in // var40_rectangles
     let rx = par["rectangles_x"] ?? 1; let ry = par["rectangles_y"] ?? 1
-    let nx = rx == 0 ? p.x : (rx * (2 * floor(p.x / (2*rx)) + 1) - p.x)
-    let ny = ry == 0 ? p.y : (ry * (2 * floor(p.y / (2*ry)) + 1) - p.y)
+    let nx = rx == 0 ? p.x : ((2*floor(p.x/rx) + 1)*rx - p.x)   // floor(p.x/rx), NOT floor(p.x/(2*rx))
+    let ny = ry == 0 ? p.y : ((2*floor(p.y/ry) + 1)*ry - p.y)
     return SIMD2(w * nx, w * ny)
 }
-// julian / juliascope / ngon / fan2 / rings2 / perspective / super_shape /
-// wedge_julia / wedge_sph: port each verbatim from variations.c into a closure
-// of the same signature, reading params via `par["..."] ?? default`.
+// ngon, fan2, rings2, perspective: port verbatim from variations.c (all param-driven, no RNG, no coefs).
+// julian / juliascope / super_shape / wedge_julia: implemented as in-function special cases in `evaluate`
+//   (they draw 1 ISAAC word each — see (a)). Their formulas also port verbatim from variations.c.
 ```
 
-> **No placeholder in the final file:** complete every `varN_*` body exactly as flam3 writes it (the engineer reads `variations.c` for the remaining 9). The `fan` body shown with `_ = (...)`/`placeholder` is an outline only — the committed implementation is the real formula. Update `knownNames` to include all 16 names; the existing `evaluate`/`julia`/canonical-order comments stay.
+(c) Update `knownNames` to include all 16 names. The existing `julia` in-function special case stays; the canonical-order/ASSUMPTIONS comment is updated in Task 5.
+
+> **No placeholder in the final file:** complete every `varN_*` body exactly as flam3 writes it. The four RNG-consuming special cases must each consume exactly one `isaac01()` draw at the point flam3 does (e.g. `super_shape` draws BEFORE using `precalc_sqrt`, even when `rnd==0`).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -814,7 +852,9 @@ git commit -m "feat(renderer): GPUXform 33-slot canonical table + param channel 
 
 **Acceptance Criteria:**
 - [ ] 14 NEW MSL `v_<name>` functions land (`rings`, `fan`, `blob`, `fan2`, `rings2`, `perspective`, `julian`, `juliascope`, `ngon`, `curl`, `rectangles`, `super_shape`, `wedge_julia`, `wedge_sph`); the pre-existing `v_spherical`/`v_polar` cover the remaining two of the 16 special-sauce names. `apply_xform_body` reads `varWeights[0..<33]` and runs a 33-line guarded chain, passing `&x.varParams[slot*8]` positionally to each parametric call.
-- [ ] For each of the 16 names, a constructed single-variation genome renders Metal vs CPU at PSNR ≥ 38 dB / SSIM ≥ 0.95.
+- [ ] **RNG-consuming MSL variations take `thread IsaacState& rng` and draw exactly one word each, in canonical-slot order within `apply_xform_body`** — `v_julian`, `v_juliascope`, `v_super_shape`, `v_wedge_julia` (mirroring the existing `v_julia(pre, w, rng)` pattern). This is mandatory: the spec line "none of the 16 variations consumes the ISAAC stream" is wrong (verified in Task 4), and Metal RNG alignment is the core M1 invariant. The guarded if-chain must pass `rng` to these four in the same relative order the CPU `evaluate` reaches them (genome order); a multi-RNG-variation xform parity test (below) is the gate.
+- [ ] **Coefficient-dependent MSL variations take `x.e, x.f`** — `v_rings(pre, w, x.e)` and `v_fan(pre, w, x.e, x.f)` (both already live in the `GPUXform` 15-float header; no layout change).
+- [ ] For each of the 16 names, a constructed single-variation genome renders Metal vs CPU at PSNR ≥ 38 dB / SSIM ≥ 0.95. **Plus one multi-variation genome** with `[linear, julian, julia]` on one xform (exercises RNG draw ORDER across julia + an RNG-consuming special-sauce) at ≥ 38 dB — this is the RNG-alignment gate the spec's wrong claim would have skipped.
 - [ ] No NaN/Inf pixels on any of the 16 constructed genomes.
 - [ ] The full `EndToEndParityTests` suite stays green (the frozen genomes don't use the new names, so slots 19..32 stay weight-zero).
 
@@ -861,28 +901,46 @@ Expected: FAIL (Metal warns / returns near-blank for the new names).
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `Kernels.metal`, add `v_<name>(float2 p, float w, thread const float* params)` for each of the 14, ports of the Task-4 CPU closures (Float math). Examples:
+In `Kernels.metal`, add the 14 MSL functions. Signatures follow the Task-4 CPU ports (Float math); the coef-dependent ones take `x.e`/`x.f`, the RNG-consuming ones take `thread IsaacState& rng` and draw exactly one word via `isaac_01(rng)` at the flam3-documented position. Faithful examples:
 
 ```metal
-static inline float2 v_rings(float2 p, float w) {
-    float sumsq = p.x*p.x + p.y*p.y; float r = w / (sumsq + EPS_MS);
-    float m = 2.0f * M_PI_F * r * r * sumsq;
-    return float2(m * p.x, m * p.y);
+// coef-dependent (ef.x = x.e)
+static inline float2 v_rings(float2 p, float w, float e) {
+    float dx = e*e + EPS_MS;
+    float r = sqrt(p.x*p.x + p.y*p.y);
+    float a = atan2(p.x, p.y);
+    r = w * (fmod(r+dx, 2.0f*dx) - dx + r*(1.0f - dx));
+    return float2(r*cos(a), r*sin(a));
 }
+// param-driven, faithful (sin on x, cos on y; 0.5+0.5*sin(waves*a))
 static inline float2 v_blob(float2 p, float w, thread const float* pr) {
     float low = pr[0], high = pr[1], waves = pr[2];
-    float r = sqrt(sumsq(p)); float a = atan2(p.x, p.y);
-    float rad = low + (high - low) * (sin(waves * a * 2.0f) + 1.0f) * 0.5f;
-    return float2(w * r * rad * cos(a), w * r * rad * sin(a));
+    float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
+    r *= low + (high - low) * (0.5f + 0.5f*sin(waves*a));
+    return float2(w * sin(a) * r, w * cos(a) * r);
 }
+// complex reciprocal (NOT the made-up version)
 static inline float2 v_curl(float2 p, float w, thread const float* pr) {
     float c1 = pr[0], c2 = pr[1];
-    float t = 1.0f + c1*p.x + c2*p.y;
-    return float2(w * (p.x + c1*(p.x*p.x - p.y*p.y)) / t,
-                  w * (p.y + c2*(p.x*p.x - p.y*p.y)) / t);
+    float re = 1.0f + c1*p.x + c2*(p.x*p.x - p.y*p.y);
+    float im = c1*p.y + 2.0f*c2*p.x*p.y;
+    float r = w / (re*re + im*im);
+    return float2((p.x*re + p.y*im)*r, (p.y*re - p.x*im)*r);
 }
-// ... rectangles, fan, fan2, rings2, perspective, julian, juliascope, ngon,
-//     super_shape, wedge_julia, wedge_sph — each reads pr[0..k] positionally ...
+// RNG-consuming: one isaac_01 draw, UNCONDITIONALLY (even when super_shape_rnd==0)
+static inline float2 v_super_shape(float2 p, float w, thread const float* pr, thread IsaacState& rng) {
+    float rnd = pr[0], m = pr[1], n1 = pr[2], n2 = pr[3], n3 = pr[4], holes = pr[5];
+    float atanyx = atan2(p.x, p.y);     // flam3 precalc_atanyx
+    float theta = m*atanyx + M_PI_4_F;  // super_shape_pm_4 precomputed on host? NO — port verbatim
+    float st = sin(theta), ct = cos(theta);
+    float t1 = pow(fabs(ct), n2), t2 = pow(fabs(st), n3);
+    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float rand = isaac_01(rng);         // drawn before the rnd multiply, always
+    float r = w * ((rnd*rand + (1.0f-rnd)*ps) - holes) * pow(t1+t2, -1.0f/n1) / ps;
+    return float2(r*p.x, r*p.y);
+}
+// ... fan (coef e,f), rectangles, fan2, rings2, perspective, julian(rng), juliascope(rng),
+//     ngon, wedge_julia(rng), wedge_sph — each a verbatim Float port of variations.c ...
 ```
 
 Extend `apply_xform_body` to cover all 33 canonical slots — NO new dispatch mechanism, NO side-channel. Task 5 already grew `varWeights` from 19 → 33 and made `Variations.canonicalOrder` a re-export of `VariationDescriptor.canonicalOrder` (33 entries), so the existing `idxMap[name]` host packer already routes every special-sauce name to its slot. The MSL change is purely mechanical:
@@ -891,26 +949,32 @@ Extend `apply_xform_body` to cover all 33 canonical slots — NO new dispatch me
 - Append one guarded line per new slot, in canonical-slot order (slots 19..32). Each parametric line passes a pointer into the param channel at the slot's offset; parameterless lines (`rings`, `fan`) take no param pointer. Concretely:
 
 ```metal
-if (w[19] != 0.0f) acc += v_rings(pre, w[19]);                       // Group C, parameterless
-if (w[20] != 0.0f) acc += v_fan(pre, w[20]);                         // Group C, parameterless
+if (w[19] != 0.0f) acc += v_rings(pre, w[19], x.e);                                   // Group C, coef-dependent (e)
+if (w[20] != 0.0f) acc += v_fan(pre, w[20], x.e, x.f);                                // Group C, coef-dependent (e,f)
 if (w[21] != 0.0f) acc += v_blob(pre, w[21], &x.varParams[21*SLOT_WIDTH_MS]);
 if (w[22] != 0.0f) acc += v_fan2(pre, w[22], &x.varParams[22*SLOT_WIDTH_MS]);
 if (w[23] != 0.0f) acc += v_rings2(pre, w[23], &x.varParams[23*SLOT_WIDTH_MS]);
 if (w[24] != 0.0f) acc += v_perspective(pre, w[24], &x.varParams[24*SLOT_WIDTH_MS]);
-if (w[25] != 0.0f) acc += v_julian(pre, w[25], &x.varParams[25*SLOT_WIDTH_MS]);
-if (w[26] != 0.0f) acc += v_juliascope(pre, w[26], &x.varParams[26*SLOT_WIDTH_MS]);
+if (w[25] != 0.0f) acc += v_julian(pre, w[25], &x.varParams[25*SLOT_WIDTH_MS], rng);   // RNG-consuming (1 draw)
+if (w[26] != 0.0f) acc += v_juliascope(pre, w[26], &x.varParams[26*SLOT_WIDTH_MS], rng); // RNG-consuming (1 draw)
 if (w[27] != 0.0f) acc += v_ngon(pre, w[27], &x.varParams[27*SLOT_WIDTH_MS]);
 if (w[28] != 0.0f) acc += v_curl(pre, w[28], &x.varParams[28*SLOT_WIDTH_MS]);
 if (w[29] != 0.0f) acc += v_rectangles(pre, w[29], &x.varParams[29*SLOT_WIDTH_MS]);
-if (w[30] != 0.0f) acc += v_super_shape(pre, w[30], &x.varParams[30*SLOT_WIDTH_MS]);
-if (w[31] != 0.0f) acc += v_wedge_julia(pre, w[31], &x.varParams[31*SLOT_WIDTH_MS]);
+if (w[30] != 0.0f) acc += v_super_shape(pre, w[30], &x.varParams[30*SLOT_WIDTH_MS], rng); // RNG-consuming (1 draw, UNCONDITIONAL)
+if (w[31] != 0.0f) acc += v_wedge_julia(pre, w[31], &x.varParams[31*SLOT_WIDTH_MS], rng); // RNG-consuming (1 draw)
 if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]);
 // (slot index literal == position in the Task-5 appended canonicalOrder tail; the
 //  testCanonicalOrderGrewTo33NoDupes assertion pins the order, so a slot/func
 //  mismatch fails loudly at test time, not silently at render time.)
+// RNG ORDER: CPU walks genome-order, Metal walks canonical-slot order. These
+// match ONLY because the Metal host folds same-name weights into one slot and
+// the RNG-consuming slots (julian/juliascope/super_shape/wedge_julia + julia at 12)
+// are each hit at most once per xform — the multi-RNG-variation parity test
+// (Acceptance Criteria) pins this. Revisit if a genome ever has ≥2 distinct
+// RNG-consuming special-sauce names on one xform in a different order than slot order.
 ```
 
-(The exact slot numbers above depend on the appended order chosen in Task 5; pin them together — the `SpecialSauceParityTests` per-name run is the correctness oracle. `spherical`(16) and `polar`(14) already exist as `v_spherical`/`v_polar` and need no new function.)
+(The exact slot numbers above depend on the appended order chosen in Task 5; pin them together — the `SpecialSauceParityTests` per-name run + the multi-RNG-variation run are the correctness oracle. `spherical`(16) and `polar`(14) already exist as `v_spherical`/`v_polar` and need no new function.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1030,7 +1094,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 **Acceptance Criteria:**
 - [ ] `GenomeInterpolator.interpolate(a, b, t, type:)` switches on `interpolationType`.
 - [ ] `.linear` matches the previous `Interpolation.interpolate` output bit-for-bit on the existing test genomes (M1/M2 `InterpolationTests` unchanged and green). This requires the `.linear` path to REUSE the legacy `mergeVariations` verbatim (drop-zero-weight + sort-by-name) — do NOT route `.linear` through the new `.log` merge.
-- [ ] `.log` interpolates each xform's 2×2 via polar decomposition (magnitude linear, angle unwrapped by `wind`), guards near-zero determinant (falls back to linear), and forces result post to identity when both parents' post is identity.
+- [ ] `.log` interpolates each xform's 2×2 via polar decomposition (magnitude linear, angle unwrapped by `wind`), guards near-zero determinant (falls back to linear), and forces result post to identity when both parents' post is identity. **Determinant guard is concrete:** compute `det = a*d − b*c` of each endpoint's 2×2; if `abs(det) < 1e-12` for EITHER endpoint, the whole 2×2 (+ its translation `e,f`) for that xform falls back to the `.linear` path (per-xform, all 6 coefficients together — NOT per-coefficient); the other xforms still use `.log`. This matches flam3's `convert_linear_to_polar` NaN-guard behavior (a degenerate matrix has no polar angle). Threshold pinned at `1e-12` (tighter than EPS=1e-10 because the test for "degenerate" is stricter than the per-term EPS guard).
 - [ ] Near-singular constructed affine does not produce NaN/Inf (determinant-guard fallback exercised by a test).
 - [ ] `mergeVariations` is split: the `.log` branch unions variations by name (preserving zero-weight padding slots that `align` created) and carries per-name `parameters` from whichever side defines them; the `.linear` branch is the legacy behavior.
 
@@ -1101,17 +1165,21 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 ### Task 13: `Loop.blend` (sheep_loop port — pure affine rotation)
 
-**Goal:** Port `sheep_loop` (`flam3.c:396-557`): for each non-final xform with `animate != 0`, left-multiply the pre-affine 2×2 by `R(t·360°)`; translation/post/camera/palette/weight/color/opacity/chaos untouched; final xforms skipped; padding xforms rotate only under `.log`. Output genome has `frame(t=1) == frame(t=0)` (seamless).
+**Goal:** Port `sheep_loop` (`flam3.c:396-557`): for each non-final xform with `animate != 0`, left-multiply the pre-affine 2×2 by `R(t·360°)`; translation/post/camera/palette/weight/color/opacity/chaos untouched; final xforms skipped; padding xforms rotate only under `.log`. Output genome is **seamless** (frame(t=1) ≈ frame(t=0) within FP tolerance).
+
+> **θ handling (verified, load-bearing).** `flam3_rotate` (flam3.c:512-557) does NOT reduce θ modulo 2π; it computes `degrees = blend*360.0` then `theta = DEG2RAD(degrees)` and calls `sin`/`cos` directly. So at `t=1`, `theta = 2π` computed with FP error (`cos(2π) ≈ 1 − 5e-16`, `sin(2π) ≈ −2.5e-16` in Double), and `R(2π)·M ≠ M` bit-for-bit. flam3's `frame(t=1)` likewise differs from `frame(t=0)` by a few ULPs. The faithful port MUST compute θ the same way (`t * 2π` via `t * 360 * .pi/180` or `t * 2*.pi` — match flam3's exact multiply order, whichever the source uses; pin it in a test against the oracle). Therefore:
+> - The seamless gate is NOT genome byte-equality. It is (a) genome-space `‖frame(0) − frame(1)‖ < 1e-12` per coefficient (rotation-matrix ULP residual), AND (b) the rendered `frame(t=0)` vs `frame(t=1)` Metal↔CPU-style PSNR ≥ 38 dB (the visible-seamlessness gate; a few-ULP affine difference is invisible after the chaos game + density estimation + display).
+> - The spec's prose "`R(360°)·M = R(0°)·M = M` → `frame(blend=1) genome == frame(blend=0) genome`" is the mathematical idealization, not the bit-exact gate. Do not assert `==`.
 
 **Files:**
 - Create: `Sources/FlameKit/Loop.swift`
 - Test: `Tests/FlameKitTests/LoopTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `Loop.blend(sheep, t)` returns a genome equal to the input at `t=0`; equal again at `t=1` (seamlessness — `R(360°)·M == M`).
+- [ ] `Loop.blend(sheep, t)` returns a genome equal to the input at `t=0` (R(0) is exactly identity); at `t=1` every pre-affine 2×2 coefficient is within `1e-12` of the input (seamless within rotation-matrix ULP residual — NOT bit-equal).
 - [ ] Only the 2×2 pre-affine of animating, non-final xforms changes; translation `e,f` and post-affine and palette are byte-equal to the input.
 - [ ] An xform with `animate==0` is untouched; a final xform is untouched; a padding xform rotates only when `interpolationType == .log`.
-- [ ] Rotation direction/ULP matches a hand-computed `R(θ)·M` at `t=0.25` (90°).
+- [ ] Rotation direction/ULP matches a hand-computed `R(θ)·M` at `t=0.25` (90°), where θ is computed via the SAME multiply order as `flam3_rotate` (pinned by the Task-19 vs-flam3 ≥30 dB gate).
 
 **Verify:** `swift test --filter LoopTests` → PASS.
 
@@ -1155,12 +1223,18 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Goal:** Add the `PairSelector` protocol + `Sequential` impl (TDD scaffold), the `Segment` model, and the pure two-level-seek `Schedule`: global-frame → `(segmentId, blend)` is O(1) (constant tier lengths); `segmentId → (fromSheep, toSheep)` is O(1) within the materialized prefix and O(segments) to extend the `Sequential`/`SimilarityExploration` walk forward. Alternation invariant: no two transitions consecutive.
 
+> **Frame-counting convention (pinned — off-by-one hazard).** flam3 emits `nframes` frames per segment at blend `= frame/nframes` for `frame = 1..nframes` (1-indexed; see `flam3-genome.c` rotate/inter modes). So blend ∈ {1/N, 2/N, …, 1.0}; blend=0 is NEVER emitted. This is what makes consecutive segments tile without a duplicate frame: segment k's last frame is blend=1.0 (≈ identity for a loop; = endpoint B for a transition), and segment k+1's first frame is blend=1/N of the next segment (a small step away) — NOT a re-emit of the boundary genome. The spec F9 note "N+1 blend samples (0…N)" is loose phrasing for "N intervals"; the pinned rule for THIS plan is:
+> - **`Schedule.frameToBlend(globalFrame)`:** `segmentId = globalFrame / N`; `local = globalFrame % N`; `blend = Double(local + 1) / Double(N)`. Blend is in `(0, 1]`, never 0.
+> - **Total PNGs emitted by `emberweft animate` = `segments * N`** (exactly N per segment; no duplicate/drop at boundaries). The boundary genome is NOT double-emitted.
+> - This matches the oracle: `flam3-animate begin=0 end=N` over one segment yields N frames.
+
 **Files:**
 - Create: `Sources/FlameKit/PairSelector.swift`, `Sources/FlameKit/Schedule.swift`
 - Test: `Tests/FlameKitTests/ScheduleTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `Schedule(librarySize:, framesPerSegment:, selector:, seed:)` maps any global frame index to `(segmentId, kind, blend)` in O(1).
+- [ ] `Schedule(librarySize:, framesPerSegment:, selector:, seed:)` maps any global frame index to `(segmentId, kind, blend)` in O(1) using the pinned 1-indexed blend formula above: `blend = (local + 1) / N` ∈ `(0, 1]`, never 0.
+- [ ] A test pins: for `N=8`, segment 0 emits blends `{1/8, 2/8, …, 8/8=1.0}` over global frames 0..7; segment 1 emits the same ladder over frames 8..15; blend=0 never appears; total frames for 3 segments = 24 (= 3*8, NOT 25 or 17).
 - [ ] `segment(at:)` materializes/extends the selector walk forward as needed; `Sequential` is O(1) everywhere.
 - [ ] Over any prefix, the invariant holds: segments strictly alternate loop/transition; never two transitions adjacent.
 - [ ] A 50-segment `Sequential` walk over a library visits sheep in a fixed, seed-reproducible order.
@@ -1187,9 +1261,10 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 
 **Acceptance Criteria:**
 - [ ] `FeatureVector(for: flame)` stores the variation-set component as a lexicographically-sorted `(name, weight)` array; the metric sums it in fixed order.
+- [ ] **`SimilarityExploration` accepts in-memory `FeatureVector`s directly** — it does NOT require the Task-17 `FeatureCache` to exist. (The cache is an optimization for the 47k-sheep production case; the unit test builds a small synthetic library of `FeatureVector`s by hand. This keeps Task 16 independent of Task 17.)
 - [ ] The similarity score for a fixed pair is **bit-identical across N separate process launches** (F1 hard rule — the test spawns N processes and compares the printed score).
 - [ ] Every term has an independent ε fallback, so an all-zero palette or zero-norm affine cannot NaN the score (F9).
-- [ ] A 50-segment `SimilarityExploration` walk over the full library visits **≥ max(⌈0.5·librarySize⌉, 10)** distinct sheep (exploration guard), reproducible under fixed seed.
+- [ ] **Exploration guard runs over a small SYNTHETIC library (20 hand-built feature vectors), NOT the real 47k-sheep / 1.6 GB archive** (a full-archive scan is not viable as a unit test): a 50-segment walk visits **≥ max(⌈0.5·20⌉, 10) = 10** distinct sheep, reproducible under fixed seed. (The production-scale exploration is exercised manually/by-baseline only, not gated in CI.)
 
 **Verify:** `swift test --filter SimilarityTests` → PASS (incl. the cross-process bit-identity test).
 
@@ -1243,8 +1318,9 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 - Test: `Tests/EmberweftCLITests/AnimateCommandTests.swift`
 
 **Acceptance Criteria:**
-- [ ] `emberweft animate a.flam3 b.flam3 --frames 8 --segments 3 --selector sequential --seed 0 --backend cpu --out /tmp/frames` writes the PNG sequence + manifest.
-- [ ] `manifest.json` parses via `Manifest` Codable; `manifestVersion==1`; loop rows have `interpolationType: null`; `stagger` is top-level.
+- [ ] `emberweft animate a.flam3 b.flam3 --frames 8 --segments 3 --selector sequential --seed 0 --backend cpu --out /tmp/frames` writes exactly `3*8 = 24` PNGs (`000000.png … 000023.png`) + `manifest.json`. The count is `segments * framesPerSegment` — NO duplicate/drop at segment boundaries (Task-15 blend convention).
+- [ ] `manifest.json` parses via `Manifest` Codable; `manifestVersion==1`; loop rows have `interpolationType: null`; `stagger` is top-level; `blend` follows the 1-indexed `(local+1)/N` convention (every row's blend ∈ (0,1], none is 0).
+- [ ] **Stable emit order + determinism:** the `frames` array is built by iterating the global frame index `0..<(segments*N)` — NEVER by iterating a `Set`/`Dictionary` of frames (F1). G2 byte-determinism: two runs of the same `(input, seed, backend, quality)` produce byte-identical PNGs AND byte-identical `manifest.json`. CPU is single-threaded → byte-deterministic by construction; Metal is byte-deterministic per the existing `EndToEndParityTests` repeat-run behavior — the snapshot test re-runs and diffs to prove it.
 - [ ] Empty/size-1 input → non-zero exit with a clear error (alternation needs ≥ 2 sheep).
 - [ ] CLI snapshot test: the manifest for a fixed tiny input is byte-stable across runs.
 
@@ -1271,7 +1347,7 @@ git commit -m "test: flam3 parity-oracle harness (build-from-source, env-var dri
 **Acceptance Criteria:**
 - [ ] `sheep_loop` vs `flam3-genome rotate`: our loop frame vs flam3's, PSNR ≥ 30 dB / SSIM ≥ 0.95 (skip if oracle absent).
 - [ ] `sheep_edge` vs `flam3-genome inter`: our transition vs flam3's, PSNR ≥ 30 dB / SSIM ≥ 0.95 (skip if oracle absent).
-- [ ] `sheep_loop` seamlessness: `frame(t=0)` vs `frame(t=1)` genome-equal and rendered within Metal↔CPU parity.
+- [ ] `sheep_loop` seamlessness: `frame(t=0)` vs `frame(t=1)` per-coefficient `‖Δ‖ < 1e-12` (NOT byte-equal — `R(2π)≠I` in FP; see Task 13) AND rendered-frame PSNR ≥ 38 dB (the visible-seamlessness gate).
 - [ ] Animated-frame Metal↔CPU parity on a mismatched-sheep transition ≥ 38 dB / 0.95 SSIM (F2).
 - [ ] Consecutive-frame image PSNR ≥ 40 dB on a transition (continuity).
 - [ ] G2: the full S6 PNG sequence is byte-identical across two runs (same backend, fixed quality).
@@ -1306,6 +1382,7 @@ S7 reuses S6's `Schedule`/`PairSelector`/Metal variation set **verbatim** — no
 - [ ] Given a synthetic render closure and a fixed clock, it produces a strictly alternating loop/transition frame stream matching `Schedule`.
 - [ ] Mid-loop it prefetches the upcoming sheep's `Flame` so the transition's first frame is ready.
 - [ ] No frame is held/duplicated during a transition (realtime overrun → display best-available, never freeze).
+- [ ] **Swift 6 actor↔MainActor crossing is sound:** `MetalRenderer.render` is `@MainActor`, so the dispatcher `await`s across the actor boundary explicitly (`await MainActor.run { MetalRenderer.render(...) }`); the frame-ready callback into `@MainActor FlameUI` is likewise `await`ed. NO `nonisolated(unsafe)` escape hatches snuck in for the render target / texture / schedule (the existing CLI `nonisolated(unsafe)` IO hooks in `EmberweftCLI` are single-threaded test injection and are NOT a precedent for the realtime path). The dispatcher's `MetalRenderer` dependency is isolated behind an injected `protocol Renderer` (the test injects a fake; the production wiring hands the actor a `@MainActor`-isolated closure).
 
 **Verify:** `swift test --filter PlaybackDispatcherTests` → PASS.
 
@@ -1444,6 +1521,8 @@ Create the empty dir `Tests/FlamePlayerTests/`. Verify `swift build` resolves th
 ## Notes for implementers
 
 - **Determinism is rule #2.** Any FP accumulation over variation/parameter-name-keyed data MUST use sorted arrays (F1 — Swift `Dictionary`/`Set` hash seeds are per-process randomized). Integer-indexed `Set<Int>` and arrays are fine. The cross-process bit-identity test (Task 16) is the guardrail.
+- **SPEC DISCREPANCY (flagged, do not re-litigate):** the spec's "Param-channel layout" note says "none of the 16 variations consumes the ISAAC stream, so RNG alignment holds." Verified against `scottdraves/flam3` `variations.c`: this is FALSE. Four of the 16 draw the ISAAC stream (`julian`, `juliascope`, `super_shape` [unconditionally, even at `rnd=0`], `wedge_julia`), and `rings`/`fan` are coefficient-dependent (read affine `c[2][0]`/`c[2][1]` = `e`/`f`). Tasks 4 and 6 are written to the flam3 source (the authority the spec itself defers to), not to that note. When you reach Phase A, treat the flam3 source as ground truth; the human will reconcile the spec prose separately.
+- **No self-invented variation formulas.** Every special-sauce body is a line-for-line port of `varN_*` in `variations.c`. The round-2 review caught four unfaithful example formulas (blob, curl, rectangles, rings) whose tests were self-consistent with the wrong implementation — so tests MUST be derived from the C source independently, not from the Swift implementation under test.
 - **`.metal` files are NOT compiled by the Swift toolchain.** `Package.swift` lists them under `resources: [.copy("Metal")]` in the `FlameRenderer` target; `Kernels.metal` is compiled to a `.metallib` at runtime by `MetalRenderer`. Consequence for Tasks 5/6: `swift build` will NOT catch an MSL syntax error or a Swift↔MSL layout mismatch — only `swift test --filter EndToEndParityTests` (or any Metal render) will. After every `Kernels.metal` edit, run a Metal test before committing; the `GPUXform` byte-layout guard (`bytesPerXform == 1248`, asserted in `packXforms`) is the only compile-time-adjacent check you get, and it only validates the Swift side.
 - **The Swift `GPUXform` struct may NOT gain a `[Float]` field.** The xform buffer is created by byte-copying a `[GPUXform]` via `withUnsafeBytes` (`ChaosGameMetal.buf`). A Swift `Array` field stores a heap pointer, not inline floats, so it would send garbage to the GPU. This is why Task 5 switches the xform path to a flat-packed `[Float]` produced by `MetalHost.packXforms`. The 15-float scalar header may stay a struct; only the variable-size tail (`varWeights` + `varParams`) moves to the flat array. Do not "simplify" this back to a struct-with-array-field.
 - **Interpolation runs once in FlameKit (Double).** The resulting `Flame` is handed to both renderers, so the genome is byte-identical CPU↔Metal. Never run interpolation on-device in FP32.
