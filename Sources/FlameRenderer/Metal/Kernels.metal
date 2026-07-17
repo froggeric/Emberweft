@@ -108,6 +108,15 @@ static inline uint isaac_next(thread IsaacState& s) {
     return uint(s.randrsl[uint(s.randcnt)]);   // already masked to 32 bits
 }
 
+// [0,1) and [-1,1) floats from one ISAAC word, matching FlameKit's isaac01/isaac11.
+// Defined early so the RNG-consuming variation functions (v_julian, etc.) can see them.
+static inline float isaac_01(thread IsaacState& s) {
+    return float(isaac_next(s) & 0x0fffffffu) * (1.0f / float(0x0fffffffu));
+}
+static inline float isaac_11(thread IsaacState& s) {
+    return (float(isaac_next(s) & 0x0fffffffu) - float(0x07ffffffu)) * (1.0f / float(0x07ffffffu));
+}
+
 // Test kernel: seed from seed16[0..15], emit `count` words into out[0..count].
 kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
                         device uint* out [[buffer(1)]],
@@ -150,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 19 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 33 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -179,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 19 variation terms (canonical slot order). Each returns the term that CPU
+// 33 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -254,7 +263,176 @@ static inline float2 v_swirl(float2 p, float w) {
     return float2(w * (c1*p.x - c2*p.y), w * (c2*p.x + c1*p.y));
 }
 
-// Sum the 19 canonical slots. Only `julia` consumes the RNG.
+// ---- 14 special-sauce (M3): Float transliterations of the Task-4 CPU closures
+// in Variations.swift, which are themselves line-for-line ports of flam3
+// variations.c. atan2 order per CPU closure: rings/fan/blob/fan2/rings2 use
+// atan2(x,y) (flam3 precalc_atan); julian/juliascope/ngon/super_shape/
+// wedge_julia/wedge_sph use atan2(y,x) (flam3 precalc_atanyx).
+
+// var21_rings (variations.c:509-527) — coef e = c[2][0].
+//   dx = e²+EPS; r = fmod(r+dx,2dx)-dx+r*(1-dx); (r*cosa, r*sina)
+static inline float2 v_rings(float2 p, float w, float e) {
+    float dx = e*e + EPS_MS;
+    float r = sqrt(p.x*p.x + p.y*p.y);
+    float a = atan2(p.x, p.y);
+    r = w * (fmod(r + dx, 2.0f*dx) - dx + r*(1.0f - dx));
+    return float2(r * cos(a), r * sin(a));
+}
+// var22_fan (variations.c:529-556) — coef e=c[2][0], f=c[2][1].
+//   dx = π*(e²+EPS); dy = f; dx2 = dx/2; a += (fmod(a+dy,dx)>dx2) ? -dx2 : dx2
+static inline float2 v_fan(float2 p, float w, float e, float f) {
+    float dx = M_PI_F * (e*e + EPS_MS);
+    float dy = f;
+    float dx2 = 0.5f * dx;
+    float r = w * sqrt(p.x*p.x + p.y*p.y);
+    float a = atan2(p.x, p.y);
+    a += (fmod(a + dy, dx) > dx2) ? -dx2 : dx2;
+    return float2(r * cos(a), r * sin(a));
+}
+// var23_blob (variations.c:558-578). sin on x, cos on y.
+static inline float2 v_blob(float2 p, float w, thread const float* pr) {
+    float low = pr[0], high = pr[1], waves = pr[2];
+    float r = sqrt(p.x*p.x + p.y*p.y);
+    float a = atan2(p.x, p.y);
+    r *= low + (high - low) * (0.5f + 0.5f*sin(waves*a));
+    return float2(w * sin(a) * r, w * cos(a) * r);
+}
+// var25_fan2 (variations.c:599-639). sin on x, cos on y.
+static inline float2 v_fan2(float2 p, float w, thread const float* pr) {
+    float fan2x = pr[0], fan2y = pr[1];
+    float dy = fan2y;
+    float dx = M_PI_F * (fan2x*fan2x + EPS_MS);
+    float dx2 = 0.5f * dx;
+    float r = w * sqrt(p.x*p.x + p.y*p.y);
+    float a = atan2(p.x, p.y);
+    float tt = a + dy - dx * (float)((int)((a + dy) / dx));
+    if (tt > dx2) { a = a - dx2; } else { a = a + dx2; }
+    return float2(r * sin(a), r * cos(a));
+}
+// var26_rings2 (variations.c:641-658). sin on x, cos on y.
+static inline float2 v_rings2(float2 p, float w, thread const float* pr) {
+    float val = pr[0];
+    float r = sqrt(p.x*p.x + p.y*p.y);
+    float dx = val*val + EPS_MS;
+    r += -2.0f*dx*(float)((int)((r + dx)/(2.0f*dx))) + r*(1.0f - dx);
+    float a = atan2(p.x, p.y);
+    return float2(w * sin(a) * r, w * cos(a) * r);
+}
+// var30_perspective (variations.c:688-695) + perspective_precalc (L1943-1947).
+static inline float2 v_perspective(float2 p, float w, thread const float* pr) {
+    float angle = pr[0], dist = pr[1];
+    float ang = angle * M_PI_F / 2.0f;
+    float vsin = sin(ang);
+    float vfcos = dist * cos(ang);
+    float t = 1.0f / (dist - p.y * vsin);
+    return float2(w * dist * p.x * t, w * vfcos * p.y * t);
+}
+// var32_juliaN_generic (variations.c:711-724) + juliaN_precalc. One isaac_01.
+static inline float2 v_julian(float2 p, float w, thread const float* pr,
+                             thread IsaacState& rng) {
+    float power = pr[0], dist = pr[1];
+    float rN = fabs(power);
+    float cn = dist / power / 2.0f;
+    float sumsq = p.x*p.x + p.y*p.y;
+    float atanyx = atan2(p.y, p.x);
+    int tRnd = (int)(rN * isaac_01(rng));
+    float tmpr = (atanyx + 2.0f*M_PI_F*(float)tRnd) / power;
+    float r = w * pow(sumsq, cn);
+    return float2(r * cos(tmpr), r * sin(tmpr));
+}
+// var33_juliaScope_generic (variations.c:726-745) + juliaScope_precalc. One isaac_01.
+static inline float2 v_juliascope(float2 p, float w, thread const float* pr,
+                                  thread IsaacState& rng) {
+    float power = pr[0], dist = pr[1];
+    float rN = fabs(power);
+    float cn = dist / power / 2.0f;
+    float sumsq = p.x*p.x + p.y*p.y;
+    float atanyx = atan2(p.y, p.x);
+    int tRnd = (int)(rN * isaac_01(rng));
+    float tmpr;
+    if ((tRnd & 1) == 0) {
+        tmpr = (2.0f*M_PI_F*(float)tRnd + atanyx) / power;
+    } else {
+        tmpr = (2.0f*M_PI_F*(float)tRnd - atanyx) / power;
+    }
+    float r = w * pow(sumsq, cn);
+    return float2(r * cos(tmpr), r * sin(tmpr));
+}
+// var38_ngon (variations.c:812-831).
+static inline float2 v_ngon(float2 p, float w, thread const float* pr) {
+    float sides = pr[0], power = pr[1], circle = pr[2], corners = pr[3];
+    float sumsq = p.x*p.x + p.y*p.y;
+    float rFactor = pow(sumsq, power / 2.0f);
+    float theta = atan2(p.y, p.x);
+    float b = 2.0f*M_PI_F / sides;
+    float phi = theta - (b * floor(theta / b));
+    if (phi > b/2.0f) { phi -= b; }
+    float amp = corners * (1.0f/(cos(phi) + EPS_MS) - 1.0f) + circle;
+    amp /= (rFactor + EPS_MS);
+    return float2(w * p.x * amp, w * p.y * amp);
+}
+// var39_curl (variations.c:833-842).
+static inline float2 v_curl(float2 p, float w, thread const float* pr) {
+    float c1 = pr[0], c2 = pr[1];
+    float re = 1.0f + c1*p.x + c2*(p.x*p.x - p.y*p.y);
+    float im = c1*p.y + 2.0f*c2*p.x*p.y;
+    float r = w / (re*re + im*im);
+    return float2((p.x*re + p.y*im)*r, (p.y*re - p.x*im)*r);
+}
+// var40_rectangles (variations.c:844-856).
+static inline float2 v_rectangles(float2 p, float w, thread const float* pr) {
+    float rx = pr[0], ry = pr[1];
+    float nx = (rx == 0.0f) ? p.x : ((2.0f*floor(p.x/rx) + 1.0f)*rx - p.x);
+    float ny = (ry == 0.0f) ? p.y : ((2.0f*floor(p.y/ry) + 1.0f)*ry - p.y);
+    return float2(w * nx, w * ny);
+}
+// var50_supershape (variations.c:1093-1117) + supershape_precalc (L2000-2003).
+// Draws isaac_01 UNCONDITIONALLY (before the rnd*draw product).
+static inline float2 v_super_shape(float2 p, float w, thread const float* pr,
+                                   thread IsaacState& rng) {
+    float rnd = pr[0], m = pr[1], n1 = pr[2], n2 = pr[3], n3 = pr[4], holes = pr[5];
+    float pm4 = m / 4.0f;
+    float pneg1N1 = -1.0f / n1;
+    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float atanyx = atan2(p.y, p.x);
+    float theta = pm4 * atanyx + M_PI_F / 4.0f;
+    float t1 = pow(fabs(cos(theta)), n2);
+    float t2 = pow(fabs(sin(theta)), n3);
+    float draw = isaac_01(rng);                 // UNCONDITIONAL
+    float r = w * ((rnd*draw + (1.0f-rnd)*ps) - holes) * pow(t1+t2, pneg1N1) / ps;
+    return float2(r * p.x, r * p.y);
+}
+// var78_wedge_julia (variations.c:1672-1688) + wedgeJulia_precalc (L1954-1958). One isaac_01.
+static inline float2 v_wedge_julia(float2 p, float w, thread const float* pr,
+                                   thread IsaacState& rng) {
+    float angle = pr[0], count = pr[1], power = pr[2], dist = pr[3];
+    float cf = 1.0f - angle*count*(1.0f/M_PI_F)*0.5f;
+    float rN = fabs(power);
+    float cn = dist / power / 2.0f;
+    float sumsq = p.x*p.x + p.y*p.y;
+    float atanyx = atan2(p.y, p.x);
+    float r = w * pow(sumsq, cn);
+    int tRnd = (int)(rN * isaac_01(rng));
+    float a = (atanyx + 2.0f*M_PI_F*(float)tRnd) / power;
+    float c = floor((count*a + M_PI_F) * (1.0f/M_PI_F) * 0.5f);
+    a = a*cf + c*angle;
+    return float2(r * cos(a), r * sin(a));
+}
+// var79_wedge_sph (variations.c:1690-1709).
+static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
+    float angle = pr[0], count = pr[1], hole = pr[2], swirl = pr[3];
+    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float r = 1.0f / (ps + EPS_MS);
+    float a = atan2(p.y, p.x) + swirl * r;
+    float c = floor((count*a + M_PI_F) * (1.0f/M_PI_F) * 0.5f);
+    float compFac = 1.0f - angle*count*(1.0f/M_PI_F)*0.5f;
+    a = a*compFac + c*angle;
+    r = w * (r + hole);
+    return float2(r * cos(a), r * sin(a));
+}
+
+// Sum the 33 canonical slots. julian/juliascope/super_shape/wedge_julia also
+// consume the RNG (one isaac_01 each); super_shape draws UNCONDITIONALLY.
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -264,8 +442,8 @@ static inline float2 v_swirl(float2 p, float w) {
 static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
     float2 pre = apply_affine(x, p);
     float2 acc = float2(0.0f);
-    float w[19];
-    for (int i = 0; i < 19; i++) w[i] = x.varWeights[i];
+    float w[33];
+    for (int i = 0; i < 33; i++) w[i] = x.varWeights[i];
     if (w[0]  != 0.0f) acc += v_bent(pre, w[0]);
     if (w[1]  != 0.0f) acc += v_cosine(pre, w[1]);
     if (w[2]  != 0.0f) acc += v_cylinder(pre, w[2]);
@@ -285,14 +463,24 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[16] != 0.0f) acc += v_spherical(pre, w[16]);
     if (w[17] != 0.0f) acc += v_spiral(pre, w[17]);
     if (w[18] != 0.0f) acc += v_swirl(pre, w[18]);
+    // ---- 14 special-sauce (slots 19..32, canonical order). Param pointer for
+    // slot s is &x.varParams[s*SLOT_WIDTH_MS]. RNG-consuming (julian,
+    // juliascope, super_shape [UNCONDITIONAL draw], wedge_julia) take `rng`. ----
+    if (w[19] != 0.0f) acc += v_rings(pre, w[19], x.e);
+    if (w[20] != 0.0f) acc += v_fan(pre, w[20], x.e, x.f);
+    if (w[21] != 0.0f) acc += v_blob(pre, w[21], &x.varParams[21*SLOT_WIDTH_MS]);
+    if (w[22] != 0.0f) acc += v_fan2(pre, w[22], &x.varParams[22*SLOT_WIDTH_MS]);
+    if (w[23] != 0.0f) acc += v_rings2(pre, w[23], &x.varParams[23*SLOT_WIDTH_MS]);
+    if (w[24] != 0.0f) acc += v_perspective(pre, w[24], &x.varParams[24*SLOT_WIDTH_MS]);
+    if (w[25] != 0.0f) acc += v_julian(pre, w[25], &x.varParams[25*SLOT_WIDTH_MS], rng);
+    if (w[26] != 0.0f) acc += v_juliascope(pre, w[26], &x.varParams[26*SLOT_WIDTH_MS], rng);
+    if (w[27] != 0.0f) acc += v_ngon(pre, w[27], &x.varParams[27*SLOT_WIDTH_MS]);
+    if (w[28] != 0.0f) acc += v_curl(pre, w[28], &x.varParams[28*SLOT_WIDTH_MS]);
+    if (w[29] != 0.0f) acc += v_rectangles(pre, w[29], &x.varParams[29*SLOT_WIDTH_MS]);
+    if (w[30] != 0.0f) acc += v_super_shape(pre, w[30], &x.varParams[30*SLOT_WIDTH_MS], rng);
+    if (w[31] != 0.0f) acc += v_wedge_julia(pre, w[31], &x.varParams[31*SLOT_WIDTH_MS], rng);
+    if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]);
     return apply_post(x, acc);
-}
-
-static inline float isaac_01(thread IsaacState& s) {
-    return float(isaac_next(s) & 0x0fffffffu) * (1.0f / float(0x0fffffffu));
-}
-static inline float isaac_11(thread IsaacState& s) {
-    return (float(isaac_next(s) & 0x0fffffffu) - float(0x07ffffffu)) * (1.0f / float(0x07ffffffu));
 }
 
 static inline void accumulate(device AtomicBin* hist, int u, int v, GPUFrameParams fp,
