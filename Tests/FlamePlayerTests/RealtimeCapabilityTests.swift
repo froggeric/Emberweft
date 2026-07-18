@@ -48,17 +48,17 @@ import FlameKit
 /// (small `framesPerSegment`) so a transition-frame freeze cannot hide inside a
 /// loop-only batch.
 ///
-/// ## What this gate owns (M3) vs. what it does NOT (M4 + renderer opt)
+/// ## What this gate owns (M3) vs. what it does NOT (M4)
 /// See `docs/engineering/testing.md` § "Realtime capability gate — ownership
-/// split". In short: M3 OWNS the harness, the dispatcher, the adaptive
-/// controller, and the proof that the PIPELINE is realtime-capable where the GPU
-/// frame cost permits (demonstrated at 720p). The 1080p@58 absolute is BLOCKED
-/// on a documented, not-yet-implemented renderer optimization — fusing the three
-/// stages into one command buffer with a GPU-resident histogram (today the
-/// histogram CPU-round-trips between stages, a fixed ~25 ms 1080p cost that is
-/// independent of `samplesPerPixel`, so no budget tuning can close it). That
-/// optimization is tracked separately; the 58 floor here is NOT lowered. The
-/// hard 60 fps-under-real-UI-load gate remains M4's.
+/// split". M3 OWNS the harness, the dispatcher, the adaptive controller, the
+/// three-stage-fusion + GPU-resident-histogram optimization (now landed — the
+/// histogram no longer CPU-round-trips between stages), and the proof that the
+/// pipeline sustains the 58 fps capability floor at 1080p. On the reference M2
+/// Max this PASSES at p50 ≈ 58.7–59 fps — a thin margin above the 58 floor, and
+/// the adaptive controller holds it by shedding to a low `samplesPerPixel`
+/// budget (≈2–4) at 1080p. So the framerate floor is met, but visual QUALITY at
+/// that floor (and the hard 60 fps-under-real-UI-load absolute) are M4 concerns.
+/// The 58 floor here is NOT lowered.
 final class RealtimeCapabilityTests: XCTestCase {
 
     // MARK: - Test doubles
@@ -197,13 +197,13 @@ final class RealtimeCapabilityTests: XCTestCase {
         // ── Assertions ──────────────────────────────────────────────────────
 
         // AC (the M3 gate, unlowered): median sustained fps ≥ 58 at 1080p.
-        // Today this honestly FAILS on M2 Max — blocked on the documented
-        // three-stage-fusion + GPU-resident-histogram optimization. Do NOT lower
-        // the floor; the failure is the finding the owner needs.
+        // After the three-stage-fusion + GPU-resident-histogram optimization this
+        // PASSES on M2 Max at p50 ≈ 58.7–59 fps (thin margin). The floor is NOT
+        // lowered; quality-at-this-floor (the adaptive controller sheds to a low
+        // samplesPerPixel budget at 1080p) is an M4 concern.
         XCTAssertGreaterThanOrEqual(m1080.p50, 58.0,
             "1080p median sustained fps \(String(format: "%.1f", m1080.p50)) < 58 " +
-            "capability floor (M2 Max, blocked on histogram-fusion optimization — " +
-            "see docs/engineering/testing.md)")
+            "capability floor (M2 Max) — see docs/engineering/testing.md)")
 
         // AC (pipeline capability, proven): the M3 playback engine sustains
         // ≥ 58 fps where the GPU frame cost fits the deadline (720p).
