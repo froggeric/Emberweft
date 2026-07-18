@@ -32,6 +32,13 @@ The correctness backbone for `FlameReference` (and transitively for the algorith
 - **Comparison.** `FlameReference` renders the same genomes; output is compared to the goldens by **PSNR ≥ threshold** and **SSIM ≥ threshold** *(preliminary: PSNR ≥ 30 dB, SSIM ≥ 0.95 — to be tuned after first parity runs)*. Near-exact match is not expected (different RNG/filter implementations), so thresholds are statistical.
 - **Re-goldening.** A dedicated, review-required workflow; the local pre-merge gate fails loudly on unexpected golden drift.
 
+#### 2a. Animation oracle (`flam3-genome` / `flam3-animate`) — dev-machine prerequisite, F10 auto-skip
+The M3 animation pipeline extends the still-frame oracle to motion genomes. The same locally-built `flam3` (above) provides two more binaries — `flam3-genome` (generate motion genomes) and `flam3-animate` (render them) — driven entirely by **env vars** (no CLI flags): `sequence`/`rotate`/`inter` + `nframes`/`frame` for `flam3-genome`; `begin`/`end`/`prefix` for `flam3-animate`. The Swift harness `Tests/FlameReferenceTests/Flam3Oracle.swift` spawns them via `Process`.
+
+- **Build-from-source instructions** live in `Tools/flam3_oracle.sh` (pinned `scottdraves/flam3` commit, `brew install` deps, `./configure && make`, the literal env-var invocations). This is a **dev-machine prerequisite, not a CI step** (GitHub is a plain mirror; no CI runs).
+- **Motion blur OFF for clean parity (F6).** `flam3-animate`'s temporal oversampling is on by default (`temporal_samples=1000` → heavy blur on fast-moving frames). For vs-Emberweft parity the harness injects **`passes="1"` and `temporal_samples="1"`** onto every `<flame>` control point before spawning `flam3-animate` — these are **genome attributes, not env vars**. Without this, the ≥30 dB vs-flam3 gate would fail systematically on transition interiors (motion-blur signal, not a port bug).
+- **F10 auto-skip.** `Flam3Oracle.isAvailable` returns true iff both binaries resolve on `$PATH`; every vs-flam3 test calls `try Flam3Oracle.require()`, which `XCTSkip`s with a clear warning when the build is absent. vs-flam3 tests are therefore **no-ops (never failures)** on machines without the build. **Metal↔CPU parity (≥38 dB) remains the hard gate** and is independent of flam3 availability.
+
 ### 3. Parity tests (Metal ↔ CPU)
 Validate that `FlameRenderer` (Metal) matches `FlameReference` (CPU) on identical inputs. Parity is **statistical, not byte-exact**: the two backends are independent deterministic implementations (different atomic-accumulation order, different per-thread sample split). Parity is measured PSNR ≥ 38 dB / SSIM ≥ 0.95 end-to-end, with tighter per-stage gates below.
 
