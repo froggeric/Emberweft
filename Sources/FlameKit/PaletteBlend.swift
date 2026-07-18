@@ -17,9 +17,32 @@ import Foundation
 /// - Both the RGB triple and the HSV triple are linearly blended by the
 ///   `(1-t), t` weights; the blended HSV is converted back to RGB and the two
 ///   are mixed by `rgb_fraction` (interpolation.c:416-438).
-/// - All color channels are clipped to `[0,1]` (interpolation.c:444-449).
-///   Emberweft's `Palette` stores only RGB (`SIMD3<Double>`), so the alpha
-///   (`color[3]`) and `index` accumulators from the C do not apply here.
+/// - Channel clip is 3 channels (RGB) to `[0,1]`, where flam3 clips 4
+///   (RGB + `color[3]`) + clips `index`. This is **provably equivalent**, not
+///   a deviation, for every palette Emberweft can represent:
+///
+///   Emberweft `Palette` is opaque RGB only — `Genome.SIMD3<Double>`, no alpha,
+///   no per-entry index. The parser (`Flam3Parser` color parse, r/g/b only) and
+///   renderer (`ChaosGame`: "opaque embedded palettes → 1.0*255 = 255") both
+///   assume alpha = 1.0 everywhere. flam3's extra bookkeeping therefore
+///   evaluates trivially for these inputs:
+///     • alpha/count (`color[3]`, interpolation.c:422):
+///         `new_count += c[k] * cpi[k].palette[i].color[3]`.
+///       Since every `color[3] == 1.0`, the `alpha1` flag stays 1
+///       (interpolation.c:423-424, 429-430: `if (alpha1 == 1) new_count = 1.0`),
+///       so `result->palette[i].color[3]` is always 1.0. Clipping `color[3]`
+///       to `[0,1]` (interpolation.c:444-449, the 4th channel iteration) is a
+///       no-op on 1.0 — identical to Emberweft's implicit-opaque assumption.
+///     • index (interpolation.c:425): `new_index += c[k] * palette[i].index`.
+///       `palette[i].index` is the slot `i` and `sum(c[k]) == 1`, so
+///       `new_index == i` — exactly the array position Emberweft uses.
+///   So the 3-channel RGB blend + 3-channel clip Emberweft performs is
+///   identical to flam3's 4-channel+index blend+clip for all opaque inputs;
+///   `color[3]` would be 1.0 and `index` would be the slot, neither of which
+///   affects the RGB output Emberweft returns. Widening `Palette` to RGBA+index
+///   would add only dead compute-and-discard for inputs Emberweft can produce;
+///   the equivalence is pinned by
+///   `PaletteBlendTests.testOpaquePaletteBlendMatchesFlam3FourChannelEquivalence`.
 /// - `sweep` is the hard-cut branch (interpolation.c:456-462):
 ///   `j = (i < 256*c[0]) ? 0 : 1`.
 public enum PaletteBlend {
