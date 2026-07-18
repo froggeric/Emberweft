@@ -26,6 +26,7 @@ public enum EmberweftCLI {
         case "info": return info(args.dropFirst().first)
         case "validate": return validate(args.dropFirst().first)
         case "render": return render(Array(args.dropFirst()))
+        case "animate": return animate(Array(args.dropFirst()))
         case "_feature-score": return featureScore(Array(args.dropFirst()))
         default:
             err("unknown command: \(cmd)\n"); printHelp(); return 2
@@ -37,6 +38,7 @@ public enum EmberweftCLI {
         emberweft \(FlameKit.version) — fractal-flame renderer (CPU | Metal backend)
         Usage:
           emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N] [--backend cpu|metal]
+          emberweft animate  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--selector sequential|similarity] [--seed N] [--stagger F] [--backend cpu|metal] [--out DIR] [--size WxH] [--quality N]
           emberweft validate <genome.flam3>
           emberweft info     <genome.flam3>
           emberweft --list-backends
