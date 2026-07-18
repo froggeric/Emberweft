@@ -76,6 +76,27 @@ Regression guards, not absolute gates (see [performance.md](performance.md)).
 - Realtime fps at target resolutions and quality tiers.
 - The local pre-merge gate compares against stored baselines; regressions beyond ±N% *(preliminary: ±10%)* flag a failure for review. Enabled with `EMBERWEFT_PERF=1`; non-gating.
 
+### 6a. Realtime capability gate (M3)
+
+`Tests/FlamePlayerTests/RealtimeCapabilityTests.swift` — an `EMBERWEFT_PERF=1`-gated, 30 s sustained-fps proof of the M3 animation pipeline (PlaybackDispatcher + AdaptiveQualityController + MetalRenderer). SKIPS cleanly when `EMBERWEFT_PERF != 1`, when Metal is unavailable, or when the sandbox blocks device creation. Run in **release** (`EMBERWEFT_PERF=1 swift test -c release --filter RealtimeCapabilityTests`) with the bash sandbox DISABLED — a debug build's unoptimized host pipeline is ~30× slower and not representative.
+
+Method (honest measurement): the PlaybackDispatcher is driven batch-by-batch against an **injected pacing clock** (the Task-20 fake-clock *injection* pattern — no `CAMetalLayer` vsync, no window, no drawable) that sleeps in real wall time to the 60 fps deadline. Every frame is rendered via the REAL offscreen `MetalRenderer.render` (no fake renderer), so the measured fps reflects actual GPU cost. The measured batch fps is fed into the pure `AdaptiveQualityController`, whose output `samplesPerPixel` becomes the next batch's `RenderParams` — so the adaptive loop is genuinely live. Per-frame wall timestamps are sampled in the sink; p50/p95 of the instantaneous sustained fps are computed and printed.
+
+**Ownership split (load-bearing — what M3 owns vs. what it does NOT):**
+
+- **M3 OWNS** the harness, the dispatcher, the adaptive controller, and the proof that the PIPELINE is realtime-capable where the GPU frame cost permits. This is demonstrated at **720p, where the engine sustains p50 ≈ 60 fps** (budget held in [2, 4] samplesPerPixel, no transition-frame freeze).
+- **M3 does NOT own the 1080p@58 fps absolute.** On the reference M2 Max (release, nominal thermal) the engine sustains only **p50 ≈ 30 fps at 1080p**; the 58 fps floor is an honest MISS. The bottleneck is a single documented, budget-independent fixed cost — the histogram that CPU-round-trips between the three Metal stages (see [performance.md](performance.md): *"today the histogram round-trips through CPU between stages"*). `samplesPerPixel` is the adaptive lever and it is correctly exercised, but the cost is dominated by the round-trip, so no budget tuning closes the gap. Closing it is the headline renderer optimization (fuse the three stages into one command buffer with a GPU-resident histogram) — tracked separately; the 58 floor here is **NOT lowered**. The honest miss is the signal.
+- **M4 OWNS the hard 60 fps-under-real-UI-load gate** (compositing / window / drawable load), which is not present in M3.
+
+**Recorded baseline (M2 Max, release, nominal thermal, paced to 60 fps):**
+
+| Resolution | Duration | p50 fps | p95 fps | adaptive budget (spp) | transition freeze | gate |
+|---|---|---|---|---|---|---|
+| 1280×720  | 8 s  | 60.2 | 63.9 | 2…4 | none | **PASS** (≥ 58) |
+| 1920×1080 | 30 s | 30.2 | 34.4 | 2…4 | none | **FAIL** — blocked on histogram-fusion optimization |
+
+Re-run after the histogram-fusion optimization lands; the 1080p row is expected to move above 58 fps without any change to this test or the 58 floor.
+
 ### 7. CLI snapshot tests
 End-to-end checks through the `emberweft` executable:
 
@@ -109,6 +130,7 @@ The source of truth for merge readiness is the **local gate run on a developer m
 | Metal determinism | byte-identical across repeated runs |
 | Metal per-stage histogram | count correlation > 0.999 |
 | Perf regression | within ±10% of baseline (non-gating) |
-| Realtime target | 60 fps @ 1080p, 30 fps @ 4K (M2 Max) |
+| Realtime capability (M3 gate, §6a) | median sustained fps ≥ 58; **met at 720p (p50 ≈ 60), NOT yet met at 1080p (p50 ≈ 30, blocked on the histogram-fusion optimization — floor NOT lowered)** |
+| Realtime target (post-optimization) | 60 fps @ 1080p, 30 fps @ 4K (M2 Max) |
 
 The Metal↔CPU thresholds reflect the statistical parity model: the two backends are independently deterministic but not byte-identical (different atomic-accumulation order, different per-thread sample split). The Stage-3a gate is tight because it runs both display pipelines on the *same* histogram, eliminating chaos-game divergence.
