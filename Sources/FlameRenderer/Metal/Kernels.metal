@@ -601,6 +601,42 @@ struct FloatBin {
     float count, r, g, b, a;
 };
 
+// MARK: - GPU resident decode (AtomicBin → FloatBin)
+//
+// Converts the chaos kernel's fixed-point `AtomicBin` histogram (5×uint32,
+// atomic-accumulated, associative → byte-deterministic) into the `FloatBin`
+// (5×float) layout Stages 2/3 consume, IN PLACE on the GPU — so the histogram
+// never crosses to the CPU between stages. r/g/b/a are divided by `colorScale`
+// to recover dmap-units, matching the host decode in `ChaosGameMetal.decode`
+// (`Double(bin.c) * (1.0/colorScale)` rounded to Float; `float(u)/s` is the
+// correctly-rounded IEEE equivalent for the in-range uint32 values here).
+// `count` is the raw hit count as float.
+//
+// Pure per-bin map — NO atomics, NO order dependence. It runs in its own
+// compute encoder after the chaos encoder (single command buffer → encoder
+// ordering gives full write visibility), so the atomic_uint loads read settled
+// values. Determinism is unchanged: chaos still writes uint32 atomics; this
+// kernel only READS them and WRITES non-atomic floats.
+kernel void atomicBinToFloatBin(device const AtomicBin* atomicIn [[buffer(0)]],
+                                device FloatBin* floatOut        [[buffer(1)]],
+                                constant const GPUFrameParams* fp [[buffer(2)]],
+                                uint2 tid [[thread_position_in_grid]]) {
+    uint gw = fp->gridWidth, gh = fp->gridHeight;
+    if (tid.x >= gw || tid.y >= gh) return;
+    uint idx = tid.y * gw + tid.x;
+    uint c = atomic_load_explicit(&atomicIn[idx].count, memory_order_relaxed);
+    uint r = atomic_load_explicit(&atomicIn[idx].r,   memory_order_relaxed);
+    uint g = atomic_load_explicit(&atomicIn[idx].g,   memory_order_relaxed);
+    uint b = atomic_load_explicit(&atomicIn[idx].b,   memory_order_relaxed);
+    uint a = atomic_load_explicit(&atomicIn[idx].a,   memory_order_relaxed);
+    float s = fp->colorScale;
+    floatOut[idx].count = float(c);
+    floatOut[idx].r = float(r) / s;
+    floatOut[idx].g = float(g) / s;
+    floatOut[idx].b = float(b) / s;
+    floatOut[idx].a = float(a) / s;
+}
+
 kernel void densityEstimation(device FloatBin* inOut [[buffer(0)]],
                               constant const float* params [[buffer(1)]],
                               constant const uint2* dims   [[buffer(2)]],
