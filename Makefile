@@ -3,7 +3,7 @@
 
 SWIFT   := swift
 
-.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep help
+.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep feature-cache help
 
 build:        ## Build (debug)
 	$(SWIFT) build
@@ -43,6 +43,9 @@ fetch-sheep:                        ## Fetch Electric Sheep .flam3 genomes into 
 
 sync-sheep:                         ## Sync NEW genomes from the live flock (gen 248)
 	bash Tools/sync-live-flock.sh
+
+feature-cache:                      ## Rebuild the genomes/.feature_cache/ feature-vector cache
+	$(SWIFT) run emberweft --rebuild-cache genomes
 
 clean:        ## Remove build artifacts
 	$(SWIFT) package clean

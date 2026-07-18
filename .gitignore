@@ -37,3 +37,6 @@ Icon?
 
 # Local artifacts
 /tmp/
+
+# Feature-vector cache (regenerated from .flam3 sources by --rebuild-cache; never commit)
+/genomes/.feature_cache/
