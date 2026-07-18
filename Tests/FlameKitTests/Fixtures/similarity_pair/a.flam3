@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <flames>
 <flame name="sim_a" size="320 200" quality="100" center="0 0" scale="100" oversample="1" gamma="2.2" vibrancy="1.0" estimator_radius="0">
-<xform weight="1.0" color="0.00" coefs="0.7 0.0 0.0 0.7 0.00 0.00" linear="0.6" swirl="0.4"/>
-<xform weight="1.0" color="0.25" coefs="0.6 0.1 -0.1 0.6 0.40 0.30" linear="0.3" swirl="0.7"/>
+<xform weight="1.0" color="0.00" coefs="0.7 0.0 0.0 0.7 0.00 0.00" linear="0.45" sinusoidal="0.22" spherical="0.13" swirl="0.33" horseshoe="0.08"/>
+<xform weight="1.0" color="0.25" coefs="0.6 0.1 -0.1 0.6 0.40 0.30" polar="0.17" handkerchief="0.29" heart="0.41" disc="0.11" linear="0.50"/>
 <palette count="256" format="RGB">
 C01020
 C11120
