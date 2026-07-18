@@ -35,19 +35,29 @@ public enum Loop {
             if result.xforms[i].padding != 0 && result.interpolationType != .log {
                 continue
             }
-            // Left-multiply the pre-affine 2×2 by R(θ). flam3 stores the linear part
-            // as c[0][0]=a, c[0][1]=b, c[1][0]=c, c[1][1]=d and computes U = R·T with
-            // R = [[cos, sin], [-sin, cos]], T = [[a,b],[c,d]].  Mapping back:
-            //   a' = cos·a + sin·c
-            //   b' = cos·b + sin·d
-            //   c' = -sin·a + cos·c
-            //   d' = -sin·b + cos·d
-            // Translation (e,f) is NOT part of the 2×2 and is left untouched.
+            // Rotate the pre-affine 2×2's basis vectors by R(θ). This matches
+            // flam3's `mult_matrix` (interpolation.c:110), which is NON-standard:
+            // `mult_matrix(s1,s2,d)` computes d[i][j] = s1[0][j]*s2[i][0] +
+            // s1[1][j]*s2[i][1], i.e. d = s2·s1. flam3 calls `mult_matrix(R, T, U)`
+            // so U = T·R, with R = [[cos, sin], [-sin, cos]] and flam3 storage
+            // c[0][0]=a, c[0][1]=b, c[1][0]=c, c[1][1]=d (i.e. T's stored rows are
+            // (a,b) and (c,d)). Equivalently — and what's actually being computed
+            // here — the math matrix M = [[a,c],[b,d]] (per AffineTransform.apply:
+            // tx = a·x + c·y + e, ty = b·x + d·y + f) has its COLUMNS (a,b) and
+            // (c,d) each rotated by R(θ) = [[cos,-sin],[sin,cos]]:
+            //   a' =  cos·a − sin·b
+            //   b' =  sin·a + cos·b
+            //   c' =  cos·c − sin·d
+            //   d' =  sin·c + cos·d
+            // NOTE: do NOT "simplify" back to rotating the row pairs (a,c)/(b,d) —
+            // that is the WRONG convention and only appeared correct because the
+            // t=0 identity case is identical under both formulations. Translation
+            // (e,f) is NOT part of the 2×2 and is left untouched.
             let m = result.xforms[i].affine
-            result.xforms[i].affine.a =  cs * m.a + sn * m.c
-            result.xforms[i].affine.b =  cs * m.b + sn * m.d
-            result.xforms[i].affine.c = -sn * m.a + cs * m.c
-            result.xforms[i].affine.d = -sn * m.b + cs * m.d
+            result.xforms[i].affine.a = cs * m.a - sn * m.b
+            result.xforms[i].affine.b = sn * m.a + cs * m.b
+            result.xforms[i].affine.c = cs * m.c - sn * m.d
+            result.xforms[i].affine.d = sn * m.c + cs * m.d
         }
 
         return result

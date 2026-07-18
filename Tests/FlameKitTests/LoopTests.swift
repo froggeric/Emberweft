@@ -119,15 +119,19 @@ final class LoopTests: XCTestCase {
         let θ = 0.25 * 2 * Double.pi
         let cs = cos(θ), sn = sin(θ)
         let m = sheep.xforms[0].affine
-        XCTAssertEqual(out.xforms[0].affine.a, cs * m.a + sn * m.c, accuracy: 1e-12)
-        XCTAssertEqual(out.xforms[0].affine.d, -sn * m.b + cs * m.d, accuracy: 1e-12)
+        XCTAssertEqual(out.xforms[0].affine.a, cs * m.a - sn * m.b, accuracy: 1e-12)
+        XCTAssertEqual(out.xforms[0].affine.d, sn * m.c + cs * m.d, accuracy: 1e-12)
     }
 
     // MARK: - 90° (t = 0.25) hand-check of R(π/2)·M
-    // flam3 stores c[0][0]=a, c[0][1]=b, c[1][0]=c, c[1][1]=d, with
-    // R = [[cos, sin], [-sin, cos]] and U = R·T (T = stored 2×2).  Pinned:
-    //   a' = cos·a + sin·c          b' = cos·b + sin·d
-    //   c' = -sin·a + cos·c         d' = -sin·b + cos·d
+    // The math matrix M = [[a,c],[b,d]] (per AffineTransform.apply) has its COLUMNS
+    // (a,b) and (c,d) each rotated by R(θ)=[[cos,-sin],[sin,cos]] — equivalently
+    // flam3's mult_matrix (interpolation.c:110) computes U = T·R with storage
+    // c[0][0]=a, c[0][1]=b, c[1][0]=c, c[1][1]=d.  Pinned:
+    //   a' =  cos·a − sin·b
+    //   b' =  sin·a + cos·b
+    //   c' =  cos·c − sin·d
+    //   d' =  sin·c + cos·d
 
     func testHandCheck90Degrees() {
         let sheep = Self.sampleFlame()
@@ -137,15 +141,17 @@ final class LoopTests: XCTestCase {
         let cs = cos(θ), sn = sin(θ)
         let m = sheep.xforms[0].affine
         let r = out.xforms[0].affine
-        XCTAssertEqual(r.a, cs * m.a + sn * m.c, accuracy: 1e-12)
-        XCTAssertEqual(r.b, cs * m.b + sn * m.d, accuracy: 1e-12)
-        XCTAssertEqual(r.c, -sn * m.a + cs * m.c, accuracy: 1e-12)
-        XCTAssertEqual(r.d, -sn * m.b + cs * m.d, accuracy: 1e-12)
-        // Sanity: at θ=π/2, cos≈0, sin≈1 ⇒ a'≈c, b'≈d, c'≈-a, d'≈-b.
-        XCTAssertEqual(r.a, m.c, accuracy: 1e-12)
-        XCTAssertEqual(r.b, m.d, accuracy: 1e-12)
-        XCTAssertEqual(r.c, -m.a, accuracy: 1e-12)
-        XCTAssertEqual(r.d, -m.b, accuracy: 1e-12)
+        XCTAssertEqual(r.a, cs * m.a - sn * m.b, accuracy: 1e-12)
+        XCTAssertEqual(r.b, sn * m.a + cs * m.b, accuracy: 1e-12)
+        XCTAssertEqual(r.c, cs * m.c - sn * m.d, accuracy: 1e-12)
+        XCTAssertEqual(r.d, sn * m.c + cs * m.d, accuracy: 1e-12)
+        // Sanity: at θ=π/2, cos≈0, sin≈1 ⇒ a'≈−b, b'≈a, c'≈−d, d'≈c.
+        // (a=2, b=3, c=5, d=7 ⇒ a'=−3, b'=2, c'=−7, d'=5; accuracy 1e-12
+        // absorbs the cos(π/2)≈6.1e-17 FP residual.)
+        XCTAssertEqual(r.a, -m.b, accuracy: 1e-12)
+        XCTAssertEqual(r.b,  m.a, accuracy: 1e-12)
+        XCTAssertEqual(r.c, -m.d, accuracy: 1e-12)
+        XCTAssertEqual(r.d,  m.c, accuracy: 1e-12)
     }
 
     // MARK: - does not mutate the input
