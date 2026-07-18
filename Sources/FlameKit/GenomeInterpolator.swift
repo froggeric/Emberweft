@@ -19,14 +19,25 @@ import Foundation
 public enum GenomeInterpolator {
 
     /// Interpolate two keyframe genomes at parameter `t ∈ [0,1]`.
+    ///
+    /// - Parameters:
+    ///   - stagger: the genome `stagger` attribute in `[0,1]`. When `> 0` and both
+    ///     genomes are aligned (2-control-point blend), each non-final xform `i` is
+    ///     interpolated at a per-xform blend fraction derived from
+    ///     `BlendMath.staggerCoefUnchecked` (porting `flam3_interpolate_n:522-527`),
+    ///     so xforms desync across the transition. The final/post xform and ALL scalar
+    ///     genome fields (camera, palette, hueShift, time, …) always use the global `t`
+    ///     — exactly as in flam3, where stagger lives inside the per-xform loop only.
+    ///     `stagger <= 0` (the default) leaves every xform on the same eased curve,
+    ///     keeping the `.linear` path byte-identical to the no-stagger behavior.
     public static func interpolate(
-        _ a: Flame, _ b: Flame, t: Double, type: MatrixInterpolationType
+        _ a: Flame, _ b: Flame, t: Double, type: MatrixInterpolationType, stagger: Double = 0
     ) -> Flame {
         switch type {
         case .log:
-            return blend(a, b, t, xformBlend: interpolateLogXform)
+            return blend(a, b, t, stagger: stagger, xformBlend: interpolateLogXform)
         case .linear, .compat, .older:
-            return blend(a, b, t, xformBlend: interpolateLinearXform)
+            return blend(a, b, t, stagger: stagger, xformBlend: interpolateLinearXform)
         }
     }
 
@@ -36,7 +47,7 @@ public enum GenomeInterpolator {
     /// xform-count mismatch handling are identical between `.linear` and `.log`;
     /// only the per-xform callback differs.
     private static func blend(
-        _ a: Flame, _ b: Flame, _ t: Double,
+        _ a: Flame, _ b: Flame, _ t: Double, stagger: Double,
         xformBlend: (_ a: Xform, _ b: Xform, _ t: Double) -> Xform
     ) -> Flame {
         var f = Flame()
@@ -53,17 +64,45 @@ public enum GenomeInterpolator {
         f.palette = blendPalette(a.palette, b.palette, t)
 
         let n = max(a.xforms.count, b.xforms.count)
+        // stagger: nx = standard (non-final) xform count. After align both genomes share
+        // this count; when unaligned we use the max. flam3 gates stagger on ncp==2 &&
+        // stagger>0 && i != final_xform_index (interpolation.c:522). The final xform is
+        // handled separately below with the global t (never staggered).
+        let staggerActive = stagger > 0 && n >= 2
+
         f.xforms = (0..<n).map { i in
             if i >= a.xforms.count { return b.xforms[i] }
             if i >= b.xforms.count { return a.xforms[i] }
-            return xformBlend(a.xforms[i], b.xforms[i], t)
+            let ti = staggerActive
+                ? perXformBlendT(globalT: t, stagger: stagger, nx: n, xformIndex: i)
+                : t
+            return xformBlend(a.xforms[i], b.xforms[i], ti)
         }
+        // Final/post xform: NO stagger (flam3 gate i != final_xform_index).
         if let fa = a.finalXform, let fb = b.finalXform {
             f.finalXform = xformBlend(fa, fb, t)
         } else {
             f.finalXform = (a.finalXform ?? b.finalXform)
         }
         return f
+    }
+
+    /// Per-xform blend fraction (cp1 weight) with stagger applied, porting
+    /// `flam3_interpolate_n:522-527`.
+    ///
+    /// flam3 computes the cp0 weight `c[0] = 1 - t`, calls
+    /// `get_stagger_coef(c[0], stagger, nx, i)` to derive the staggered cp0 weight,
+    /// then sets `c[1] = 1 - c[0]`. `BlendMath.staggerCoefUnchecked` is a verbatim
+    /// port of `get_stagger_coef` — its `t` argument IS flam3's `c[0]` (the cp0
+    /// weight), so we pass `1 - t` and return `1 - result` to recover the cp1 weight
+    /// (the blend fraction the per-xform callback expects).
+    private static func perXformBlendT(
+        globalT t: Double, stagger: Double, nx: Int, xformIndex i: Int
+    ) -> Double {
+        let c0 = 1.0 - t
+        let staggeredC0 = BlendMath.staggerCoefUnchecked(
+            t: c0, stagger: stagger, numXforms: nx, xformIndex: i)
+        return 1.0 - staggeredC0
     }
 
     // MARK: - .linear xform (BYTE-IDENTICAL with legacy Interpolation.interpolate)
