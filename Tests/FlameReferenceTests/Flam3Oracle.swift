@@ -155,37 +155,32 @@ enum Flam3Oracle {
 
     // MARK: - Internals
 
-    /// Injects `passes="1" temporal_samples="1"` onto every `<flame` opening
-    /// tag that does not already carry the attribute, disabling temporal
-    /// oversampling / motion blur (F6). Idempotent.
+    /// Forces `passes="1" temporal_samples="1"` onto every `<flame>` opening
+    /// tag, disabling temporal oversampling / motion blur (F6). Existing values
+    /// are OVERWRITTEN (flam3-genome emits `temporal_samples="1000"` by default,
+    /// which would blur transition interiors and make the ≥30 dB gate fail
+    /// systematically); attrs absent on a tag are inserted. Idempotent.
     static func injectMotionBlurOff(_ genome: String) -> String {
-        // Match `<flame` followed by whitespace; insert the two attrs right
-        // after the tag name. genomes that already set passes/temporal_samples
-        // explicitly are left alone (we only insert, we never overwrite).
-        var sawInjection = false
         var out = genome
-        // Simple, robust scan: replace the FIRST occurrence per <flame tag.
-        // Doing this with NSRegularExpression on `<flame(\s)` to avoid touching
-        // <flames> (the root) — note the required trailing whitespace.
-        let pattern = "<flame(\\s)"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return genome
+        // 1. Overwrite any existing passes="…" / temporal_samples="…" values.
+        if let re = try? NSRegularExpression(pattern: "passes=\"[^\"]*\"") {
+            out = re.stringByReplacingMatches(
+                in: out, range: NSRange(out.startIndex..., in: out),
+                withTemplate: "passes=\"1\"")
         }
-        var edits: [(NSRange, String)] = []
-        regex.enumerateMatches(in: genome, options: [], range: NSRange(genome.startIndex..., in: genome)) { match, _, _ in
-            guard let match, match.numberOfRanges >= 2 else { return }
-            let wsRange = match.range(at: 1)
-            guard let wsSwift = Range(wsRange, in: genome) else { return }
-            let ws = String(genome[wsSwift])
-            edits.append((match.range, "<flame passes=\"1\" temporal_samples=\"1\"\(ws)"))
-            sawInjection = true
+        if let re = try? NSRegularExpression(pattern: "temporal_samples=\"[^\"]*\"") {
+            out = re.stringByReplacingMatches(
+                in: out, range: NSRange(out.startIndex..., in: out),
+                withTemplate: "temporal_samples=\"1\"")
         }
-        _ = sawInjection
-        // Apply edits right-to-left so ranges stay valid.
-        for (range, replacement) in edits.reversed() {
-            if let r = Range(range, in: out) {
-                out.replaceSubrange(r, with: replacement)
-            }
+        // 2. Insert the attrs on <flame> tags still missing them (negative
+        //    lookaheads skip tags that already carry the attr — including those
+        //    just overwritten above — and the root <flames> via required whitespace).
+        let pattern = "<flame(?![^>]*passes=)(?![^>]*temporal_samples=)(\\s)"
+        if let re = try? NSRegularExpression(pattern: pattern) {
+            out = re.stringByReplacingMatches(
+                in: out, range: NSRange(out.startIndex..., in: out),
+                withTemplate: "<flame passes=\"1\" temporal_samples=\"1\"$1")
         }
         return out
     }
