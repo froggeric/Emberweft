@@ -26,6 +26,7 @@ public enum EmberweftCLI {
         case "info": return info(args.dropFirst().first)
         case "validate": return validate(args.dropFirst().first)
         case "render": return render(Array(args.dropFirst()))
+        case "_feature-score": return featureScore(Array(args.dropFirst()))
         default:
             err("unknown command: \(cmd)\n"); printHelp(); return 2
         }
@@ -126,6 +127,22 @@ public enum EmberweftCLI {
         do { try img.writePNG(to: URL(fileURLWithPath: output)) }
         catch { err("error: cannot write \(output): \(error)\n"); return 1 }
         out("wrote \(output) (\(width)×\(height))\n")
+        return 0
+    }
+
+    /// Hidden diagnostic subcommand (NOT advertised in `--help`): build
+    /// `FeatureVector`s for two genomes and print the similarity score as the
+    /// exact bit pattern of the `Double` (hex `%016x`). Used by the F1
+    /// cross-process bit-identity acceptance test — each process launch has a
+    /// fresh Swift hash seed, so byte-equal output proves no String-keyed
+    /// Dict/Set leaks into the FP accumulation path.
+    private static func featureScore(_ args: [String]) -> Int32 {
+        guard args.count == 2 else {
+            err("error: _feature-score requires two genome paths\n"); return 2
+        }
+        guard let a = load(args[0]), let b = load(args[1]) else { return 1 }
+        let score = FeatureVector(for: a).similarity(to: FeatureVector(for: b))
+        out(String(format: "%016llx\n", score.bitPattern))
         return 0
     }
 }
