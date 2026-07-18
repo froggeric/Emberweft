@@ -44,6 +44,21 @@ FlameKit provides the data model for fractal flame genomes:
 - **Camera/View structs** — Center, scale, rotation, aspect ratio handling
 - **XML Parser** — .flam3 format deserialization/serialization with validation
 - **Temporal Interpolation** — Smooth parameter morphing between animation keyframes
+- **Animation subsystem (M3)** — the faithful flam3 port that drives motion:
+  - `Loop.blend` — `sheep_loop`: pure 360° pre-affine rotation `R(θ)·M` of each
+    animating, non-final xform (palette static; seamless because `R(360°)=R(0°)`).
+  - `Transition.blend` — `sheep_edge`: align + special-sauce-pad → rotate both
+    endpoints → `GenomeInterpolator` (`.log` polar matrix blend) → `PaletteBlend`
+    (HSV-circular palette mix + linear `hue_rotation`).
+  - `GenomeInterpolator` — `.linear` (legacy) and `.log` (polar decomposition
+    with wind-anchored angle unwrap + per-column magnitude guard); per-xform
+    `stagger`.
+  - `Schedule` — a pure `Sendable` value-type timeline: O(1) global-frame →
+    `(segmentId, kind, blend)`, strict loop/transition alternation by id parity.
+  - `PairSelector` — `Sequential` (cyclic) and `SimilarityExploration`
+    (ε-greedy, F1-deterministic over sorted-array `FeatureVector`s).
+  - `PaletteBlend` / `SpecialSauce` / `RefAngles` — the supporting `sheep_edge`
+    pieces (HSV palette mix, rest-position padding, wind-angle anchors).
 
 FlameKit has no Metal dependencies and can be used in headless tools or tests.
 
@@ -80,15 +95,44 @@ Key implementation details:
 
 **Purpose:** Realtime adaptive generation with pre-rendered caching
 
-FlamePlayer manages the infinite playback loop:
+FlamePlayer manages the infinite playback loop. The M3 realtime path is built on
+three components (see [playback-modes.md](../playback/playback-modes.md)):
 
-- **Adaptive Generation** — Realtime rendering when cache miss; quality scales to frame budget
+- **`PlaybackDispatcher`** (S7, Task 20) — an actor-isolated driver that advances
+  a `Schedule` one global frame at a time, hands the interpolated `Flame` to an
+  injected `Renderer`, paces to a target fps via an injected `PlaybackClock`, and
+  **prefetches the next sheep mid-loop** so the transition's first frame is ready.
+  Triple-buffered `MTLTexture` rotation lives behind the production `Renderer`
+  conformer (on the `@MainActor`); the dispatcher itself is Metal-free and fully
+  testable with fakes. Swift 6 isolation throughout — no `nonisolated(unsafe)`.
+- **`AdaptiveQualityController`** (S7, Task 21) — a **pure** value type mapping
+  `(measuredFps, thermalState, currentBudget)` to a new `samplesPerPixel` via
+  hysteretic feedback (±3 fps deadband; halve on underperformance, double on
+  headroom; `.critical` thermal forces a floor). No hidden state — identical
+  inputs always yield identical output, so it is verified deterministically
+  against simulated fps/thermal signals.
+- **`FlameUI`** (S7, Task 22) — a `@MainActor` `NSView` backed by `CAMetalLayer`
+  that conforms to the dispatcher's `FrameSink` protocol and drives vsync-paced
+  presentation.
+
+Legacy responsibilities (pre-rendered cache, library management) remain as
+described below; the adaptive generation + transition sequencing path is the
+`PlaybackDispatcher` + `Schedule` + `AdaptiveQualityController` triad above.
+
 - **Pre-rendered Cache** — Background thread renders upcoming sheep at high quality
-- **Transition Sequencing** — Smooth morphs between genomes over **(preliminary)** 120-180 frames
-- **Loop Management** — Determines next sheep, handles edge cases (xform count mismatch, palette crossfade)
 - **Deterministic Seeds** — Fixed RNG seeds ensure offline renders match realtime playback
 
-FlamePlayer uses `MTKView` with `CAMetalLayer` for display, with offscreen compute for cache generation.
+### FlameUI (Metal-Layer Presentation)
+
+**Purpose:** `@MainActor` `NSView` presenting the dispatcher's frames
+
+`FlameUI` is the production `FrameSink`: the `PlaybackDispatcher` hands it one
+`RGBA8Image` per global frame and `FlameUI.display` crosses the MainActor
+explicitly (the conformance is `@MainActor`-isolated, satisfying
+`FrameSink: Sendable`). It builds a `CGImage` from the renderer's RGBA8 pixels
+and hands it to the `CAMetalLayer.contents`. Teardown of any owned dispatcher is
+an explicit `async stop()` the owner calls (Swift 6 forbids async work in
+`deinit`). Availability mirrors `MetalRenderer.isAvailable`.
 
 ### FlameExport (Export Module)
 

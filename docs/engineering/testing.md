@@ -58,6 +58,39 @@ The parity gate (section 3) is decomposed into per-stage checks that localize re
 - **Finiteness** — no NaN/Inf in any output pixel, across the frozen set + fuzz.
 - **Performance baseline** — `EMBERWEFT_PERF=1` records a single-frame CPU/Metal timing baseline at 720p/1080p and the speedup ratio. Non-gating; a regression guard. (`PerformanceBaselineTests`)
 
+### 4a. Animated-frame parity (M3)
+
+The M3 animation pipeline extends the still-frame gates (§2 golden, §3 parity) to
+motion. Two test targets split by Metal dependency, mirroring the still split:
+
+- **`AnimationParityTests`** (CPU/vs-flam3 rows — `[FlameReference, FlameKit]`
+  only, no Metal) — drives `Loop`/`Transition`/`GenomeInterpolator`/`Schedule`/
+  `SpecialSauce` through `ReferenceRenderer` and compares to the `flam3-genome` /
+  `flam3-animate` oracle (§2a). vs-flam3 rows call `try Flam3Oracle.require()`
+  first (F10 auto-skip when the build is absent — **skip-or-pass, never a
+  failure**). Target: **vs-flam3 ≥ 30 dB** across loops and transition interiors;
+  measured **43–58 dB**. Also: loop seamlessness (genome-space `‖Δ‖` bounded —
+  rotation-only, so coefficients line up 1:1), and finiteness of every animated
+  `Flame` (a NaN in `Loop`/`Transition` output would poison the whole render).
+- **`AnimatedFrameParityTests`** (Metal-touching rows — `[FlameRenderer]`) —
+  renders animated frames through `MetalRenderer` and checks:
+  - **Metal ↔ CPU ≥ 38 dB** on animated frames, including a **mismatched
+    transition pair** (differing xform count **and** special-sauce variation set,
+    so `SpecialSauce.align` padding and multiple Metal variation slots exercise
+    together).
+  - **Continuity ≥ 40 dB** between consecutive transition frames (no pops) — a
+    gentle, non-chaotic pair isolates morph smoothness.
+  - **G2 determinism** — the full animated sequence is byte-deterministic across
+    repeated runs (both backends).
+  - **Finiteness** — no NaN/Inf in any animated output pixel.
+
+**`hsv_rgb_palette_blend`** — transitions exercise the HSV-circular palette mix
+(`PaletteBlend.blend` with the genome's `hsvRgbPaletteBlend` as the RGB/HSV mix
+fraction + linear `hue_rotation` interpolation). Loops keep the palette **static**
+(the rotation is affine-only), so palette motion is transitions-only — verified
+by the loop-seamlessness genome-space gate (no palette delta) and the vs-flam3
+transition-interior rows (which depend on the HSV blend matching flam3).
+
 ### 5. Property / invariant tests
 QuickCheck-style randomized checks over generated genomes:
 
@@ -85,17 +118,20 @@ Method (honest measurement): the PlaybackDispatcher is driven batch-by-batch aga
 **Ownership split (load-bearing — what M3 owns vs. what it does NOT):**
 
 - **M3 OWNS** the harness, the dispatcher, the adaptive controller, and the proof that the PIPELINE is realtime-capable where the GPU frame cost permits. This is demonstrated at **720p, where the engine sustains p50 ≈ 60 fps** (budget held in [2, 4] samplesPerPixel, no transition-frame freeze).
-- **M3 does NOT own the 1080p@58 fps absolute.** On the reference M2 Max (release, nominal thermal) the engine sustains only **p50 ≈ 30 fps at 1080p**; the 58 fps floor is an honest MISS. The bottleneck is a single documented, budget-independent fixed cost — the histogram that CPU-round-trips between the three Metal stages (see [performance.md](performance.md): *"today the histogram round-trips through CPU between stages"*). `samplesPerPixel` is the adaptive lever and it is correctly exercised, but the cost is dominated by the round-trip, so no budget tuning closes the gap. Closing it is the headline renderer optimization (fuse the three stages into one command buffer with a GPU-resident histogram) — tracked separately; the 58 floor here is **NOT lowered**. The honest miss is the signal.
-- **M4 OWNS the hard 60 fps-under-real-UI-load gate** (compositing / window / drawable load), which is not present in M3.
+- **M3 owns the 1080p capability floor (≥ 58 fps) — now MET**, after the histogram-fusion optimization fused the three Metal stages into one command buffer with a GPU-resident histogram (previously the histogram CPU-round-tripped between stages, a fixed ~25 ms 1080p cost that budget tuning could not close). The gate holds with a **thin margin**: 1080p p50 ≈ 58.7–59 fps, with the adaptive controller shedding to a low quality budget (2–4 `samplesPerPixel`). `samplesPerPixel` is the adaptive lever; it is correctly exercised, but at 1080p the engine is budget-constrained to the low end of its range to hold the floor.
+- **M4 OWNS** (a) the hard 60 fps-under-real-UI-load gate (compositing / window / drawable load), which is not present in M3, and (b) **visual quality at target fps** — the M3 gate is a capability floor, not a quality target; the thin 1080p margin means image quality at 58–59 fps is deliberately low (2–4 spp) and is an M4 concern.
 
 **Recorded baseline (M2 Max, release, nominal thermal, paced to 60 fps):**
 
 | Resolution | Duration | p50 fps | p95 fps | adaptive budget (spp) | transition freeze | gate |
 |---|---|---|---|---|---|---|
-| 1280×720  | 8 s  | 60.2 | 63.9 | 2…4 | none | **PASS** (≥ 58) |
-| 1920×1080 | 30 s | 30.2 | 34.4 | 2…4 | none | **FAIL** — blocked on histogram-fusion optimization |
+| 1280×720  | 8 s  | ≈ 60   | ≈ 64   | 2…4 | none | **PASS** (≥ 58) |
+| 1920×1080 | 30 s | ≈ 58.7–59 | ≈ 59 | 2…4 | none | **PASS** (≥ 58, thin margin — low quality budget) |
 
-Re-run after the histogram-fusion optimization lands; the 1080p row is expected to move above 58 fps without any change to this test or the 58 floor.
+The 1080p row moved above 58 fps after the histogram-fusion optimization landed;
+the 58 floor was **NOT lowered**. The margin is thin and the adaptive budget
+sits at its low end (2–4 spp), so absolute image quality at target fps is
+deferred to M4.
 
 ### 7. CLI snapshot tests
 End-to-end checks through the `emberweft` executable:
@@ -130,7 +166,11 @@ The source of truth for merge readiness is the **local gate run on a developer m
 | Metal determinism | byte-identical across repeated runs |
 | Metal per-stage histogram | count correlation > 0.999 |
 | Perf regression | within ±10% of baseline (non-gating) |
-| Realtime capability (M3 gate, §6a) | median sustained fps ≥ 58; **met at 720p (p50 ≈ 60), NOT yet met at 1080p (p50 ≈ 30, blocked on the histogram-fusion optimization — floor NOT lowered)** |
+| Realtime capability (M3 gate, §6a) | median sustained fps ≥ 58; **MET at 720p (p50 ≈ 60) and 1080p (p50 ≈ 58.7–59, thin margin, low quality budget 2–4 spp — after the histogram-fusion optimization; floor NOT lowered)** |
 | Realtime target (post-optimization) | 60 fps @ 1080p, 30 fps @ 4K (M2 Max) |
+| Animated-frame vs-flam3 (§4a) | PSNR ≥ 30 dB (skip-or-pass; measured 43–58 dB) |
+| Animated-frame Metal↔CPU (§4a) | PSNR ≥ 38 dB (incl. mismatched transition) |
+| Animated-frame continuity (§4a) | consecutive-frame PSNR ≥ 40 dB |
+| Animated-frame determinism (§4a) | byte-identical across runs (both backends) |
 
 The Metal↔CPU thresholds reflect the statistical parity model: the two backends are independently deterministic but not byte-identical (different atomic-accumulation order, different per-thread sample split). The Stage-3a gate is tight because it runs both display pipelines on the *same* histogram, eliminating chaos-game divergence.

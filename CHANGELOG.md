@@ -7,6 +7,111 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [M3] — Animation and Realtime Pipeline
+
+Faithful flam3 animation (loops + transitions) rendered through a realtime Metal
+playback engine. Loops and transitions alternate endlessly — the Electric Sheep
+sequence — driven by a pure `Schedule` timeline, a `PlaybackDispatcher` actor,
+and an `AdaptiveQualityController`. Exposed via `emberweft animate` (PNG sequence
++ `manifest.json`) and the `FlameUI` Metal-layer view. Two slice prerequisites
+landed first: a widened genome model with the 16 special-sauce variations on
+both CPU and Metal, and a histogram-fusion perf optimization that recovers the
+1080p realtime floor.
+
+### S6-pre — widened genome model + 16 special-sauce variations
+`Variation`/`Xform`/`Flame` widened to carry per-variation parameters, animation
+attributes (`animate`, `padding`, `interpolationType`, `paletteInterpolation`,
+`hsvRgbPaletteBlend`, `stagger`, `hueRotation`), and a `VariationDescriptor`
+registry of parameter schemas + special-sauce rest positions. The 16
+special-sauce variations (`spherical`, `ngon`, `julian`, `juliascope`, `polar`,
+`wedge_sph`, `wedge_julia`, `rect`, `rings2`, `fan2`, `blob`, `supershape`,
+`curl`, `perspective`, `fan`, `rings`) were ported to **both** CPU
+(`FlameReference`) and Metal (MSL), with a 33-slot canonical `GPUXform` table +
+flat-packed param channel. Per-variation parity (additivity oracle) verified
+against the pre-S6-pre Metal baseline hashes.
+
+### S6 — FlameKit animation math + `animate` CLI
+A faithful port of flam3's `sheep_loop` / `sheep_edge` / `flam3_interpolate`:
+
+- **`Loop.blend`** — `sheep_loop`: pure 360° pre-affine rotation `R(θ)·M`
+  (θ = `t·2π`) of each animating, non-final xform. **Palette is static during a
+  loop** (seamless because `R(360°)=R(0°)` within FP residual; not a palette
+  wrap). Translation, post-affine, and camera untouched.
+- **`Transition.blend`** — `sheep_edge`: `SpecialSauce.align` (pad to equal xform
+  count + per-variation rest positions) → `RefAngles.establish` (wind anchors) →
+  rotate **both** endpoints by `t·360°` → `GenomeInterpolator.interpolate`
+  (`.log` polar matrix blend + per-xform `stagger`) → `PaletteBlend` (HSV-circular
+  palette mix via `hsv_rgb_palette_blend` + linear `hue_rotation`).
+- **`GenomeInterpolator`** — `.linear` (byte-identical to the legacy path) and
+  `.log` (polar decomposition: wind-anchored angle unwrap, per-column magnitude
+  guard, zero-column angle copy). `stagger` desynchronizes per-xform timing.
+- **`Schedule`** — a pure `Sendable` value-type timeline: O(1) global-frame →
+  `(segmentId, kind, blend)`, O(1) amortized `segmentId → Segment`. Strict
+  loop/transition alternation by segment-id parity (transitions only occupy odd
+  ids → "no two transitions consecutive" holds by construction). Blend is
+  1-indexed in `(0, 1]` — never 0 — so consecutive segments tile with no
+  duplicate boundary frame.
+- **`PairSelector`** — `Sequential` (deterministic cyclic walk) and
+  `SimilarityExploration` (ε-greedy similarity-biased jumps with escapes, over a
+  sorted-array `FeatureVector` — F1 bit-reproducible across launches).
+- **`emberweft animate`** — renders a PNG sequence (`frames/000000.png …`) plus a
+  `manifest.json` (per-segment/per-frame metadata). Flags: `--frames`,
+  `--segments`, `--selector sequential|similarity`, `--seed`, `--stagger`,
+  `--backend cpu|metal`, `--out`, `--library`, `--size`, `--quality`,
+  `--rebuild-cache`.
+
+### S7 — realtime engine
+- **`PlaybackDispatcher`** — an actor-isolated driver that advances a `Schedule`
+  one global frame at a time, hands the interpolated `Flame` to an injected
+  `Renderer`, paces to a target fps via an injected `PlaybackClock`, and
+  **prefetches the next sheep mid-loop** so the transition's first frame is
+  ready. Triple-buffered `MTLTexture` rotation lives behind the production
+  `Renderer` conformer (on the MainActor); the dispatcher itself is Metal-free
+  and fully testable with fakes. Swift 6 isolation throughout — no
+  `nonisolated(unsafe)`.
+- **`AdaptiveQualityController`** — a **pure** value type mapping
+  `(measuredFps, thermalState, currentBudget)` to a new `samplesPerPixel` via
+  hysteretic feedback (±3 fps deadband, halve on underperformance, double on
+  headroom). No hidden state; identical inputs always yield identical output.
+  `.critical` thermal forces a floor regardless of fps.
+- **`FlameUI`** — a `@MainActor` `NSView` backed by `CAMetalLayer` that conforms
+  to the dispatcher's `FrameSink` protocol and drives vsync-paced presentation.
+
+### Histogram-fusion performance optimization
+The three Metal stages (chaos-game → density-estimation → display) were fused
+into one command buffer with a **GPU-resident histogram** (previously the
+histogram CPU-round-tripped between stages, a fixed ~25 ms 1080p cost that
+budget tuning could not close). This recovers the 1080p realtime floor — see the
+baseline below.
+
+### Realtime capability baseline (M2 Max, release, nominal thermal, paced to 60 fps)
+
+| Resolution | Duration | p50 fps | p95 fps | adaptive budget (spp) | gate |
+|---|---|---|---|---|---|
+| 1280×720  | 8 s  | ≈ 60   | ≈ 64   | 2…4 | **PASS** (≥ 58) |
+| 1920×1080 | 30 s | ≈ 58.7–59 | ≈ 59 | 2…4 | **PASS** (≥ 58, thin margin) |
+
+The gate (median sustained fps ≥ 58) **holds at 1080p after the histogram-fusion
+optimization**, but with a thin margin: the adaptive controller sheds to a low
+quality budget (2–4 `samplesPerPixel`) to fit the 60 fps deadline. Absolute
+image quality at target fps is an **M4 concern** — the M3 gate is a capability
+floor, not a quality target. The hard 60 fps-under-real-UI-load gate (window /
+compositing / drawable load) is also M4's.
+
+### Animation parity
+- **vs-flam3** (`flam3-genome`/`flam3-animate` oracle, motion blur OFF):
+  **43–58 dB PSNR** across loops and transition interiors (skip-or-pass — F10
+  auto-skips when the dev-only oracle build is absent; never a failure).
+- **Metal ↔ CPU** on animated frames (incl. a mismatched transition pair —
+  differing xform count **and** special-sauce variation set, exercising
+  `SpecialSauce.align` padding + multiple Metal variation slots): **≥ 38 dB**.
+- **Continuity** — consecutive transition frames: **≥ 40 dB** (no pops).
+- **G2 determinism** — full animated sequence byte-deterministic across runs
+  (both backends); `manifest.json` byte-stable (declaration-order keys,
+  index-ordered array).
+- `hsv_rgb_palette_blend` exercises the HSV-circular palette mix on transitions
+  (loops keep the palette static).
+
 ## [M2] — Metal Renderer (Faithful Twin)
 
 A Metal-compute renderer (`FlameRenderer`) that is a faithful statistical twin of

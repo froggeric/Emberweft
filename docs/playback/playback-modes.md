@@ -75,6 +75,13 @@ func selectPlaybackMode(
 
 ## Adaptive Quality Control
 
+> **Shipped (M3):** the real controller is `AdaptiveQualityController` — a **pure
+> `Sendable` value type** (no hidden state) mapping `(measuredFps, thermalState,
+> currentBudget)` to a new `samplesPerPixel` via hysteretic feedback (±3 fps
+> deadband; halve on underperformance, double on headroom; `.critical` thermal
+> forces a floor). The PID sketch below is the original preliminary design; the
+> hysteretic controller is what runs (see [architecture.md](../architecture.md)).
+
 ### Feedback Controller
 
 The adaptive quality system uses a PID-like controller to maintain target framerate by adjusting iteration budgets and histogram resolution.
@@ -142,28 +149,41 @@ using the interpolation engine described in
 loop → transition`. Never two transitions in a row; every transition is
 bracketed by loops.
 
-**Segment Scheduling:**
+**Segment Scheduling (pure `Schedule` + `PlaybackDispatcher`):**
+
+The M3 realtime path is not a stateful scheduler class. It is a **pure
+`Sendable` value-type `Schedule`** (FlameKit, Task 15) consumed by a
+**`PlaybackDispatcher` actor** (FlamePlayer, Task 20):
 
 ```swift
-class SegmentScheduler {
-    // Produces an endless, strictly alternating stream: loop, transition, loop, …
-    func nextSegment(current: Segment) -> Segment {
-        switch current {
-        case .loop(let sheep):           return .transition(from: sheep, to: pickNextSheep())
-        case .transition(_, let next):   return .loop(next)
-        }
-    }
+// Schedule — pure value type, O(1) global-frame → (segmentId, kind, blend).
+// Strict loop/transition alternation by segment-id parity (transitions only
+// occupy odd ids → "no two transitions consecutive" holds by construction).
+let schedule = Schedule(librarySize: n, framesPerSegment: 160,
+                        selector: Sequential(seed: 0), seed: 0)
 
-    func schedulePrefetch(current: Segment, loopDuration: TimeInterval, transitionDuration: TimeInterval) {
-        // Prefetch the upcoming sheep mid-way through the current loop,
-        // so the following transition is ready when the loop ends.
-        let prefetchTime = loopDuration * 0.5
-        DispatchQueue.main.asyncAfter(deadline: .now() + prefetchTime) {
-            self.pregenerateNextSheep()
-        }
-    }
-}
+// PlaybackDispatcher — actor-isolated; advances the timeline one global frame
+// at a time, renders via an injected Renderer, paces to targetFPS via an
+// injected PlaybackClock, and PREFETCHES the next sheep mid-loop so the
+// transition's first frame is ready.
+let dispatcher = PlaybackDispatcher(
+    schedule: schedule,
+    sheepProvider: provider,
+    renderer: MetalFrameRenderer(),     // @MainActor conformer wrapping MetalRenderer
+    sink: flameUI,                      // FlameUI: FrameSink + CAMetalLayer
+    clock: WallClock(),
+    params: params,
+    targetFPS: 60)
+await dispatcher.run(frameCount: schedule.totalFrames(segmentCount: 1_000))
 ```
+
+The dispatcher's prefetch launches at most one background fetch per loop segment
+(`SheepProvider.sheep(at:)` for the upcoming transition's target), so the
+transition's first frame is resident when the loop ends. The triple-buffered
+`MTLTexture` rotation lives **behind** the production `Renderer` conformer (on
+the `@MainActor`), not in the dispatcher actor — keeping the dispatcher Metal-free
+and testable with fakes. `AdaptiveQualityController` (a pure value type) reads the
+measured batch fps and emits the next `samplesPerPixel` budget.
 
 **Segment Timing:**
 - Frame budget grew with hardware: 128 (classic) → 160 → 320 → 900 (newest gen-248). Emberweft applies one budget to all sheep (loops are generated live by `sheep_loop`, so a sheep's era doesn't constrain it): **160 frames (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium (screensaver/export)**.
