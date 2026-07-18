@@ -245,4 +245,36 @@ final class AnimateCommandTests: XCTestCase {
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
         XCTAssertEqual(manifest.stagger, 0.5)
     }
+
+    /// AC (Task 17): `--selector similarity` with a fully-absent cache errors
+    /// with a clear message and does NOT silently rebuild (no
+    /// `--rebuild-cache`). The library dir is left untouched (no
+    /// `.feature_cache/` written).
+    func testSimilaritySelectorAbsentCacheErrors() throws {
+        let a = tmp(genomeA, name: "anim_sim_a.flam3")
+        let b = tmp(genomeB, name: "anim_sim_b.flam3")
+        // A library dir containing the genomes but NO `.feature_cache/`.
+        let library = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("anim_sim_lib_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        try genomeA.data(using: .utf8)!.write(to: library.appendingPathComponent("a.flam3"))
+        try genomeB.data(using: .utf8)!.write(to: library.appendingPathComponent("b.flam3"))
+        let out = freshOut("sim_absent")
+
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", a.path, b.path,
+            "--frames", "2", "--segments", "2",
+            "--selector", "similarity",
+            "--library", library.path,
+            "--seed", "0", "--backend", "cpu", "--out", out.path,
+            "--size", "8x8", "--quality", "5",
+        ])
+        XCTAssertNotEqual(code, 0, "similarity selector with absent cache must error (no silent rebuild)")
+
+        // Read-only: NO `.feature_cache/` must have been written into the library.
+        let cacheDir = library.appendingPathComponent(".feature_cache")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: cacheDir.path),
+            "similarity selector must not write `.feature_cache/` without --rebuild-cache")
+    }
 }

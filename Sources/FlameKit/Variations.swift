@@ -498,8 +498,7 @@ public extension Variations {
     ///
     /// Slots 19..32 are the special-sauce set; `apply_xform_body` reads them
     /// positionally and pulls their params from `varParams[slot*8 + idx]`. The
-    /// if-chain growth + MSL `v_<name>` functions land in Task 6; until then
-    /// the chain stays at 19 lines and the frozen genomes (which touch none of
-    /// the new names) keep weight-0 in slots 19..32, so M2 output is unchanged.
+    /// MSL if-chain is now 33 lines (`Kernels.metal`) and the 14 `v_<name>`
+    /// functions landed in Task 6.
     public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

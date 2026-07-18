@@ -5,11 +5,11 @@ import Foundation
 /// per-variation params/defaults, special-sauce rest values, and the
 /// name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
 /// `Variations` table, the Metal host packer, and `apply_xform_body` dispatch.
-/// `Variations.canonicalOrder` will become a one-line re-export of this array
-/// in Task 5 (which also grows `GPUXform.varWeights` to `[33]` and the MSL
-/// if-chain, so the widening is atomic). Until then, `Variations.canonicalOrder`
-/// retains its M1 19-name list and `VariationDescriptor.canonicalOrder` is the
-/// 33-name authority used by the new code paths. Pinned to the spec's
+/// `Variations.canonicalOrder` IS a one-line re-export of this array (landed
+/// in Task 5, which also grew `GPUXform.varWeights` to `[33]` and the MSL
+/// if-chain, so the widening was atomic). `VariationDescriptor.canonicalOrder`
+/// is the 33-name authority used by all code paths, and
+/// `Variations.canonicalOrder` simply re-exports it. Pinned to the spec's
 /// "Param-channel layout" + "Special-sauce padding" tables.
 public struct VariationDescriptor: Sendable {
     public let name: String

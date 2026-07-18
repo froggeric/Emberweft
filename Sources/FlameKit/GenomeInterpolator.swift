@@ -167,8 +167,11 @@ public enum GenomeInterpolator {
 
     /// `.log` variation merge: union by name (zero-weight slots preserved, so
     /// align-created padding entries survive), sorted by name, with per-name
-    /// parameters carried from whichever side defines them (side `a` first,
-    /// side `b` fills keys `a` lacks; shared keys interpolate linearly).
+    /// parameters carried from whichever side defines them. For each variation
+    /// name, side `a`'s parameters always win (the `where p[k] == nil` guard
+    /// means any key both sides define keeps `a`'s value); side `b` fills only
+    /// the keys `a` lacks. Only the variation WEIGHT interpolates linearly
+    /// (`(1-t)*a + t*b`). This matches flam3's `merge_log` behavior exactly.
     private static func mergeLog(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
         var weight = [String: Double]()
         var params = [String: [String: Double]]()

@@ -128,7 +128,11 @@ extension EmberweftCLI {
             if let libraryPath {
                 let cache = FeatureCache(libraryDir: URL(fileURLWithPath: libraryPath))
                 do {
-                    vectors = rebuildCache ? try cache.rebuildAll() : try cache.scan()
+                    // --rebuild-cache → full rebuild (writes `.feature_cache/`).
+                    // WITHOUT --rebuild-cache → read-only load; throws `.cacheAbsent`
+                    // with a clear "run --rebuild-cache" message if absent/empty.
+                    // (Task 17 AC: similarity MUST NOT silently rebuild the cache.)
+                    vectors = rebuildCache ? try cache.rebuildAll() : try cache.loadForSimilararity()
                 } catch {
                     err("error: feature cache failure: \(error)\n"); return 1
                 }
