@@ -26,9 +26,9 @@ import Foundation
 // Hysteresis design (the point — prevent oscillation from fps jitter):
 //
 //   ┌───────────── step UP (× upFactor) ─────────────┐
-//   │                 targetFps + deadbandFps         │  ← upper threshold (33)
-//   │  ════════════════ DEADBAND (no change) ═══════  │  27 .. 33 @ target 30
-//   │                 targetFps - deadbandFps         │  ← lower threshold (27)
+//   │                 targetFps + deadbandFps         │  ← upper threshold (63)
+//   │  ════════════════ DEADBAND (no change) ═══════  │  57 .. 63 @ target 60
+//   │                 targetFps - deadbandFps         │  ← lower threshold (57)
 //   └───────────── step DOWN (× downFactor) ─────────┘
 //
 // Fps jitter that stays inside `[target-deadband, target+deadband]` leaves the
@@ -80,7 +80,7 @@ public struct AdaptiveQualityController: Sendable, Equatable {
 
         /// Construct a config. Preconditions guard the hysteresis invariants.
         public init(
-            targetFps: Double = 30,
+            targetFps: Double = 60,
             deadbandFps: Double = 3,
             downFactor: Double = 0.5,
             upFactor: Double = 2.0,
@@ -166,7 +166,7 @@ public struct AdaptiveQualityController: Sendable, Equatable {
 }
 
 extension AdaptiveQualityController.Config {
-    /// Defaults: target 30 fps, ±3 fps deadband (step down < 27, up > 33),
+    /// Defaults: target 60 fps, ±3 fps deadband (step down < 57, up > 63),
     /// halve on underperformance, double on headroom, budget in [2, 512],
     /// critical-thermal floor of 4.
     public static let `default` = AdaptiveQualityController.Config()

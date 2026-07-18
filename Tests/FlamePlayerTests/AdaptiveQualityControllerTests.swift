@@ -10,8 +10,8 @@ import Foundation
 // thermal-throttle behavior is verified manually and deferred to M4.
 //
 // Defaults under test (Config.default):
-//   targetFps                       = 30
-//   deadbandFps                     = 3      → step DOWN below 27, UP above 33
+//   targetFps                       = 60
+//   deadbandFps                     = 3      → step DOWN below 57, UP above 63
 //   downFactor                      = 0.5    (halve)
 //   upFactor                        = 2.0    (double)
 //   minSamplesPerPixel              = 2
@@ -29,36 +29,36 @@ final class AdaptiveQualityControllerTests: XCTestCase {
     func testDeterministicMappingTable() {
         // (fps, thermal, current, expected)
         let cases: [(Double, ProcessInfo.ThermalState, Int, Int)] = [
-            // Deadband [27, 33] inclusive → unchanged (clamped to range).
-            (30.0, .nominal, 100, 100),   // center of deadband
-            (29.0, .nominal,  64,  64),   // inside deadband
-            (27.0, .nominal,  64,  64),   // lower boundary inclusive
-            (33.0, .nominal,  64,  64),   // upper boundary inclusive
-            // Below 27 → step DOWN (× 0.5).
-            (26.9, .nominal,  64,  32),   // just below lower boundary
-            (25.0, .nominal, 100,  50),
-            (20.0, .nominal, 200, 100),
-            // Above 33 → step UP (× 2.0).
-            (33.1, .nominal,  64, 128),   // just above upper boundary
-            (40.0, .nominal, 100, 200),
-            (45.0, .nominal,  50, 100),
+            // Deadband [57, 63] inclusive → unchanged (clamped to range).
+            (60.0, .nominal, 100, 100),   // center of deadband
+            (59.0, .nominal,  64,  64),   // inside deadband
+            (57.0, .nominal,  64,  64),   // lower boundary inclusive
+            (63.0, .nominal,  64,  64),   // upper boundary inclusive
+            // Below 57 → step DOWN (× 0.5).
+            (56.9, .nominal,  64,  32),   // just below lower boundary
+            (55.0, .nominal, 100,  50),
+            (50.0, .nominal, 200, 100),
+            // Above 63 → step UP (× 2.0).
+            (63.1, .nominal,  64, 128),   // just above upper boundary
+            (70.0, .nominal, 100, 200),
+            (75.0, .nominal,  50, 100),
             // .fair / .serious behave like .nominal (only .critical forces floor).
-            (25.0, .fair,    100,  50),
-            (40.0, .fair,    100, 200),
-            (25.0, .serious, 100,  50),
-            (40.0, .serious, 100, 200),
+            (55.0, .fair,    100,  50),
+            (70.0, .fair,    100, 200),
+            (55.0, .serious, 100,  50),
+            (70.0, .serious, 100, 200),
             // .critical → floor (4) regardless of fps.
             (15.0, .critical, 100,   4),  // low fps + critical → floor
-            (60.0, .critical, 100,   4),  // high fps + critical → STILL floor
-            (30.0, .critical, 512,   4),  // deadband fps, but critical → floor
+            (60.0, .critical, 100,   4),  // deadband fps + critical → STILL floor
+            (30.0, .critical, 512,   4),  // below-threshold fps, but critical → floor
             // Clamping to [min=2, max=512].
-            (20.0, .nominal,   2,   2),   // down from min clamps to min
-            (20.0, .nominal,   3,   2),   // 3×0.5=1.5 → 2 (round + clamp)
-            (40.0, .nominal, 512, 512),   // up from max clamps to max
-            (40.0, .nominal, 300, 512),   // 300×2=600 → clamp to 512
+            (50.0, .nominal,   2,   2),   // down from min clamps to min (2×0.5=1 → 2)
+            (50.0, .nominal,   3,   2),   // 3×0.5=1.5 → 2 (round + clamp)
+            (70.0, .nominal, 512, 512),   // up from max clamps to max
+            (70.0, .nominal, 300, 512),   // 300×2=600 → clamp to 512
             // Out-of-range input budget is normalized into range even in deadband.
-            (30.0, .nominal,   1,   2),   // below min → clamp up to min
-            (30.0, .nominal, 999, 512),   // above max → clamp down to max
+            (60.0, .nominal,   1,   2),   // below min → clamp up to min
+            (60.0, .nominal, 999, 512),   // above max → clamp down to max
         ]
 
         for (i, c) in cases.enumerated() {
@@ -81,12 +81,12 @@ final class AdaptiveQualityControllerTests: XCTestCase {
 
     // MARK: - AC: deadband stability — fps jitter inside the deadband never moves the budget
 
-    // A realistic jitter sequence (29.5, 28.1, 31.4, 27.6, 30.9, 32.2, 28.8) all
-    // inside [27, 33]. Starting at budget 100, the budget must stay 100 across
+    // A realistic jitter sequence (59.5, 58.1, 61.4, 57.6, 60.9, 62.2, 58.8) all
+    // inside [57, 63]. Starting at budget 100, the budget must stay 100 across
     // every step — the deadband is the anti-oscillation guarantee.
     func testDeadbandStabilityUnderJitter() {
-        let jitter: [Double] = [29.5, 28.1, 31.4, 27.6, 30.9, 32.2, 28.8,
-                                30.0, 27.0, 33.0, 31.0, 29.0]
+        let jitter: [Double] = [59.5, 58.1, 61.4, 57.6, 60.9, 62.2, 58.8,
+                                60.0, 57.0, 63.0, 61.0, 59.0]
         var budget = 100
         for fps in jitter {
             budget = ctrl.step(measuredFps: fps, thermalState: .nominal, currentBudget: budget)
@@ -96,7 +96,7 @@ final class AdaptiveQualityControllerTests: XCTestCase {
 
     // MARK: - AC: sustained below-threshold fps steps the budget DOWN each step
 
-    // 20 fps (< 27) sustained: starting at 200, the budget halves each step:
+    // 20 fps (< 57) sustained: starting at 200, the budget halves each step:
     // 200 → 100 → 50 → 25. Each call sees the previous output as currentBudget.
     func testSustainedBelowStepsDown() {
         var budget = 200
@@ -109,13 +109,13 @@ final class AdaptiveQualityControllerTests: XCTestCase {
 
     // MARK: - AC: sustained above-threshold fps steps the budget UP each step
 
-    // 40 fps (> 33) sustained: starting at 25, the budget doubles each step:
+    // 70 fps (> 63) sustained: starting at 25, the budget doubles each step:
     // 25 → 50 → 100 → 200.
     func testSustainedAboveStepsUp() {
         var budget = 25
         let expected = [50, 100, 200]
         for (i, want) in expected.enumerated() {
-            budget = ctrl.step(measuredFps: 40.0, thermalState: .nominal, currentBudget: budget)
+            budget = ctrl.step(measuredFps: 70.0, thermalState: .nominal, currentBudget: budget)
             XCTAssertEqual(budget, want, "step \(i) of sustained-above: expected \(want), got \(budget)")
         }
     }
@@ -142,7 +142,7 @@ final class AdaptiveQualityControllerTests: XCTestCase {
         let min = AdaptiveQualityController.Config.default.minSamplesPerPixel
         let max = AdaptiveQualityController.Config.default.maxSamplesPerPixel
         var budget = 100
-        let fpss: [Double] = [1, 10, 20, 26, 27, 30, 33, 34, 60, 200]
+        let fpss: [Double] = [1, 10, 20, 56, 57, 60, 63, 64, 120, 200]
         let thermals: [ProcessInfo.ThermalState] = [.nominal, .fair, .serious, .critical]
         for fps in fpss {
             for thermal in thermals {
@@ -156,19 +156,19 @@ final class AdaptiveQualityControllerTests: XCTestCase {
     // MARK: - AC: hysteresis — a single below/above excursion then return to
     // deadband does NOT auto-revert; recovery requires sustained above-threshold.
 
-    // Drop below (20 fps) once: 100 → 50. Return to deadband (30 fps): stays 50
+    // Drop below (20 fps) once: 100 → 50. Return to deadband (60 fps): stays 50
     // (no free recovery). Only sustained above-threshold lifts it back up.
     func testHysteresisNoFreeRevert() {
         var budget = 100
         budget = ctrl.step(measuredFps: 20.0, thermalState: .nominal, currentBudget: budget)
         XCTAssertEqual(budget, 50, "below-threshold step down")
         // Deadband does NOT restore the budget.
-        budget = ctrl.step(measuredFps: 30.0, thermalState: .nominal, currentBudget: budget)
+        budget = ctrl.step(measuredFps: 60.0, thermalState: .nominal, currentBudget: budget)
         XCTAssertEqual(budget, 50, "deadband must not auto-revert the earlier step-down")
-        budget = ctrl.step(measuredFps: 31.0, thermalState: .nominal, currentBudget: budget)
+        budget = ctrl.step(measuredFps: 61.0, thermalState: .nominal, currentBudget: budget)
         XCTAssertEqual(budget, 50, "still inside deadband — unchanged")
         // Above threshold recovers.
-        budget = ctrl.step(measuredFps: 40.0, thermalState: .nominal, currentBudget: budget)
+        budget = ctrl.step(measuredFps: 70.0, thermalState: .nominal, currentBudget: budget)
         XCTAssertEqual(budget, 100, "above-threshold step up")
     }
 
@@ -179,8 +179,9 @@ final class AdaptiveQualityControllerTests: XCTestCase {
         let a = AdaptiveQualityController()
         let b = AdaptiveQualityController()
         XCTAssertEqual(a, b, "default-constructed controllers are equal (value type)")
-        // Different config → not equal.
-        let custom = AdaptiveQualityController(config: .init(targetFps: 60))
+        // Different config → not equal. (Uses targetFps 120, distinct from the
+        // 60 fps house-standard default.)
+        let custom = AdaptiveQualityController(config: .init(targetFps: 120))
         XCTAssertNotEqual(a, custom, "different config → different controller")
     }
 }
