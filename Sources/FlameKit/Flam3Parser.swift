@@ -48,6 +48,10 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         case "flame":
             flame = makeFlame(attr: attr)
             xformIndex = 0
+            // Reset the palette accumulator per flame so a sibling <flame>'s
+            // colors don't leak in (and a flame with no palette resolves to
+            // all-zero, matching flam3).
+            paletteColors = Array(repeating: .zero, count: 256)
         case "xform", "finalxform":
             // flam3 indexes the final xform at the tail of the xform array
             // (its index = number of regular xforms parsed so far). Pass the
@@ -62,9 +66,14 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
             // Reset per flame so entries from a sibling <flame> don't leak in.
             paletteColors = Array(repeating: .zero, count: 256)
         case "color":
-            if inPalette, let idxStr = attr["index"], let rgb = attr["rgb"] {
+            // flam3 `<color>` elements are DIRECT children of `<flame>` in real
+            // genomes (`rgb="r g b"`, decimal 0–255), and only rarely inside a
+            // `<palette>`. Handle both — do NOT gate on `inPalette`, or every
+            // real-genome palette is silently dropped to zero (black render).
+            // `rgb` is a decimal triple, not hex — parseDecimalRGB, not parseHex.
+            if let idxStr = attr["index"], let rgb = attr["rgb"] {
                 let idx = Int(idxStr) ?? 0
-                if (0..<256).contains(idx) { paletteColors[idx] = parseHex(rgb) }
+                if (0..<256).contains(idx) { paletteColors[idx] = parseColorRGB(rgb) }
             }
         default: break
         }
@@ -88,6 +97,10 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         case "finalxform":
             if let xf = xform { flame?.finalXform = xf }; xform = nil
         case "flame":
+            // Apply the accumulated palette (from direct `<color>` children OR a
+            // `<palette>` hex block). Without this, real genomes (no `<palette>`
+            // element) never assign their palette → all-zero → black render.
+            flame?.palette = Palette(colors: paletteColors)
             if let f = flame { flames.append(f) }
             flame = nil
         default: break
@@ -211,6 +224,19 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         let g = Double((v >> 8) & 0xff) / 255
         let b = Double(v & 0xff) / 255
         return SIMD3(r, g, b)
+    }
+
+    /// flam3 `<color rgb="…"/>`. The real Electric Sheep form is a decimal
+    /// 0–255 triple ("168 168 0"); some tooling/tests emit hex ("FF0000"). The
+    /// discriminator is clean: a decimal triple has whitespace-separated tokens,
+    /// hex is a single token. Accept both → [0,1] (matches `parseHex`'s scale).
+    private func parseColorRGB(_ s: String) -> SIMD3<Double> {
+        let p = floats(s)
+        if p.count >= 3 {
+            func n(_ x: Double) -> Double { min(max(x, 0), 255) / 255 }
+            return SIMD3(n(p[0]), n(p[1]), n(p[2]))
+        }
+        return parseHex(s)   // hex fallback (single token, no spaces)
     }
 
     /// flam3 native: hex digits, 2 per channel, 3 channels per color (0-255).
