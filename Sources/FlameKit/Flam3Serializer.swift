@@ -28,6 +28,7 @@ public enum Flam3Serializer {
         a += " gamma=\"\(f6(f.quality.gamma))\""
         a += " gamma_threshold=\"\(f6(f.quality.gammaThreshold))\""
         a += " vibrancy=\"\(f6(f.quality.vibrancy))\""
+        a += " brightness=\"\(f6(f.quality.brightness))\""
         a += " hue=\"\(f6(f.hueShift))\""
         a += " time=\"\(f.time)\""
         // Animation attributes. `interpolation_type`/`palette_interpolation` are

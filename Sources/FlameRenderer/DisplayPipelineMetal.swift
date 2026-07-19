@@ -41,15 +41,15 @@ enum DisplayPipelineMetal {
 
     /// flam3 display defaults (genomes here don't override these).
     private static let contrast: Double = 1.0
-    private static let brightness: Double = 4.0
     private static let prefilterWhite: Double = 255.0
     private static let whiteLevel: Double = 255.0
 
     /// Render `histogram` to an 8-bit RGBA image via the full Metal display
     /// pipeline. Deterministic in `(histogram, width, height, oversample, gamma,
-    /// gammaThreshold, vibrancy, sampleDensity, pixelsPerUnit)`.
+    /// gammaThreshold, vibrancy, brightness, sampleDensity, pixelsPerUnit)`.
     static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                        gamma: Double, gammaThreshold: Double, vibrancy: Double,
+                       brightness: Double = 4.0,
                        sampleDensity: Double, pixelsPerUnit: Double) throws -> RGBA8Image {
         precondition(MemoryLayout<DisplayParams>.size == 64,
                      "DisplayParams size drifted from MSL mirror (64 bytes)")

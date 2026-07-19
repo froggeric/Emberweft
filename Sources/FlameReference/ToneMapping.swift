@@ -24,7 +24,6 @@ import FlameKit
 public enum ToneMapping {
     /// flam3 defaults (genomes here don't override these).
     private static let contrast: Double = 1.0
-    private static let brightness: Double = 4.0
     private static let highlightPower: Double = -1.0
     private static let prefilterWhite: Double = 255
     private static let whiteLevel: Double = 255
@@ -32,6 +31,7 @@ public enum ToneMapping {
 
     public static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                               gamma: Double, gammaThreshold: Double, vibrancy: Double,
+                              brightness: Double = 4.0,
                               sampleDensity: Double, pixelsPerUnit: Double) -> RGBA8Image {
         let gw = histogram.gridWidth, gh = histogram.gridHeight
 

@@ -125,6 +125,7 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.quality.gamma = attr["gamma"].flatMap { Double($0) } ?? 2.2
         f.quality.gammaThreshold = attr["gamma_threshold"].flatMap { Double($0) } ?? 0.01
         f.quality.vibrancy = attr["vibrancy"].flatMap { Double($0) } ?? 1.0
+        f.quality.brightness = attr["brightness"].flatMap { Double($0) } ?? 4.0
         f.quality.estimatorRadius = attr["estimator_radius"].flatMap { Double($0) } ?? 0
         f.quality.estimatorMinimum = attr["estimator_minimum"].flatMap { Double($0) } ?? 0
         f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Double($0) } ?? 0.6

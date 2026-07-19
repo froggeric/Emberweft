@@ -116,6 +116,7 @@ public struct Quality: Sendable, Equatable {
     public var gamma: Double
     public var gammaThreshold: Double
     public var vibrancy: Double
+    public var brightness: Double
     public var estimatorRadius: Double
     public var estimatorMinimum: Double
     public var estimatorCurveRate: Double   // flam3 `estimator_curve`
@@ -128,6 +129,7 @@ public struct Quality: Sendable, Equatable {
         gamma: Double = 2.2,
         gammaThreshold: Double = 0.01,
         vibrancy: Double = 1.0,
+        brightness: Double = 4.0,
         estimatorRadius: Double = 0,
         estimatorMinimum: Double = 0,
         estimatorCurveRate: Double = 0.6
@@ -139,6 +141,7 @@ public struct Quality: Sendable, Equatable {
         self.gamma = gamma
         self.gammaThreshold = gammaThreshold
         self.vibrancy = vibrancy
+        self.brightness = brightness
         self.estimatorRadius = estimatorRadius
         self.estimatorMinimum = estimatorMinimum
         self.estimatorCurveRate = estimatorCurveRate

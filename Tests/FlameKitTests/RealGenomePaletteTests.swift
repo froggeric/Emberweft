@@ -19,15 +19,15 @@ final class RealGenomePaletteTests: XCTestCase {
     }
 
     func testRealGenomePaletteParsesNonZero() throws {
-        // (fixture, expected palette[0] from its `<color index="0" rgb="r g b"/>`)
-        let cases: [(String, SIMD3<Double>)] = [
-            ("electricsheep.248.00038.flam3", SIMD3(141.0/255, 196.0/255, 173.0/255)),
-            ("electricsheep.248.00084.flam3", SIMD3(255.0/255, 145.0/255,  41.0/255)),
-            ("electricsheep.248.00256.flam3", SIMD3(255.0/255, 145.0/255,  41.0/255)),
-            ("electricsheep.248.00268.flam3", SIMD3(109.0/255, 0.0,        31.0/255)),
-            ("electricsheep.248.00000.flam3", SIMD3(168.0/255, 168.0/255,  0.0)),
+        // (fixture, expected palette[0], expected brightness)
+        let cases: [(String, SIMD3<Double>, Double)] = [
+            ("electricsheep.248.00038.flam3", SIMD3(141.0/255, 196.0/255, 173.0/255), 4.0),
+            ("electricsheep.248.00084.flam3", SIMD3(255.0/255, 145.0/255,  41.0/255), 4.0),
+            ("electricsheep.248.00256.flam3", SIMD3(255.0/255, 145.0/255,  41.0/255), 81.0696),
+            ("electricsheep.248.00268.flam3", SIMD3(109.0/255, 0.0,        31.0/255), 13.5913),
+            ("electricsheep.248.00000.flam3", SIMD3(168.0/255, 168.0/255,  0.0),      5.29287),
         ]
-        for (name, expected0) in cases {
+        for (name, expected0, expectedBrightness) in cases {
             let url = fixture(name)
             guard FileManager.default.fileExists(atPath: url.path) else {
                 throw XCTSkip("fixture missing: \(url.path)")
@@ -39,6 +39,9 @@ final class RealGenomePaletteTests: XCTestCase {
             XCTAssertEqual(flame.palette.colors[0].x, expected0.x, accuracy: 1e-3, "\(name) idx0.r")
             XCTAssertEqual(flame.palette.colors[0].y, expected0.y, accuracy: 1e-3, "\(name) idx0.g")
             XCTAssertEqual(flame.palette.colors[0].z, expected0.z, accuracy: 1e-3, "\(name) idx0.b")
+            // brightness must parse (was hardcoded to 4.0 — real genomes carry up to ~81)
+            XCTAssertEqual(flame.quality.brightness, expectedBrightness, accuracy: 1e-3,
+                           "\(name): brightness not parsed (would render tonally wrong)")
             // the black-render guard: a substantively all-zero palette renders black
             let nonzero = flame.palette.colors.filter { ($0.x + $0.y + $0.z) > 1e-6 }.count
             XCTAssertGreaterThan(nonzero, 200, "\(name): palette only \(nonzero)/256 non-zero → renders black")

@@ -181,7 +181,7 @@ public enum MetalRenderer {
         // -------- Display payload (mirrors DisplayPipelineMetal.render) --------
         let oversample = params.oversample
         let contrast: Double = 1.0
-        let brightness: Double = 4.0
+        let brightness: Double = flame.quality.brightness
         let prefilterWhite: Double = 255.0
         let whiteLevelD: Double = 255.0
         let k1 = contrast * brightness * prefilterWhite * 268.0 / 256.0
@@ -367,6 +367,7 @@ public enum MetalRenderer {
                 width: params.width, height: params.height, oversample: params.oversample,
                 gamma: flame.quality.gamma, gammaThreshold: flame.quality.gammaThreshold,
                 vibrancy: flame.quality.vibrancy,
+                brightness: flame.quality.brightness,
                 sampleDensity: Double(params.samplesPerPixel),
                 pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom))
         } catch {
