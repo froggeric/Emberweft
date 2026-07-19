@@ -206,7 +206,17 @@ extension EmberweftCLI {
             )
             let img: RGBA8Image
             if backend == "metal" {
-                img = MainActor.assumeIsolated { MetalRenderer.render(flame: renderedFlame, params: params) }
+                // Wrap each frame in an autoreleasepool: renderFused creates
+                // autoreleased Metal objects (command buffer + compute encoders)
+                // each call. This tight @MainActor loop never spins the run loop,
+                // so without a per-frame pool those objects accumulate across the
+                // whole sequence → driver resource growth → a progressive per-frame
+                // slowdown (observed 18→30 s/frame and worsening). The pool drains
+                // them at each frame boundary. (CPU path is pure value types — no
+                // autorelease needed.)
+                img = MainActor.assumeIsolated {
+                    autoreleasepool { MetalRenderer.render(flame: renderedFlame, params: params) }
+                }
             } else {
                 img = ReferenceRenderer.render(flame: renderedFlame, params: params)
             }
