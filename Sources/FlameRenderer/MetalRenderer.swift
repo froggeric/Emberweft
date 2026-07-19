@@ -10,6 +10,16 @@ public enum MetalRenderer {
     /// documented safe to call once and reuse; we memoize in an Optional.
     @MainActor private static var _device: MTLDevice?
     @MainActor private static var _library: MTLLibrary?
+    /// The 5 fused-path compute pipeline states, built ONCE and reused across
+    /// every frame. `device.makeComputePipelineState(function:)` compiles+links
+    /// the kernel; redoing it per frame (the old behaviour) dominated `animate`
+    /// and thrashed the driver pipeline cache on long sequences. A PSO is a pure
+    /// function of (kernel source, device), so caching is byte-identical.
+    @MainActor private static var _chaosPso: MTLComputePipelineState?
+    @MainActor private static var _decodePso: MTLComputePipelineState?
+    @MainActor private static var _densityPso: MTLComputePipelineState?
+    @MainActor private static var _logPso: MTLComputePipelineState?
+    @MainActor private static var _dispPso: MTLComputePipelineState?
 
     /// True iff a Metal device exists AND the MSL library compiles.
     /// Gate `--backend metal` on this; the CLI falls back to CPU otherwise.
@@ -31,6 +41,34 @@ public enum MetalRenderer {
         _device = device
         _library = library
         return (device, library)
+    }
+
+    /// The 5 fused-path PSOs, built lazily on first use then cached. Tied to the
+    /// cached device from `deviceAndLibrary()` (the only device this renderer
+    /// ever uses). Returns nil iff no device/library.
+    @MainActor
+    static func fusedPipelines() -> (chaos: MTLComputePipelineState,
+                                      decode: MTLComputePipelineState,
+                                      density: MTLComputePipelineState,
+                                      log: MTLComputePipelineState,
+                                      display: MTLComputePipelineState)? {
+        if let c = _chaosPso, let de = _decodePso, let dn = _densityPso,
+           let lg = _logPso, let dp = _dispPso {
+            return (c, de, dn, lg, dp)
+        }
+        guard let (device, library) = deviceAndLibrary() else { return nil }
+        func pso(_ name: String) -> MTLComputePipelineState {
+            guard let fn = library.makeFunction(name: name) else {
+                fatalError("Missing MSL kernel: \(name)")
+            }
+            return try! device.makeComputePipelineState(function: fn)
+        }
+        _chaosPso   = pso("chaosGame")
+        _decodePso  = pso("atomicBinToFloatBin")
+        _densityPso = pso("densityEstimation")
+        _logPso     = pso("logDensity")
+        _dispPso    = pso("displayPipeline")
+        return (_chaosPso!, _decodePso!, _densityPso!, _logPso!, _dispPso!)
     }
 
     /// Full Metal pipeline: chaos → decode → density estimation → display.
@@ -73,7 +111,7 @@ public enum MetalRenderer {
     /// `floatBufB`), never crossing to the CPU. Only the final RGBA is read back.
     @MainActor
     static func renderFused(flame: Flame, params: RenderParams) throws -> RGBA8Image {
-        guard let (device, library) = deviceAndLibrary() else {
+        guard let (device, _) = deviceAndLibrary() else {
             throw NSError(domain: "MetalRenderer", code: 10)
         }
         guard let queue = commandQueue else {
@@ -194,18 +232,15 @@ public enum MetalRenderer {
         let deParamsBuf = buf(deParams)
         let deDimsBuf = buf(deDims)
 
-        // -------- Pipeline states --------
-        func pso(_ name: String) -> MTLComputePipelineState {
-            guard let fn = library.makeFunction(name: name) else {
-                fatalError("Missing MSL kernel: \(name)")
-            }
-            return try! device.makeComputePipelineState(function: fn)
+        // -------- Pipeline states (cached; built once on first frame) --------
+        guard let psos = fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
         }
-        let chaosPso   = pso("chaosGame")
-        let decodePso  = pso("atomicBinToFloatBin")
-        let densityPso = pso("densityEstimation")
-        let logPso     = pso("logDensity")
-        let dispPso    = pso("displayPipeline")
+        let chaosPso   = psos.chaos
+        let decodePso  = psos.decode
+        let densityPso = psos.density
+        let logPso     = psos.log
+        let dispPso    = psos.display
 
         guard let cb = queue.makeCommandBuffer() else {
             throw NSError(domain: "MetalRenderer", code: 24)
