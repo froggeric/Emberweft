@@ -14,15 +14,20 @@ public enum Loop {
     /// - Parameter t: normalized loop time in `[0,1]`. `0` is the input; `1` closes
     ///   the loop within rotation-matrix FP residual (≈1e-16 per coefficient), NOT
     ///   bit-equal — `cos(2π)` is `1 − 5e-16` in `Double`.
+    /// - Parameter cycles: number of full 360° rotations over `t ∈ [0,1]`
+    ///   (default 1 = faithful `sheep_loop`). `cycles > 1` is an Emberweft preview
+    ///   extension so a single loop segment visibly cycles more than once; it stays
+    ///   seamless because `R(2π·N) = R(0)` within the same ULP residual for integer N.
     /// - Returns: a rotated clone; `sheep` is never mutated.
-    public static func blend(_ sheep: Flame, t: Double) -> Flame {
+    public static func blend(_ sheep: Flame, t: Double, cycles: Int = 1) -> Flame {
         var result = sheep
 
-        // θ = t * 2 * π  — pinned exactly (flam3_rotate: `by*360` then `DEG2RAD`,
+        // θ = t * 2π * cycles — pinned exactly (flam3_rotate: `by*360` then `DEG2RAD`,
         // i.e. `t*360*2π/360 = t*2π`). NOT reduced mod 2π: flam3 feeds `2π` straight
         // into sin/cos, so `R(2π)·M ≠ M` bit-for-bit; the seam is closed only within
-        // the rotation-matrix ULP residual (≈1e-16), not by `==`.
-        let theta = t * 2 * Double.pi
+        // the rotation-matrix ULP residual (≈1e-16), not by `==`. `cycles` scales θ
+        // linearly — integer N keeps the t=1 seam within the same ULP residual.
+        let theta = t * 2 * Double.pi * Double(cycles)
         let cs = cos(theta)
         let sn = sin(theta)
 

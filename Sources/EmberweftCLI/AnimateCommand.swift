@@ -38,6 +38,7 @@ extension EmberweftCLI {
         var sizeStr: String? = nil
         var quality: Int? = nil
         var rebuildCache = false
+        var loopCycles = 1
 
         var i = 0
         while i < args.count {
@@ -78,6 +79,9 @@ extension EmberweftCLI {
                     quality = Int(args[i + 1]); i += 2
                 case "--rebuild-cache":
                     rebuildCache = true; i += 1
+                case "--loop-cycles":
+                    guard i + 1 < args.count else { err("error: --loop-cycles requires a value\n"); return 2 }
+                    loopCycles = max(1, Int(args[i + 1]) ?? 1); i += 2
                 default:
                     err("error: unknown flag: \(tok)\n"); return 2
                 }
@@ -187,7 +191,7 @@ extension EmberweftCLI {
             let renderedFlame: Flame
             switch mapping.kind {
             case .loop:
-                renderedFlame = Loop.blend(flames[segment.fromSheep], t: mapping.blend)
+                renderedFlame = Loop.blend(flames[segment.fromSheep], t: mapping.blend, cycles: loopCycles)
             case .transition:
                 renderedFlame = Transition.blend(
                     flames[segment.fromSheep], flames[segment.toSheep],
