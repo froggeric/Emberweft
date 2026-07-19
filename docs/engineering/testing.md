@@ -156,6 +156,19 @@ The source of truth for merge readiness is the **local gate run on a developer m
 
 `main` is always green. Golden-regression failures include a documented re-golden procedure (`Tools/regen_goldens.sh`) so they are resolved deliberately, not by force-updating.
 
+### Fast path & opt-in gates (Makefile)
+
+The `swift test` gate is correct but heavy (~12 min: the vs-flam3 rows spawn `flam3-animate` PNG sequences and the Metal↔CPU rows render at high `samplesPerPixel`). The `Makefile` splits it so a skip is never mistaken for a pass:
+
+| Target | Runs | Wall-clock | Opt-in? |
+|---|---|---|---|
+| `make test-fast` | FlameKitTests + EmberweftCLITests + FlamePlayerTests (mechanics, CLI, engine units) | ~2 s | no |
+| `make test-parity` | FlameReferenceTests + FlameRendererTests (vs-flam3 + Metal↔CPU parity) | ~12 min | needs flam3 on `$PATH` for the vs-flam3 rows (else they **silently `XCTSkip`**) |
+| `make test-perf` | RealtimeCapabilityTests (≥58 fps @1080p capability gate) | ~1 min | **`EMBERWEFT_PERF=1`**, release build, sandbox OFF |
+| `make test` | fast + parity (everything but perf) | ~12 min | no |
+
+**Two gates are opt-in and silently skip otherwise** — do not read a green `swift test` as having exercised them: (1) the **realtime fps gate** (`test-perf`; skips unless `EMBERWEFT_PERF=1`), and (2) the **vs-flam3 parity rows** (skip unless the oracle is on `$PATH`). The Metal↔CPU parity (≥38 dB) is the one gate that always runs when a Metal device is reachable.
+
 ## Thresholds
 
 | Metric | Threshold |

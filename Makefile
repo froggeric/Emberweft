@@ -3,7 +3,7 @@
 
 SWIFT   := swift
 
-.PHONY: build release test run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep feature-cache help
+.PHONY: build release test test-fast test-parity test-perf run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep feature-cache help
 
 build:        ## Build (debug)
 	$(SWIFT) build
@@ -11,8 +11,17 @@ build:        ## Build (debug)
 release:      ## Build (release)
 	$(SWIFT) build -c release
 
-test:         ## Run tests
-	$(SWIFT) test
+test:         ## Run the full pre-merge suite (fast + parity; ~12 min). Excludes the opt-in perf gate — use `make test-perf`.
+	$(SWIFT) test --filter FlameKitTests --filter EmberweftCLITests --filter FlamePlayerTests --filter FlameReferenceTests --filter FlameRendererTests
+
+test-fast:    ## Mechanics + CLI + engine units (no Metal, no oracle; ~2 s)
+	$(SWIFT) test --filter FlameKitTests --filter EmberweftCLITests --filter FlamePlayerTests
+
+test-parity:  ## vs-flam3 + Metal↔CPU parity (heavy; ~12 min). Needs the flam3 oracle on $$PATH for the vs-flam3 rows (else they skip).
+	$(SWIFT) test --filter FlameReferenceTests --filter FlameRendererTests
+
+test-perf:    ## Realtime capability gate (≥58 fps @1080p). OPT-IN: release build, Metal device, bash sandbox OFF.
+	EMBERWEFT_PERF=1 $(SWIFT) test -c release --filter RealtimeCapabilityTests
 
 run: cli
 cli:          ## Run the emberweft CLI (no args = help)
