@@ -133,6 +133,15 @@ the 58 floor was **NOT lowered**. The margin is thin and the adaptive budget
 sits at its low end (2–4 spp), so absolute image quality at target fps is
 deferred to M4.
 
+**Thermal sensitivity (re-witnessed 2026-07-19):** because the margin is ~0.3 fps
+above the floor, the 1080p gate is sensitive to GPU thermal/load at test time.
+On a cool, quiet machine the 1080p p50 measures ≈ 58.3 fps (PASS). Run
+immediately after sustained GPU work (e.g. a long `animate` render), the same
+machine dipped to **57.96 fps — just under the floor** — and failed, with no
+code change. The capability is real but the gate is borderline on this (M2 Max)
+hardware: run `make test-perf` on a thermally nominal machine, and treat a
+sub-58 result under load as environmental, not a regression.
+
 ### 7. CLI snapshot tests
 End-to-end checks through the `emberweft` executable:
 
