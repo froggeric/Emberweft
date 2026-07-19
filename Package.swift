@@ -65,7 +65,11 @@ let package = Package(
         .testTarget(
             name: "FlameKitTests",
             dependencies: ["FlameKit"],
-            path: "Tests/FlameKitTests"
+            path: "Tests/FlameKitTests",
+            // Fixtures are read via a repo-relative path from `#file`
+            // (SimilarityTests.swift), not via Bundle.module → exclude rather
+            // than declare as resources, and silence the unhandled-file warning.
+            exclude: ["Fixtures"]
         ),
         .testTarget(
             name: "FlameReferenceTests",
