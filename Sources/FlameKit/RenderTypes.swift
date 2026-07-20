@@ -39,6 +39,14 @@ public struct RenderParams: Sendable, Equatable {
     public var gridWidth: Int { width * oversample + 2 * gutterWidth }
     public var gridHeight: Int { height * oversample + 2 * gutterWidth }
     public var totalSamples: Int { width * height * samplesPerPixel }
+
+    /// Builder that returns a copy with `samplesPerPixel` replaced. Keeps the
+    /// existing `let` field (Sendable sound) while letting the temporal render
+    /// path split the sample budget across sub-passes.
+    public func settingSamplesPerPixel(_ n: Int) -> RenderParams {
+        RenderParams(seed: seed, width: width, height: height,
+                     oversample: oversample, samplesPerPixel: n)
+    }
 }
 
 public struct Histogram: Equatable, Sendable {
@@ -56,6 +64,28 @@ public struct Histogram: Equatable, Sendable {
     }
     /// Flat storage offset for grid cell (x, y). Callers index `counts`/`colors` with it.
     public func binIndex(_ x: Int, _ y: Int) -> Int { x + y * gridWidth }
+
+    /// Elementwise histogram multiplication by `factor` (colors, alpha, AND counts).
+    /// General histogram utility — currently exercised only by unit tests, not on
+    /// the temporal hot path (the box path passes `colorScalar=1.0` through the
+    /// dmap rather than scaling the histogram after accumulation).
+    public mutating func scale(by factor: Double) {
+        for i in colors.indices {
+            colors[i] *= factor
+            alpha[i] *= factor
+            counts[i] *= factor
+        }
+    }
+    /// Elementwise histogram accumulation across temporal sub-passes (same grid).
+    public mutating func accumulate(_ other: Histogram) {
+        precondition(gridWidth == other.gridWidth && gridHeight == other.gridHeight,
+            "Histogram.accumulate requires equal grid dimensions")
+        for i in colors.indices {
+            colors[i] += other.colors[i]
+            alpha[i]   += other.alpha[i]
+            counts[i]  += other.counts[i]
+        }
+    }
 }
 
 /// flam3's spatial-filter kernel width (filters.c:217-269,

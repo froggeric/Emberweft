@@ -45,6 +45,12 @@ public enum Flam3Serializer {
             a += " estimator_minimum=\"\(f6(f.quality.estimatorMinimum))\""
             a += " estimator_curve=\"\(f6(f.quality.estimatorCurveRate))\""
         }
+        // Motion-blur attrs (flam3 temporal_filter_*) — emit only when non-default
+        // to keep typical genomes compact (matches the estimator_* style above).
+        if f.quality.temporalSamples != 1 { a += " temporal_samples=\"\(f.quality.temporalSamples)\"" }
+        if f.quality.temporalFilterType != .box { a += " temporal_filter_type=\"\(f.quality.temporalFilterType.rawValue)\"" }
+        if f.quality.temporalFilterWidth != 1.0 { a += " temporal_filter_width=\"\(f6(f.quality.temporalFilterWidth))\"" }
+        if f.quality.temporalFilterExp != 0 { a += " temporal_filter_exp=\"\(f6(f.quality.temporalFilterExp))\"" }
         a += ">\n"
         for x in f.xforms { a += xformString(x, tag: "xform") }
         if let fin = f.finalXform { a += xformString(fin, tag: "finalxform") }

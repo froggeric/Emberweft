@@ -81,6 +81,7 @@ public struct Xform: Sendable, Equatable {
 public enum FilterShape: String, Sendable {
     case gaussian
     case box
+    case exp
 }
 
 /// Color lookup table: 256 RGB entries in [0,1].
@@ -120,6 +121,13 @@ public struct Quality: Sendable, Equatable {
     public var estimatorRadius: Double
     public var estimatorMinimum: Double
     public var estimatorCurveRate: Double   // flam3 `estimator_curve`
+    /// flam3 motion-blur attrs (the `temporal_filter_*` family). Defaults mirror
+    /// flam3 (`temporal_samples=1, temporal_filter_type=box,
+    /// temporal_filter_width=1.0, temporal_filter_exp=0`).
+    public var temporalSamples: Int
+    public var temporalFilterType: FilterShape
+    public var temporalFilterWidth: Double
+    public var temporalFilterExp: Double    // flam3 temporal_filter_exp (default 0; unused for box/gaussian)
 
     public init(
         oversample: Int = 1,
@@ -132,7 +140,11 @@ public struct Quality: Sendable, Equatable {
         brightness: Double = 4.0,
         estimatorRadius: Double = 0,
         estimatorMinimum: Double = 0,
-        estimatorCurveRate: Double = 0.6
+        estimatorCurveRate: Double = 0.6,
+        temporalSamples: Int = 1,
+        temporalFilterType: FilterShape = .box,
+        temporalFilterWidth: Double = 1.0,
+        temporalFilterExp: Double = 0
     ) {
         self.oversample = oversample
         self.samplesPerPixel = samplesPerPixel
@@ -145,6 +157,10 @@ public struct Quality: Sendable, Equatable {
         self.estimatorRadius = estimatorRadius
         self.estimatorMinimum = estimatorMinimum
         self.estimatorCurveRate = estimatorCurveRate
+        self.temporalSamples = temporalSamples
+        self.temporalFilterType = temporalFilterType
+        self.temporalFilterWidth = temporalFilterWidth
+        self.temporalFilterExp = temporalFilterExp
     }
 }
 

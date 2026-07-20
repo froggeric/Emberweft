@@ -110,4 +110,61 @@ final class SerializerTests: XCTestCase {
         XCTAssertTrue(re.contains("interpolation=\"smooth\""), re)
         XCTAssertTrue(re.contains("hsv_rgb_palette_blend=\""), re)
     }
+
+    func testRoundTripsTemporalAttrs() {
+        // The four motion-blur attrs (temporal_samples, temporal_filter_type,
+        // temporal_filter_width, temporal_filter_exp) are emitted only when
+        // non-default. Drive ALL four through parse → serialize → parse and
+        // pin both survival AND that the serialized XML actually carries each
+        // non-default branch (so the conditional-emit paths are test-pinned,
+        // not just the parse-side defaults).
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame temporal_samples="1000" temporal_filter_type="gaussian" \
+        temporal_filter_width="1.2" temporal_filter_exp="2.0">
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1"/></flame></flames>
+        """
+        let f1 = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        XCTAssertEqual(f1.quality.temporalSamples, 1000)
+        XCTAssertEqual(f1.quality.temporalFilterType, .gaussian)
+        XCTAssertEqual(f1.quality.temporalFilterWidth, 1.2, accuracy: 1e-9)
+        XCTAssertEqual(f1.quality.temporalFilterExp, 2.0, accuracy: 1e-9)
+
+        let re = Flam3Serializer.serialize([f1])
+        // Each of the four conditional branches must actually fire.
+        XCTAssertTrue(re.contains("temporal_samples=\"1000\""), re)
+        XCTAssertTrue(re.contains("temporal_filter_type=\"gaussian\""), re)
+        XCTAssertTrue(re.contains("temporal_filter_width=\"1.200000\""), re)
+        XCTAssertTrue(re.contains("temporal_filter_exp=\"2.000000\""), re)
+
+        let f2 = try! Flam3Parser.parse(re.data(using: .utf8)!)[0]
+        XCTAssertEqual(f2.quality.temporalSamples, 1000, "temporal_samples must round-trip")
+        XCTAssertEqual(f2.quality.temporalFilterType, .gaussian, "temporal_filter_type must round-trip")
+        XCTAssertEqual(f2.quality.temporalFilterWidth, 1.2, accuracy: 1e-9, "temporal_filter_width must round-trip")
+        XCTAssertEqual(f2.quality.temporalFilterExp, 2.0, accuracy: 1e-9, "temporal_filter_exp must round-trip")
+        XCTAssertEqual(f1, f2, "whole-genome equality must hold after round-trip")
+    }
+
+    func testRoundTripsTemporalFilterTypeExp() {
+        // Pin the `.exp` FilterShape case (added after noticing `temporal_filter_type="exp"`
+        // would silently coerce to `.box` and then drop the attr on serialize, losing data).
+        // Both the type attr and the consumed-by-exp `temporal_filter_exp` must round-trip.
+        let xml = """
+        <?xml version="1.0"?>
+        <flames><flame temporal_filter_type="exp" temporal_filter_exp="2.0">
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1"/></flame></flames>
+        """
+        let f1 = try! Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        XCTAssertEqual(f1.quality.temporalFilterType, .exp)
+        XCTAssertEqual(f1.quality.temporalFilterExp, 2.0, accuracy: 1e-9)
+
+        let re = Flam3Serializer.serialize([f1])
+        XCTAssertTrue(re.contains("temporal_filter_type=\"exp\""), re)
+        XCTAssertTrue(re.contains("temporal_filter_exp=\"2.000000\""), re)
+
+        let f2 = try! Flam3Parser.parse(re.data(using: .utf8)!)[0]
+        XCTAssertEqual(f2.quality.temporalFilterType, .exp, "temporal_filter_type=\"exp\" must round-trip")
+        XCTAssertEqual(f2.quality.temporalFilterExp, 2.0, accuracy: 1e-9)
+        XCTAssertEqual(f1, f2)
+    }
 }

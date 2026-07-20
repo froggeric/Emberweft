@@ -129,6 +129,13 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.quality.estimatorRadius = attr["estimator_radius"].flatMap { Double($0) } ?? 0
         f.quality.estimatorMinimum = attr["estimator_minimum"].flatMap { Double($0) } ?? 0
         f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Double($0) } ?? 0.6
+        // Motion-blur attrs (flam3 temporal_filter_*). FilterShape.rawValue is
+        // already "box"/"gaussian" (Genome.swift:81) — matches flam3's
+        // temporal_filter_type strings EXACTLY, so no mapping layer is needed.
+        f.quality.temporalSamples = attr["temporal_samples"].flatMap { Int($0) } ?? 1
+        f.quality.temporalFilterType = attr["temporal_filter_type"].flatMap { FilterShape(rawValue: $0) } ?? .box
+        f.quality.temporalFilterWidth = attr["temporal_filter_width"].flatMap { Double($0) } ?? 1.0
+        f.quality.temporalFilterExp = attr["temporal_filter_exp"].flatMap { Double($0) } ?? 0
         f.hueShift = attr["hue"].flatMap { Double($0) } ?? 0
         f.time = attr["time"].flatMap { Double($0) } ?? 0
         // Animation attributes (flam3 interpolation pipeline). Defaults mirror
