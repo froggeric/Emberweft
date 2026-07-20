@@ -32,7 +32,8 @@ public enum ToneMapping {
     public static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                               gamma: Double, gammaThreshold: Double, vibrancy: Double,
                               brightness: Double = 4.0,
-                              sampleDensity: Double, pixelsPerUnit: Double) -> RGBA8Image {
+                              sampleDensity: Double, pixelsPerUnit: Double,
+                              sumfilt: Double = 1.0) -> RGBA8Image {
         let gw = histogram.gridWidth, gh = histogram.gridHeight
 
         // --- k1 / k2 (rect.c:933-937) ---
@@ -44,7 +45,11 @@ public enum ToneMapping {
         let imageH = height * oversample
         let area = Double(imageW * imageH) / (pixelsPerUnit * pixelsPerUnit)
         let nbatches = 1
-        let sumfilt: Double = 1.0   // spatial filter is normalized to sum 1
+        // `sumfilt` (rect.c:937) = the temporal filter's Σweights/N. Defaults to
+        // 1.0 (no temporal blur / spatial filter is already normalized to sum 1),
+        // preserving the existing single-pass behavior. The temporal motion-blur
+        // path passes the temporal filter's `sumfilt` so weighted sub-passes
+        // (gaussian/exp) normalize correctly across passes; box → 1.0 → unchanged.
         let k2 = Double(oversample * oversample * nbatches) /
                  (contrast * area * whiteLevel * sampleDensity * sumfilt)
 

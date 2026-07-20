@@ -41,12 +41,18 @@ public enum ChaosGame {
 
     /// The `isaac_seed` string pinned by `Tools/regen_goldens.sh`
     /// (`FLAM3_ISAAC_SEED`). Every golden PNG is rendered with this exact
-    /// seed, so the parent ISAAC must be seeded identically.
-    private static let goldenIsaacSeed = "emberweftgoldens"
+    /// seed, so the parent ISAAC must be seeded identically. Used as the
+    /// default for `iterate(isaacSeed:)` so the temporal motion-blur path can
+    /// salt the seed per sub-pass without changing the existing goldens.
+    @usableFromInline static let goldenIsaacSeed = "emberweftgoldens"
 
     // MARK: - Entry point
 
-    public static func iterate(flame: Flame, params: RenderParams) -> Histogram {
+    public static func iterate(
+        flame: Flame, params: RenderParams,
+        isaacSeed: String = goldenIsaacSeed,   // per-pass seed salt for temporal motion blur
+        colorScalar: Double = 1.0              // flam3 color_scalar (rect.c:757) baked into dmap
+    ) -> Histogram {
         let gw = params.gridWidth, gh = params.gridHeight
         var hist = Histogram(gridWidth: gw, gridHeight: gh)
 
@@ -77,7 +83,6 @@ public enum ChaosGame {
         let cmapSize = 256
         let cmapSizeM1 = 255
         let whiteLevel = 255.0
-        let colorScalar = 1.0
         let dmap = buildDmap(flame.palette, whiteLevel: whiteLevel, colorScalar: colorScalar)
         // dmap alpha channel (rect.c:781, k=3): opaque embedded palettes → 1.0*255 = 255.
         let dmapAlpha = [Double](repeating: whiteLevel * colorScalar, count: cmapSize)
@@ -92,8 +97,12 @@ public enum ChaosGame {
         // Parent ISAAC seeded from the golden string; draw RANDSIZ words to
         // seed the thread-local ISAAC that produces every chaos-game draw.
         // nthreads=1 for the goldens (single-threaded render), so exactly one
-        // child is created and consumed for the whole frame.
-        var parent = ISAAC(isaacSeed: goldenIsaacSeed)
+        // child is created and consumed for the whole frame. For the temporal
+        // motion-blur path the caller salts `isaacSeed` per sub-pass so the N
+        // trajectories are not perfectly correlated (rect.c:862-865 layers a
+        // sub-batch re-seed on top — Emberweft's single-pass iterate gets the
+        // same decorrelation from a distinct parent seed string).
+        var parent = ISAAC(isaacSeed: isaacSeed)
         var childSeed = [UInt64](repeating: 0, count: ISAAC.randsizWords)
         for i in 0..<ISAAC.randsizWords { childSeed[i] = UInt64(parent.next()) }
         var rng = ISAAC(randrsl: childSeed)
