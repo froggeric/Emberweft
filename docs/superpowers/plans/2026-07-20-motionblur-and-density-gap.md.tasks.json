@@ -1,0 +1,46 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-20-motionblur-and-density-gap.md",
+  "tasks": [
+    {
+      "id": 15,
+      "subject": "Task 1: Parse temporal params + TemporalFilter helper + RenderParams",
+      "status": "pending",
+      "description": "**Goal:** Make the genome's temporal_samples / temporal_filter_type / temporal_filter_width first-class (parsed, modeled, round-tripped) + TemporalFilter.samples(_:type:width:) helper (port of flam3 flam3_create_temporal_filter, rect.c:645).\n\n**Files:** Modify Sources/FlameKit/Genome.swift (Quality ~111), Flam3Parser.swift (makeFlame ~140), Flam3Serializer.swift (~30), RenderTypes.swift (RenderParams:20). Create Sources/FlameReference/TemporalFilter.swift, Tests/FlameReferenceTests/TemporalFilterTests.swift. Extend Tests/FlameKitTests/RealGenomePaletteTests.swift.\n\n**Acceptance Criteria:** temporal_samples=1000/box/1.2 parses correctly; TemporalFilter.samples box weights sum 1 + deltas span width; serializer round-trips; RenderParams.temporalSamples default 1.\n\n**Verify:** swift test --filter TemporalFilterTests --filter RealGenomePaletteTests --filter SerializerTests\n\n```json:metadata\n{\"files\": [\"Sources/FlameKit/Genome.swift\", \"Sources/FlameKit/Flam3Parser.swift\", \"Sources/FlameKit/Flam3Serializer.swift\", \"Sources/FlameKit/RenderTypes.swift\", \"Sources/FlameReference/TemporalFilter.swift\"], \"verifyCommand\": \"swift test --filter TemporalFilterTests --filter RealGenomePaletteTests --filter SerializerTests\", \"acceptanceCriteria\": [\"temporal params parse\", \"TemporalFilter box correct\", \"serializer round-trips\", \"RenderParams.temporalSamples default 1\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 2: CPU temporal motion blur (density accumulation)",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "**Goal:** ReferenceRenderer renders a motion-blurred frame by accumulating N reduced-sample chaos histograms (one per sub-time) into one histogram, then DE + tone-map once — cost-neutral (rect.c:833).\n\n**Files:** Modify Sources/FlameReference/ReferenceRenderer.swift (add render(blendAt:centerTime:temporal:params:)), Sources/FlameKit/RenderTypes.swift (Histogram scale(by:) + accumulate(_:); RenderParams.samplesPerPixel -> var). Create Tests/FlameReferenceTests/TemporalBlurTests.swift.\n\n**Acceptance Criteria:** temporalSamples=1 byte-identical to plain render; constant blendAt preserves total light (mean within 5%); test-fast green.\n\n**Verify:** swift test --filter TemporalBlurTests && make test-fast\n\n```json:metadata\n{\"files\": [\"Sources/FlameReference/ReferenceRenderer.swift\", \"Sources/FlameKit/RenderTypes.swift\"], \"verifyCommand\": \"swift test --filter TemporalBlurTests && make test-fast\", \"acceptanceCriteria\": [\"temporalSamples=1 == plain\", \"static preserves light\", \"test-fast green\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 3: Metal temporal motion blur (N fused chaos passes)",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "**Goal:** MetalRenderer renders a motion-blurred frame by encoding N fused chaos passes (one per sub-time genome, threadCount/N threads) into the SAME atomicBuf, then a single decode->DE->log->display. Cost-neutral; box filter.\n\n**Files:** Modify Sources/FlameRenderer/MetalRenderer.swift (add render(blendAt:), modeled on renderFused). Create Tests/FlameRendererTests/TemporalBlurMetalTests.swift.\n\n**Acceptance Criteria:** Metal temporalSamples=1 == plain Metal render; FusedUnfusedParityTests still passes; --temporal-samples 8 renders non-black.\n\n**Verify:** swift test --filter TemporalBlurMetalTests --filter FusedUnfusedParityTests (sandbox OFF)\n\n```json:metadata\n{\"files\": [\"Sources/FlameRenderer/MetalRenderer.swift\"], \"verifyCommand\": \"swift test --filter TemporalBlurMetalTests --filter FusedUnfusedParityTests\", \"acceptanceCriteria\": [\"Metal temporalSamples=1 == plain\", \"FusedUnfusedParity passes\", \"temporal-samples 8 non-black\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 4: --temporal-samples in animate + production validation (USER GATE)",
+      "status": "pending",
+      "blockedBy": [16, 17],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every acceptanceCriterion is re-validated independently with captured output.\n\n**Goal:** Wire motion blur into emberweft animate (--temporal-samples N), re-render a real-genome clip at production settings, visually verify the transition->loop jump is gone, motion is relaxing, comparable to official videos.\n\n**Files:** Modify Sources/EmberweftCLI/AnimateCommand.swift (render loop ~182-237).\n\n**Acceptance Criteria:** --temporal-samples parses (default genome value, cap 64); blendAt closure + temporal render path; clip rendered (2 sheep 05739->31943, --frames 160 --segments 3 --loop-cycles 1 --temporal-samples 32 --quality 500 --size 1280x720 --backend metal) muxed to /tmp/m3_mb.mp4; boundary PSNR (319->320) within ~2dB of within-loop (100->101) — jump gone; user visual: smooth/relaxing + matches /tmp/es_official/ official videos.\n\n**Verify:** render + ffmpeg mux + boundary PSNR; open /tmp/m3_mb.mp4 + official videos.\n\n```json:metadata\n{\"files\": [\"Sources/EmberweftCLI/AnimateCommand.swift\"], \"verifyCommand\": \"render + boundary PSNR + open\", \"acceptanceCriteria\": [\"flag parses\", \"blendAt + temporal path\", \"clip to /tmp/m3_mb.mp4\", \"boundary PSNR within 2dB (jump gone)\", \"user visual smooth + matches official\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"boundary-psnr\"], [\"within-loop-psnr\"]], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Task 5: Density-gap diagnostic (localize the ≈20 dB)",
+      "status": "pending",
+      "description": "**Goal:** Localize WHERE Emberweft's density distribution diverges from flam3 on a real genome (~20 dB PSNR), giving Task 6 a concrete target. Hypothesis: Emberweft chaos histogram is peakier.\n\n**Files:** Create Tools/density_diff.py, Tools/density_diff.md.\n\n**Acceptance Criteria:** density_diff.py renders 00256 (no blur, matched: 800x592, oversample=1, estimator_radius=0, same seed) in both Emberweft CPU + flam3 (temporal_samples=1), prints brightness histogram (>=8 buckets), % above {4,32,128}, centroid + active bbox; density_diff.md states divergent region + ranked causes (chaos distribution / DE curve / k2-sampleDensity / spatial filter).\n\n**Verify:** python3 Tools/density_diff.py prints both distributions; .md documents localization.\n\n```json:metadata\n{\"files\": [\"Tools/density_diff.py\", \"Tools/density_diff.md\"], \"verifyCommand\": \"python3 Tools/density_diff.py\", \"acceptanceCriteria\": [\"renders both + prints histogram/thresholds/centroid/bbox\", \"md localizes region + ranks causes\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "Task 6: Fix density gap + gated real-genome vs-flam3 parity test",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Close the localized density difference so real-genome PSNR vs flam3 reaches >=38 dB, locked by a gated parity test.\n\n**Files:** Modify whatever Task 5 localized (likely ChaosGame.swift / DensityEstimation.swift / ToneMapping.swift). Create Tests/FlameReferenceTests/RealGenomeParityTests.swift.\n\n**Acceptance Criteria:** RealGenomeParityTests renders each Tests/Goldens/genomes_real/ fixture (CPU, no blur, matched params) vs live flam3-render, asserts PSNR>=38 dB + SSIM>=0.95 (XCTSkip if oracle absent); red before (~20 dB) / green after; GoldenParity still >=30 dB; test-fast green.\n\n**Verify:** swift test --filter RealGenomeParityTests (>=38 dB) && swift test --filter GoldenParityTests (unchanged).\n\n```json:metadata\n{\"files\": [\"Tests/FlameReferenceTests/RealGenomeParityTests.swift\"], \"verifyCommand\": \"swift test --filter RealGenomeParityTests && swift test --filter GoldenParityTests\", \"acceptanceCriteria\": [\"RealGenomeParity >=38dB/0.95SSIM\", \"red before green after\", \"GoldenParity >=30dB, test-fast green\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-20T00:00:00Z"
+}
