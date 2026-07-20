@@ -2,6 +2,7 @@ import XCTest
 @testable import EmberweftCLI
 import FlameKit
 import FlameReference
+import FlameRenderer
 
 final class AnimateCommandTests: XCTestCase {
 
@@ -276,5 +277,292 @@ final class AnimateCommandTests: XCTestCase {
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: cacheDir.path),
             "similarity selector must not write `.feature_cache/` without --rebuild-cache")
+    }
+
+    // MARK: - Motion blur (`--temporal-samples`) — Task 4 Phase A
+
+    /// Resolve a real-ES genome fixture under `Tests/Goldens/genomes_real/`.
+    /// Tests run with CWD == repo root, so the relative path works. Throws
+    /// `XCTSkip` (NOT fail) when the fixture is missing — same convention as
+    /// `TemporalBlurMetalTests` and `RealGenomeRenderTests`.
+    private func realFixture(_ name: String) throws -> URL {
+        let url = URL(fileURLWithPath: "Tests/Goldens/genomes_real/\(name).flam3")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("real-genome fixture missing: \(url.path)")
+        }
+        return url
+    }
+
+    /// Read a PNG and return `(max channel value, fraction of non-black pixels)`.
+    /// `nonBlack` counts pixels whose max(R,G,B) > 4 (matches the threshold in
+    /// `RealGenomeRenderTests.testRealGenomeRendersNonBlack`).
+    private func pngStats(_ url: URL) throws -> (maxChannel: UInt8, nonBlackFrac: Double) {
+        let img = try RGBA8Image.readPNG(from: url)
+        var maxChannel: UInt8 = 0
+        var nonBlack = 0
+        let px = img.pixels
+        var i = 0
+        while i + 3 < px.count {
+            let m = max(px[i], px[i + 1], px[i + 2])
+            if m > maxChannel { maxChannel = m }
+            if m > 4 { nonBlack += 1 }
+            i += 4
+        }
+        let pixels = max(1, px.count / 4)
+        return (maxChannel, Double(nonBlack) / Double(pixels))
+    }
+
+    /// AC: `--temporal-samples 4 --backend cpu` dispatches the temporal path on
+    /// the CPU renderer and produces non-black PNGs. Exercises out-of-range
+    /// sub-times (real ES genomes: `temporal_filter_width="1.2"` → sub-times
+    /// span `mapping.blend ± 0.6`, e.g. `0.25 ± 0.6 = [-0.35, 0.85]`).
+    func testTemporalSamples4CPUIsNonBlack() throws {
+        let g0 = try realFixture("electricsheep.248.00256")
+        let g1 = try realFixture("electricsheep.248.00000")
+        let out = freshOut("temporal_cpu")
+
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g0.path, g1.path,
+            "--frames", "2", "--segments", "2",
+            "--temporal-samples", "4",
+            "--seed", "0", "--backend", "cpu", "--out", out.path,
+            "--size", "160x120", "--quality", "50",
+        ])
+        XCTAssertEqual(code, 0)
+
+        // 2 segments × 2 frames = 4 PNGs.
+        for i in 0..<4 {
+            let name = String(format: "%06d.png", i)
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: out.appendingPathComponent(name).path),
+                "Missing frame \(name)")
+        }
+
+        // At least one frame must be non-black. (00256 + 00000 are real ES
+        // genomes with bright palettes — even with only 4*50 = 200 effective
+        // spp per frame, the brightest pixels are well above the >4 threshold.)
+        var anyNonBlack = false
+        for i in 0..<4 {
+            let name = String(format: "%06d.png", i)
+            let stats = try pngStats(out.appendingPathComponent(name))
+            if stats.maxChannel > 0 { anyNonBlack = true }
+        }
+        XCTAssertTrue(anyNonBlack, "temporal CPU render produced ALL-black frames")
+    }
+
+    /// AC: `--temporal-samples 4 --backend metal` dispatches the Metal temporal
+    /// fused path and produces non-black PNGs. Skipped on GPU-less machines /
+    /// under the bash sandbox (`MTLCreateSystemDefaultDevice()` returns nil).
+    func testTemporalSamples4MetalIsNonBlack() throws {
+        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+        try XCTSkipUnless(metalOK, "Metal unavailable")
+        let g0 = try realFixture("electricsheep.248.00256")
+        let g1 = try realFixture("electricsheep.248.00000")
+        let out = freshOut("temporal_metal")
+
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g0.path, g1.path,
+            "--frames", "4", "--segments", "2",
+            "--temporal-samples", "4",
+            "--seed", "0", "--backend", "metal", "--out", out.path,
+            "--size", "160x120", "--quality", "50",
+        ])
+        XCTAssertEqual(code, 0)
+
+        // 2 segments × 4 frames = 8 PNGs.
+        for i in 0..<8 {
+            let name = String(format: "%06d.png", i)
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: out.appendingPathComponent(name).path),
+                "Missing frame \(name)")
+        }
+        var anyNonBlack = false
+        for i in 0..<8 {
+            let name = String(format: "%06d.png", i)
+            let stats = try pngStats(out.appendingPathComponent(name))
+            if stats.maxChannel > 0 { anyNonBlack = true }
+        }
+        XCTAssertTrue(anyNonBlack, "temporal Metal render produced ALL-black frames")
+    }
+
+    /// AC: `--temporal-samples 1` (explicit) must be BYTE-IDENTICAL to the
+    /// no-flag path — the N==1 branch falls through to `render(flame:
+    /// blendAt(mapping.blend), params:)`, which equals the pre-blur path's
+    /// `render(flame: renderedFlame, params:)`. CPU single-threaded → bit-stable.
+    func testTemporalSamples1IsByteIdenticalToNoFlag() throws {
+        let a = tmp(genomeA, name: "anim_ts1_a.flam3")
+        let b = tmp(genomeB, name: "anim_ts1_b.flam3")
+        let out1 = freshOut("ts1_explicit")
+        let out2 = freshOut("ts1_noflag")
+
+        let args: [String] = [
+            "--frames", "2", "--segments", "2",
+            "--seed", "0", "--backend", "cpu",
+            "--size", "16x16", "--quality", "10",
+        ]
+        let code1 = EmberweftCLI.run([
+            "emberweft", "animate", a.path, b.path,
+        ] + args + ["--temporal-samples", "1", "--out", out1.path])
+        let code2 = EmberweftCLI.run([
+            "emberweft", "animate", a.path, b.path,
+        ] + args + ["--out", out2.path])
+        XCTAssertEqual(code1, 0)
+        XCTAssertEqual(code2, 0)
+
+        // Manifests identical (no `temporalSamples` field → identical schema).
+        let m1 = try Data(contentsOf: out1.appendingPathComponent("manifest.json"))
+        let m2 = try Data(contentsOf: out2.appendingPathComponent("manifest.json"))
+        XCTAssertEqual(m1, m2, "manifest.json must be byte-identical for N=1 vs no flag")
+
+        // PNGs byte-identical.
+        for i in 0..<4 {
+            let name = String(format: "%06d.png", i)
+            let p1 = try Data(contentsOf: out1.appendingPathComponent(name))
+            let p2 = try Data(contentsOf: out2.appendingPathComponent(name))
+            XCTAssertEqual(p1, p2, "frame \(name) must be byte-identical for N=1 vs no flag")
+        }
+    }
+
+    /// AC: `--temporal-samples N` where N > 64 on Metal is capped to 64 with a
+    /// printed stderr note (NOT silent). The note is observable via `EmberweftCLI.err`.
+    /// Expects 8 PNGs (frames×segments = 4×2) on Metal after capping.
+    func testTemporalSamplesCappedTo64OnMetalWithNote() throws {
+        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+        try XCTSkipUnless(metalOK, "Metal unavailable")
+        let g0 = try realFixture("electricsheep.248.00256")
+        let g1 = try realFixture("electricsheep.248.00000")
+        let out = freshOut("temporal_cap_explicit")
+
+        // Capture stderr (the cap note is printed there).
+        var captured = ""
+        let originalErr = EmberweftCLI.err
+        EmberweftCLI.err = { captured += $0 }
+        defer { EmberweftCLI.err = originalErr }
+
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g0.path, g1.path,
+            "--frames", "2", "--segments", "2",
+            "--temporal-samples", "1000",       // way over the Metal cap of 64
+            "--seed", "0", "--backend", "metal", "--out", out.path,
+            "--size", "80x60", "--quality", "20",
+        ])
+        XCTAssertEqual(code, 0)
+
+        // The cap note must mention both the original value (1000) and the cap (64).
+        XCTAssertTrue(captured.contains("--temporal-samples 1000 capped to 64"),
+                      "expected cap note on stderr; got:\n\(captured)")
+
+        // 2 segments × 2 frames = 4 PNGs after the cap.
+        for i in 0..<4 {
+            let name = String(format: "%06d.png", i)
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: out.appendingPathComponent(name).path),
+                "Missing frame \(name) after Metal cap")
+        }
+    }
+
+    /// AC (defaulting): with NO `--temporal-samples` flag, the effective N
+    /// defaults to the genome's `quality.temporalSamples`. Real ES genomes carry
+    /// `temporal_samples="1000"` → on Metal this is observable as the cap note
+    /// (1000 → capped to 64). On CPU the default is uncapped but only
+    /// observable via image (slow), so we only assert the cap-note path here.
+    /// `err` capture proves the defaulting kicked in (without it, N would stay
+    /// at the parse-time default of 1 and no note would be printed).
+    func testTemporalSamplesDefaultsToGenomeValueOnMetal() throws {
+        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+        try XCTSkipUnless(metalOK, "Metal unavailable")
+        let g0 = try realFixture("electricsheep.248.00256")
+        let g1 = try realFixture("electricsheep.248.00000")
+        let out = freshOut("temporal_default")
+
+        // Genome-default check: the fixture must actually declare temporal_samples=1000
+        // (otherwise this test would silently pass for the wrong reason).
+        let g0Data = try Data(contentsOf: g0)
+        let parsed = try XCTUnwrap(Flam3Parser.parse(g0Data).first)
+        XCTAssertEqual(parsed.quality.temporalSamples, 1000,
+                       "fixture changed: expected temporal_samples=1000")
+
+        var captured = ""
+        let originalErr = EmberweftCLI.err
+        EmberweftCLI.err = { captured += $0 }
+        defer { EmberweftCLI.err = originalErr }
+
+        // NOTE: no `--temporal-samples` flag — relies on the genome default (1000).
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g0.path, g1.path,
+            "--frames", "2", "--segments", "2",
+            "--seed", "0", "--backend", "metal", "--out", out.path,
+            "--size", "80x60", "--quality", "20",
+        ])
+        XCTAssertEqual(code, 0)
+
+        // The genome value (1000) was picked up and capped to 64 on Metal.
+        XCTAssertTrue(captured.contains("--temporal-samples 1000 capped to 64"),
+                      "defaulting+capping note missing; got:\n\(captured)")
+    }
+
+    /// AC (Loop-unclamped regression): `Loop.blend` is NOT clamped in the CLI's
+    /// temporal path. Loop is pure affine rotation (`sheep_loop`: θ = t·360°·cycles
+    /// on the pre-affine 2×2 only; palette and `xform.color` are STATIC during a
+    /// loop), so out-of-range sub-times are well-defined (R(540°) == R(180°) within
+    /// FP residual) and are exactly the continuous-rotation temporal blur we want.
+    /// Clamping Loop would freeze boundary frames.
+    ///
+    /// This test proves the un-clamped behavior three ways:
+    ///   (1) Direct render with UN-CLAMPED closure vs FORCE-CLAMPED closure →
+    ///       they MUST differ (clamping changes the rotation).
+    ///   (2) The un-clamped render is non-black (smoke check).
+    ///   (3) The CLI's actual loop-segment render is BYTE-IDENTICAL to the
+    ///       direct un-clamped render → proves the CLI uses the un-clamped path
+    ///       (not the clamped one).
+    ///
+    /// Setup: `--frames 1 --segments 1` produces one loop frame at
+    /// `centerTime = blend = 1.0`; with `width=1.2, N=4`, sub-times are
+    /// `[0.4, 0.8, 1.2, 1.6]` — two of four are > 1 (the boundary case where
+    /// clamping vs not-clamping diverges).
+    func testLoopBlendUnclampedInTemporalPath() throws {
+        let g = try realFixture("electricsheep.248.00256")
+        let flame = try XCTUnwrap(Flam3Parser.parse(Data(contentsOf: g)).first,
+                                  "fixture parse failed")
+        let p = RenderParams(seed: 0, width: 80, height: 60,
+                             oversample: 1, samplesPerPixel: 50)
+        let (temporal, sumfilt) = TemporalFilter.samples(
+            4,
+            type:  flame.quality.temporalFilterType,
+            width: flame.quality.temporalFilterWidth,
+            exp:    flame.quality.temporalFilterExp)
+
+        // (1) Direct renders: un-clamped (faithful) vs force-clamped (counterfactual).
+        let unclamped = ReferenceRenderer.render(
+            blendAt: { t in Loop.blend(flame, t: t, cycles: 1) },
+            centerTime: 1.0,
+            temporal: temporal, sumfilt: sumfilt, params: p)
+        let forceClamped = ReferenceRenderer.render(
+            blendAt: { t in Loop.blend(flame, t: min(max(t, 0.0), 1.0), cycles: 1) },
+            centerTime: 1.0,
+            temporal: temporal, sumfilt: sumfilt, params: p)
+        XCTAssertNotEqual(unclamped.pixels, forceClamped.pixels,
+            "Loop un-clamped vs force-clamped must differ at sub-times > 1 — clamping replaces R(576°)≈R(216°) with R(360°)≈R(0°), a real rotation change")
+
+        // (2) Smoke: un-clamped render is non-black.
+        let maxChan = unclamped.pixels.max() ?? 0
+        XCTAssertGreaterThan(maxChan, 0, "un-clamped loop temporal render is all-black")
+
+        // (3) CLI byte-identity: the CLI's loop-segment render must match the
+        // un-clamped direct render exactly (CPU single-threaded → byte-deterministic).
+        // Passing the same sheep twice satisfies the ≥2-sheep guard; with
+        // `--segments 1` only segment 0 (loop) is emitted.
+        let out = freshOut("loop_unclamped_cli")
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g.path, g.path,
+            "--frames", "1", "--segments", "1",
+            "--temporal-samples", "4",
+            "--seed", "0", "--backend", "cpu", "--out", out.path,
+            "--size", "80x60", "--quality", "50",
+        ])
+        XCTAssertEqual(code, 0)
+        let cliImg = try RGBA8Image.readPNG(from: out.appendingPathComponent("000000.png"))
+        XCTAssertEqual(cliImg.pixels, unclamped.pixels,
+            "CLI loop-segment temporal render must be byte-identical to the un-clamped direct render — proves the CLI does NOT clamp Loop")
     }
 }
