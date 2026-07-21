@@ -565,4 +565,84 @@ final class AnimateCommandTests: XCTestCase {
         XCTAssertEqual(cliImg.pixels, unclamped.pixels,
             "CLI loop-segment temporal render must be byte-identical to the un-clamped direct render — proves the CLI does NOT clamp Loop")
     }
+
+    /// AC (frame→blend delta scaling regression): `temporal_filter_width` is in
+    /// FRAME-TIME units (flam3 animation time = frame index), but
+    /// `mapping.blend` is normalized [0,1] per segment. The CLI MUST scale each
+    /// temporal delta by `1/framesPerSegment` before building the temporal array,
+    /// so the blur window is ±width/2 FRAMES (≈±0.15 blend at fps=4, width=1.2),
+    /// NOT ±width/2 of the WHOLE SEGMENT (which would average >½ revolution of
+    /// rotation for a loop → collapse to the rotationally-averaged static
+    /// attractor; observed bug: "loop is static, only noise").
+    ///
+    /// This test would have caught the bug. Three assertions:
+    ///   (1) Unit check on the scaling math: raw deltas are ±width/2 in frame
+    ///       units; scaled deltas are ±width/(2·fps). For width=1.2, fps=4:
+    ///       raw max |delta| = 0.6, scaled max |delta| = 0.15.
+    ///   (2) Scaling MATTERS: rendering the same Loop frame with raw (bug) vs
+    ///       scaled (fix) deltas produces DIFFERENT images (the rotational blur
+    ///       window differs by 4×).
+    ///   (3) CLI byte-identity: the CLI's loop-segment render at frame 2
+    ///       (centerTime=0.75) is byte-identical to the direct scaled-delta
+    ///       render — proves the CLI applies the 1/fps scaling, not the raw
+    ///       frame-unit deltas.
+    func testTemporalBlurDeltaScaledToBlendUnits() throws {
+        let g = try realFixture("electricsheep.248.00256")
+        let flame = try XCTUnwrap(Flam3Parser.parse(Data(contentsOf: g)).first,
+                                  "fixture parse failed")
+        let p = RenderParams(seed: 0, width: 80, height: 60,
+                             oversample: 1, samplesPerPixel: 100)
+        let fps: Double = 4   // mirror --frames 4
+
+        // Raw frame-unit deltas (the bug — directly from TemporalFilter, no scaling).
+        let (rawTemporal, sumfilt) = TemporalFilter.samples(
+            4,
+            type:  flame.quality.temporalFilterType,
+            width: flame.quality.temporalFilterWidth,
+            exp:    flame.quality.temporalFilterExp)
+        // FIX: deltas scaled by 1/fps (what the CLI does after the fix).
+        let scaledTemporal: [(delta: Double, weight: Double)] = rawTemporal.map {
+            (delta: $0.delta / fps, weight: $0.weight)
+        }
+
+        // (1) Scaling math.
+        let maxRaw = rawTemporal.map { abs($0.delta) }.max() ?? 0
+        let maxScaled = scaledTemporal.map { abs($0.delta) }.max() ?? 0
+        XCTAssertEqual(maxRaw, 0.6, accuracy: 1e-9,
+                       "raw delta max = width/2 = 0.6 for width=1.2")
+        XCTAssertEqual(maxScaled, 0.6 / fps, accuracy: 1e-9,
+                       "scaled delta max = width/(2·fps) = 0.15 for fps=4")
+
+        // (2) Bug vs fix must produce DIFFERENT images. The bug's blur window
+        // is ±0.6 blend = ±216° rotation (more than half a revolution averaged);
+        // the fix's is ±0.15 blend = ±54°. Very different blur windows → very
+        // different images.
+        let bugBlur = ReferenceRenderer.render(
+            blendAt: { t in Loop.blend(flame, t: t, cycles: 1) },
+            centerTime: 0.75,
+            temporal: rawTemporal, sumfilt: sumfilt, params: p)
+        let fixBlur = ReferenceRenderer.render(
+            blendAt: { t in Loop.blend(flame, t: t, cycles: 1) },
+            centerTime: 0.75,
+            temporal: scaledTemporal, sumfilt: sumfilt, params: p)
+        let bugVsFixPSNR = ImageComparison.psnr(bugBlur, fixBlur)
+        XCTAssertLessThan(bugVsFixPSNR, 20.0,
+            "Bug (raw frame-unit deltas, ±0.6 blend window = ±216° rotation) vs fix (scaled deltas, ±0.15 blend = ±54°) must produce radically different images (PSNR < 20 dB). Got \(bugVsFixPSNR) dB — if PSNR is high, the scaling is being skipped or applied incorrectly.")
+
+        // (3) CLI byte-identity: the CLI's frame 2 (frames=4 → blend = (2+1)/4 = 0.75)
+        // must match the FIX render exactly. If the CLI used raw deltas (bug), it
+        // would match bugBlur instead. CPU single-threaded → byte-deterministic.
+        let out = freshOut("loop_cli_scaled")
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", g.path, g.path,
+            "--frames", "4", "--segments", "1",
+            "--temporal-samples", "4",
+            "--seed", "0", "--backend", "cpu", "--out", out.path,
+            "--size", "80x60", "--quality", "100",
+        ])
+        XCTAssertEqual(code, 0)
+        let cliImg = try RGBA8Image.readPNG(from: out.appendingPathComponent("000002.png"))
+        XCTAssertEqual(cliImg.pixels, fixBlur.pixels,
+            "CLI's loop-segment temporal render at frame 2 must match the fix (scaled deltas) render byte-for-byte — proves the CLI applies the 1/fps scaling rather than passing raw frame-unit deltas.")
+    }
 }

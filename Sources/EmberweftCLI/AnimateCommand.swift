@@ -216,19 +216,39 @@ extension EmberweftCLI {
             // through to the single-pass path — byte-identical to the pre-blur
             // behavior. The genome's own filter shape/width/exp is used (all real
             // ES genomes: box / 1.2 / 0).
-            let (temporal, sumfilt): ([(delta: Double, weight: Double)], Double) = temporalSamples > 1
+            //
+            // UNIT CONVERSION (load-bearing — was a Task-4 bug): flam3's
+            // `temporal_filter_width` (1.2 on real ES genomes) is in FRAME-TIME
+            // units (flam3 animation time = frame index; rect.c:
+            // `temporal_sample_time = spec->time + temporal_delta`). But
+            // `mapping.blend` is NORMALIALIZED [0,1] PER SEGMENT (Loop.blend:
+            // θ = t·2π·cycles, one revolution per segment). Adding the raw
+            // frame-unit delta (±0.6) to blend would span ±0.6 of the WHOLE
+            // SEGMENT — for a 160-frame loop that's ±96 frames = ±216° of
+            // rotation averaged, collapsing the loop to its rotationally-averaged
+            // static attractor. Divide by `framesPerSegment` to convert
+            // frame → blend so the window is ±width/2 FRAMES (≈ ±0.6 frame ≈
+            // ±1.35°/frame at 160 frames) — the correct subtle ES motion blur.
+            // N==1's delta is 0.0 → scaling is a no-op → byte-identity preserved.
+            let fps = Double(segment.framesPerSegment)
+            let (temporalRaw, sumfilt): ([(delta: Double, weight: Double)], Double) = temporalSamples > 1
                 ? TemporalFilter.samples(
                     temporalSamples,
                     type: flamesConst[segment.fromSheep].quality.temporalFilterType,
                     width: flamesConst[segment.fromSheep].quality.temporalFilterWidth,
                     exp:    flamesConst[segment.fromSheep].quality.temporalFilterExp)
                 : ([(delta: 0.0, weight: 1.0)], 1.0)
+            let temporal: [(delta: Double, weight: Double)] = temporalRaw.map {
+                (delta: $0.delta / fps, weight: $0.weight)
+            }
 
             // Blend closure passed to the temporal render path. Sub-times are
             // `mapping.blend + sub.delta` (the render functions add each
-            // `sub.delta` to `centerTime` internally). Sub-times range
-            // `mapping.blend ± width/2` (≈ ±0.6 for width=1.2) — slightly outside
-            // [0,1] near segment boundaries.
+            // `sub.delta` to `centerTime` internally). After the frame→blend
+            // scaling above, sub-times span `mapping.blend ± width/(2·fps)`
+            // (≈ ±0.00375 blend at fps=160, width=1.2). The last frame in each
+            // segment (blend=1.0) has sub-times slightly > 1 (by 0.6/fps) —
+            // harmless for Loop (periodic rotation), clamped for Transition.
             //
             // Loop vs Transition handling (verified against the M3 design +
             // flam3 semantics):
