@@ -24,7 +24,6 @@ import FlameKit
 public enum ToneMapping {
     /// flam3 defaults (genomes here don't override these).
     private static let contrast: Double = 1.0
-    private static let highlightPower: Double = -1.0
     private static let prefilterWhite: Double = 255
     private static let whiteLevel: Double = 255
     private static let background: SIMD3<Double> = .zero
@@ -33,7 +32,9 @@ public enum ToneMapping {
                               gamma: Double, gammaThreshold: Double, vibrancy: Double,
                               brightness: Double = 4.0,
                               sampleDensity: Double, pixelsPerUnit: Double,
-                              sumfilt: Double = 1.0) -> RGBA8Image {
+                              sumfilt: Double = 1.0,
+                              highlightPower: Double = -1.0,
+                              spatialFilterRadius: Double = 0.5) -> RGBA8Image {
         let gw = histogram.gridWidth, gh = histogram.gridHeight
 
         // --- k1 / k2 (rect.c:933-937) ---
@@ -73,7 +74,12 @@ public enum ToneMapping {
         }
 
         // --- Stage 2: spatial filter (Gaussian, filters.c:217-269) ---
-        let (fw, kernel) = makeSpatialKernel(oversample: oversample, radius: 0.5)
+        // `spatialFilterRadius` threads the genome's `filter` attr (default 0.5)
+        // into BOTH the kernel build (here) AND `RenderParams.filterWidth` /
+        // `gutterWidth` (which sized the histogram grid before the chaos game).
+        // Task-6 density-parity fix: hardcoding `0.5` here while the grid used a
+        // different radius was the residual 4 dB gap after `highlightPower`.
+        let (fw, kernel) = makeSpatialKernel(oversample: oversample, radius: spatialFilterRadius)
 
         // --- Stage 3: gamma output (rect.c:1167-1202, !earlyclip) ---
         let g = 1.0 / gamma

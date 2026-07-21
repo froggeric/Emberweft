@@ -24,11 +24,19 @@ public enum Flam3Serializer {
         a += " zoom=\"\(f6(f.camera.zoom))\""
         a += " rotate=\"\(f6(f.camera.rotation))\""
         a += " oversample=\"\(f.quality.oversample)\""
+        // `filter` (spatial_filter_radius) and `highlight_power` are emitted
+        // only when non-default to keep typical genomes compact — matches the
+        // estimator_* style below. Defaults: filter=0.5, highlight_power=-1
+        // (flam3.c:1300, palettes.c:318). Real ES genomes set filter="1" and
+        // highlight_power="1"; the synthetic goldens leave both at default.
+        if f.quality.filterRadius != 0.5 { a += " filter=\"\(f6(f.quality.filterRadius))\"" }
+        if f.quality.filterShape != .gaussian { a += " filter_shape=\"\(f.quality.filterShape.rawValue)\"" }
         a += " quality=\"\(f.quality.samplesPerPixel)\""
         a += " gamma=\"\(f6(f.quality.gamma))\""
         a += " gamma_threshold=\"\(f6(f.quality.gammaThreshold))\""
         a += " vibrancy=\"\(f6(f.quality.vibrancy))\""
         a += " brightness=\"\(f6(f.quality.brightness))\""
+        if f.quality.highlightPower != -1.0 { a += " highlight_power=\"\(f6(f.quality.highlightPower))\"" }
         a += " hue=\"\(f6(f.hueShift))\""
         a += " time=\"\(f.time)\""
         // Animation attributes. `interpolation_type`/`palette_interpolation` are

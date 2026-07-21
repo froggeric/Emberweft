@@ -20,14 +20,34 @@ import Foundation
 import XCTest
 
 /// Env-var-driven wrapper around the locally-built `flam3-genome` /
-/// `flam3-animate` binaries. All vs-flam3 tests go through this helper so the
-/// F10 auto-skip is applied uniformly.
+/// `flam3-animate` / `flam3-render` binaries. All vs-flam3 tests go through
+/// this helper so the F10 auto-skip is applied uniformly.
 enum Flam3Oracle {
     /// True iff BOTH `flam3-genome` and `flam3-animate` resolve on `$PATH`.
     /// Uses `/usr/bin/which` (not the shell builtin) so it works regardless of
     /// the user's login shell.
     static var isAvailable: Bool {
         which("flam3-genome") != nil && which("flam3-animate") != nil
+    }
+
+    /// True iff `flam3-render` (the static-frame oracle, env-var driven like the
+    /// others) resolves on `$PATH`. Separate from `isAvailable` because static
+    /// parity on a single genome needs only `flam3-render` — not the animation
+    /// pair. The real-genome density-parity gate (`RealGenomeParityTests`) uses
+    /// this; `Tools/density_diff.py` uses the same binary.
+    static var isRenderAvailable: Bool {
+        which("flam3-render") != nil
+    }
+
+    /// Like `require()` but for the static-render oracle (`flam3-render`).
+    /// XCTSkips (never fails) when `flam3-render` is absent — same F10 fallback.
+    static func requireRender(file: StaticString = #file, line: UInt = #line) throws {
+        guard isRenderAvailable else {
+            throw XCTSkip(
+                "flam3-render oracle not built — see Tools/flam3_oracle.sh (F10 auto-skip). "
+                + "Build flam3 from source (scottdraves/flam3) and put flam3-render on "
+                + "$PATH to enable real-genome parity.")
+        }
     }
 
     /// Resolve a binary name to its absolute path via `/usr/bin/which`, or nil.
@@ -151,6 +171,69 @@ enum Flam3Oracle {
             .filter { $0.hasSuffix(".png") }
             .map { URL(fileURLWithPath: dir).appendingPathComponent($0) }
             .sorted(by: { $0.path < $1.path })
+    }
+
+    // MARK: - flam3-render (static-frame oracle)
+
+    /// Renders a single static frame from a `.flam3` genome via env-var-driven
+    /// `flam3-render` (no flags — same contract as `regen_goldens.sh:84-89` and
+    /// `Tools/density_diff.py:121-137`). The genome's own `size`, `quality`,
+    /// `oversample`, `filter`, `brightness`, etc. drive the render; the only
+    /// env vars set here are the reproducibility pins (seed/isaac_seed/nthreads)
+    /// and the I/O paths (`in`/`out`/`format`).
+    ///
+    /// Used by `RealGenomeParityTests` for the real-genome density-parity gate.
+    /// Callers pre-sanitize the genome (motion-blur off, supersample=1, DE off)
+    /// before passing it in — `Tools/density_diff.py:74-96` is the reference
+    /// sanitization. `Tools/density_diff.py` and this helper share one proven
+    /// flam3-render invocation so their PSNR numbers are directly comparable.
+    ///
+    /// - Parameters:
+    ///   - genomeXML: the (typically sanitized) `.flam3` genome XML, fed via
+    ///     stdin. (Passing a path via `in=` would also work; stdin avoids
+    ///     writing a temp file and matches `renderFrames`'s pattern.)
+    ///   - outPath: absolute path the PNG is written to (`out` env var).
+    ///   - seed: libc `srandom` seed (env `seed`); default matches
+    ///     `Tools/density_diff.py`'s `LIBC_SEED = "42"` (aux RNG only — ISAAC
+    ///     drives the chaos game).
+    ///   - isaacSeed: ISAAC chaos-game seed (env `isaac_seed`); default matches
+    ///     `ChaosGame.goldenIsaacSeed` ("emberweftgoldens") so flam3's sample
+    ///     stream matches Emberweft CPU's exactly.
+    ///   - nthreads: thread count (env `nthreads`); default 1 (Emberweft's CPU
+    ///     reference is single-threaded — `regen_goldens.sh` documents why this
+    ///     pin is critical for parity).
+    /// - Returns: `outPath` on success (throws on non-zero exit).
+    @discardableResult
+    static func renderStatic(
+        genomeXML: String,
+        outPath: String,
+        seed: String = "42",
+        isaacSeed: String = "emberweftgoldens",
+        nthreads: Int = 1
+    ) throws -> String {
+        try requireRender()
+        let env: [String: String] = {
+            var e = ProcessInfo.processInfo.environment
+            e["format"] = "png"
+            e["transparency"] = "0"
+            e["seed"] = seed
+            e["isaac_seed"] = isaacSeed
+            e["nthreads"] = String(nthreads)
+            // `in` defaults to the literal string "stdin" inside flam3-render
+            // (see `flam3-render -h`); leaving it unset makes it read the genome
+            // from stdin, which `run(stdin:)` pipes in. Setting `in=/dev/stdin`
+            // does NOT work (flam3 looks for the magic string "stdin").
+            e["out"] = outPath
+            e["earlyclip"] = "0"     // default; Emberweft assumes the !earlyclip tone-map path
+            return e
+        }()
+        // Pipe the genome in via stdin so we never write a temp file. The `in=`
+        // env var points at /dev/stdin; flam3-render opens it like any input.
+        _ = try run(command: "flam3-render",
+                    arguments: [],
+                    environment: env,
+                    stdin: genomeXML)
+        return outPath
     }
 
     // MARK: - Internals

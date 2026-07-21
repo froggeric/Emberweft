@@ -126,6 +126,18 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.quality.gammaThreshold = attr["gamma_threshold"].flatMap { Double($0) } ?? 0.01
         f.quality.vibrancy = attr["vibrancy"].flatMap { Double($0) } ?? 1.0
         f.quality.brightness = attr["brightness"].flatMap { Double($0) } ?? 4.0
+        // flam3 `filter` attr → spatial_filter_radius (parser.c:405-406). Default
+        // 0.5 is flam3's hardcoded fallback (flam3.c:1300) and matches the
+        // synthetic goldens (which don't set `filter=`). Real ES genomes set
+        // `filter="1"` (a 4×4 Gaussian kernel vs the 2×2 default). The renderer
+        // reads this via `RenderParams.spatialFilterRadius`; the parser wires
+        // the genome value into `Quality.filterRadius`.
+        f.quality.filterRadius = attr["filter"].flatMap { Double($0) } ?? 0.5
+        f.quality.filterShape = attr["filter_shape"].flatMap { FilterShape(rawValue: $0) } ?? .gaussian
+        // flam3 `highlight_power` (parser.c:405-406). Default -1 disables the
+        // saturated-highlight anti-shift (palettes.c:318-332) — the synthetic
+        // goldens' setting. Real ES genomes set `highlight_power="1"`.
+        f.quality.highlightPower = attr["highlight_power"].flatMap { Double($0) } ?? -1.0
         f.quality.estimatorRadius = attr["estimator_radius"].flatMap { Double($0) } ?? 0
         f.quality.estimatorMinimum = attr["estimator_minimum"].flatMap { Double($0) } ?? 0
         f.quality.estimatorCurveRate = attr["estimator_curve"].flatMap { Double($0) } ?? 0.6

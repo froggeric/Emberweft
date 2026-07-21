@@ -23,15 +23,24 @@ public struct RenderParams: Sendable, Equatable {
     public let height: Int
     public let oversample: Int
     public let samplesPerPixel: Int
-    public init(seed: UInt64, width: Int, height: Int, oversample: Int, samplesPerPixel: Int) {
+    /// flam3 `spatial_filter_radius` (parser.c:405-406 parses the `filter="…"`
+    /// attr). Per-render so the genome's value threads through the grid-gutter
+    /// calculation AND the spatial-kernel build consistently (Task-6 density-
+    /// parity fix: overriding the prior `static let` cascaded into
+    /// `filterWidth`/`gutterWidth`/`gridWidth` but NOT the kernel build, dropping
+    /// PSNR from 21 → 17 dB; threading it through `RenderParams` fixes both at
+    /// once). Default `0.5` matches flam3's hardcoded default (`flam3.c:1300`)
+    /// and the synthetic goldens (which don't set `filter=`), preserving their
+    /// byte-identity.
+    public let spatialFilterRadius: Double
+    public init(seed: UInt64, width: Int, height: Int, oversample: Int, samplesPerPixel: Int,
+                spatialFilterRadius: Double = 0.5) {
         self.seed = seed; self.width = width; self.height = height
         self.oversample = max(1, oversample); self.samplesPerPixel = samplesPerPixel
+        self.spatialFilterRadius = spatialFilterRadius
     }
-    /// flam3 default `spatial_filter_radius` (flam3.c:1300). The frozen genomes do
-    /// not override it.
-    public static let spatialFilterRadius: Double = 0.5
     /// `filter_width` (rect.c:628, `flam3_create_spatial_filter`).
-    public var filterWidth: Int { flam3SpatialFilterWidth(oversample: oversample, radius: Self.spatialFilterRadius) }
+    public var filterWidth: Int { flam3SpatialFilterWidth(oversample: oversample, radius: spatialFilterRadius) }
     /// `gutter_width = (filter_width - oversample) / 2` (rect.c:656). The accumulator
     /// grid is padded by one gutter ring on every side so the spatial filter is fully
     /// centered on border pixels (rect.c:685-686).
@@ -45,7 +54,19 @@ public struct RenderParams: Sendable, Equatable {
     /// path split the sample budget across sub-passes.
     public func settingSamplesPerPixel(_ n: Int) -> RenderParams {
         RenderParams(seed: seed, width: width, height: height,
-                     oversample: oversample, samplesPerPixel: n)
+                     oversample: oversample, samplesPerPixel: n,
+                     spatialFilterRadius: spatialFilterRadius)
+    }
+
+    /// Builder that returns a copy with `spatialFilterRadius` replaced. Used by
+    /// the renderer entry points to thread `Flame.quality.filterRadius` into
+    /// `params` before the chaos game allocates its grid (the gutter width
+    /// depends on the radius — rect.c:656 — so it must be set in `params` from
+    /// the start, not applied after).
+    public func settingSpatialFilterRadius(_ r: Double) -> RenderParams {
+        RenderParams(seed: seed, width: width, height: height,
+                     oversample: oversample, samplesPerPixel: samplesPerPixel,
+                     spatialFilterRadius: r)
     }
 }
 

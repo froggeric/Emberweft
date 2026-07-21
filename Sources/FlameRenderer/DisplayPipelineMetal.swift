@@ -46,11 +46,14 @@ enum DisplayPipelineMetal {
 
     /// Render `histogram` to an 8-bit RGBA image via the full Metal display
     /// pipeline. Deterministic in `(histogram, width, height, oversample, gamma,
-    /// gammaThreshold, vibrancy, brightness, sampleDensity, pixelsPerUnit)`.
+    /// gammaThreshold, vibrancy, brightness, sampleDensity, pixelsPerUnit,
+    /// highlightPower, spatialFilterRadius)`.
     static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                        gamma: Double, gammaThreshold: Double, vibrancy: Double,
                        brightness: Double = 4.0,
-                       sampleDensity: Double, pixelsPerUnit: Double) throws -> RGBA8Image {
+                       sampleDensity: Double, pixelsPerUnit: Double,
+                       highlightPower: Double = -1.0,
+                       spatialFilterRadius: Double = 0.5) throws -> RGBA8Image {
         precondition(MemoryLayout<DisplayParams>.size == 64,
                      "DisplayParams size drifted from MSL mirror (64 bytes)")
         guard let (device, library) = MetalRenderer.deviceAndLibrary() else {
@@ -74,8 +77,11 @@ enum DisplayPipelineMetal {
                  (contrast * area * whiteLevel * sampleDensity * sumfilt)
 
         // --- Spatial filter kernel (filters.c:217-269, faithful twin of CPU) ---
+        // `spatialFilterRadius` must match the radius used to size the histogram
+        // grid (`RenderParams.spatialFilterRadius`); the unfused entry point
+        // passes the same value both sides.
         let (fw, kernelFloat) = makeSpatialKernelMetal(oversample: oversample,
-                                                       radius: RenderParams.spatialFilterRadius)
+                                                       radius: spatialFilterRadius)
         let gutter = (fw - oversample) / 2
 
         var dp = DisplayParams()
@@ -85,7 +91,7 @@ enum DisplayPipelineMetal {
         dp.linrange = Float(gammaThreshold)
         dp.vibrancy = Float(vibrancy)
         dp.bgR = 0; dp.bgG = 0; dp.bgB = 0
-        dp.highlightPower = -1.0
+        dp.highlightPower = Float(highlightPower)
         dp.gw = UInt32(gw)
         dp.gh = UInt32(gh)
         dp.width = UInt32(width)

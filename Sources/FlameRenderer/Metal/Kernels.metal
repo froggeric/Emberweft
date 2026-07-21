@@ -740,15 +740,75 @@ static inline float calc_alpha(float density, float gamma, float linrange) {
     return 0;
 }
 
-// palettes.c:292-348. M2 only renders at default highlightPower=-1, where the
-// saturated-highlight (HSV) branch is unreachable; this keeps the `else`
-// (maxa<=255) path, the only one CPU ToneMapping exercises on the goldens.
+// HSV conversion for `calc_newrgb`'s saturated-highlight branch
+// (palettes.c:318-332). Used only when `maxa > 255 && highpow >= 0` — i.e.,
+// real genomes with `highlight_power >= 0`. Faithful MSL twin of CPU
+// `rgb2hsv`/`hsv2rgb` in ToneMapping.swift (lines 219-254). Computes in float
+// (the CPU uses Double); CPU↔Metal parity on real genomes holds at the
+// project's statistical threshold (≥38 dB), not byte-exact.
+static inline float3 rgb2hsv_ms(float3 rgb) {
+    float mx = max(rgb.x, max(rgb.y, rgb.z));
+    float mn = min(rgb.x, min(rgb.y, rgb.z));
+    float d = mx - mn;
+    float s = (mx > 0.0f) ? d / mx : 0.0f;
+    float h = 0.0f;
+    if (d > 0.0f) {
+        if (mx == rgb.x) {
+            h = (rgb.y - rgb.z) / d;
+        } else if (mx == rgb.y) {
+            h = (rgb.z - rgb.x) / d + 2.0f;
+        } else {
+            h = (rgb.x - rgb.y) / d + 4.0f;
+        }
+        h /= 6.0f;
+        if (h < 0.0f) h += 1.0f;
+    }
+    return float3(h, s, mx);
+}
+
+static inline float3 hsv2rgb_ms(float3 hsv) {
+    float h6 = hsv.x * 6.0f;
+    float c = hsv.y * hsv.z;
+    float x = c * (1.0f - fabs(fmod(h6, 2.0f) - 1.0f));
+    float m = hsv.z - c;
+    float3 out;
+    if (h6 < 1.0f)        out = float3(c, x, 0);
+    else if (h6 < 2.0f)   out = float3(x, c, 0);
+    else if (h6 < 3.0f)   out = float3(0, c, x);
+    else if (h6 < 4.0f)   out = float3(0, x, c);
+    else if (h6 < 5.0f)   out = float3(x, 0, c);
+    else                  out = float3(c, 0, x);
+    return float3(out.x + m, out.y + m, out.z + m);
+}
+
+// palettes.c:292-348. The `if (maxa > 255 && highpow >= 0)` branch (HSV
+// desaturation, palettes.c:318-332) is unreachable at the default
+// highlightPower=-1, but real ES genomes set `highlight_power="1"` which makes
+// `maxa > 255` the normal saturated-peak case. CPU ToneMapping has the same
+// branch (ToneMapping.swift:163-173); this Metal twin mirrors it byte-for-byte
+// modulo Float-vs-Double math so CPU↔Metal parity holds on real genomes.
 static inline float3 calc_newrgb(float3 cbuf, float ls, float highpow) {
     if (ls == 0 || (cbuf.x == 0 && cbuf.y == 0 && cbuf.z == 0)) return 0.0f;
     float maxa = -1.0f; float maxc = 0.0f;
     for (int i = 0; i < 3; i++) {
         float a = ls * (cbuf[i] / PREFILTER_WHITE_MS);
         if (a > maxa) { maxa = a; maxc = cbuf[i] / PREFILTER_WHITE_MS; }
+    }
+    if (maxa > 255.0f && highpow >= 0.0f) {
+        // Highlight anti-shift (palettes.c:318-332): compress the saturated
+        // channel back to 255 via `newls = 255/maxc`, then desaturate by
+        // `lsratio = pow(newls/ls, highpow)`. Pulls peaks down and spreads
+        // them across the upper-mid range — exactly the [64,128) bump and
+        // [128,256) dip that without this branch made Emberweft "peakier"
+        // than flam3 by ~28 dB on real genomes.
+        float newls = 255.0f / maxc;
+        float lsratio = pow(newls / ls, highpow);
+        float3 newrgb = float3(newls * cbuf.x / PREFILTER_WHITE_MS / 255.0f,
+                               newls * cbuf.y / PREFILTER_WHITE_MS / 255.0f,
+                               newls * cbuf.z / PREFILTER_WHITE_MS / 255.0f);
+        float3 hsv = rgb2hsv_ms(newrgb);
+        hsv = float3(hsv.x, hsv.y * lsratio, hsv.z);
+        return hsv2rgb_ms(hsv) * 255.0f;
     }
     float newls = 255.0f / maxc;
     float adjhlp = -highpow; if (adjhlp > 1) adjhlp = 1; if (maxa <= 255) adjhlp = 1;

@@ -121,6 +121,13 @@ public struct Quality: Sendable, Equatable {
     public var estimatorRadius: Double
     public var estimatorMinimum: Double
     public var estimatorCurveRate: Double   // flam3 `estimator_curve`
+    /// flam3 `highlight_power` (palettes.c:318-332). `<0` disables the
+    /// saturated-highlight anti-shift (the flam3 default and the synthetic
+    /// goldens' setting — `-1`). Real ES genomes set `highlight_power="1"`,
+    /// which compresses saturated channels back to 255 via HSV desaturation
+    /// and redistributes peaks into the upper-mid range. Default `-1` keeps
+    /// the synthetic goldens byte-identical (they don't set the attr).
+    public var highlightPower: Double
     /// flam3 motion-blur attrs (the `temporal_filter_*` family). Defaults mirror
     /// flam3 (`temporal_samples=1, temporal_filter_type=box,
     /// temporal_filter_width=1.0, temporal_filter_exp=0`).
@@ -132,7 +139,7 @@ public struct Quality: Sendable, Equatable {
     public init(
         oversample: Int = 1,
         samplesPerPixel: Int = 100,
-        filterRadius: Double = 0,
+        filterRadius: Double = 0.5,
         filterShape: FilterShape = .gaussian,
         gamma: Double = 2.2,
         gammaThreshold: Double = 0.01,
@@ -141,6 +148,7 @@ public struct Quality: Sendable, Equatable {
         estimatorRadius: Double = 0,
         estimatorMinimum: Double = 0,
         estimatorCurveRate: Double = 0.6,
+        highlightPower: Double = -1.0,
         temporalSamples: Int = 1,
         temporalFilterType: FilterShape = .box,
         temporalFilterWidth: Double = 1.0,
@@ -157,6 +165,7 @@ public struct Quality: Sendable, Equatable {
         self.estimatorRadius = estimatorRadius
         self.estimatorMinimum = estimatorMinimum
         self.estimatorCurveRate = estimatorCurveRate
+        self.highlightPower = highlightPower
         self.temporalSamples = temporalSamples
         self.temporalFilterType = temporalFilterType
         self.temporalFilterWidth = temporalFilterWidth

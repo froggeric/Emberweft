@@ -173,6 +173,11 @@ public enum MetalRenderer {
         guard let queue = commandQueue else {
             throw NSError(domain: "MetalRenderer", code: 11)
         }
+        // Thread `flame.quality.filterRadius` into `params.spatialFilterRadius`
+        // before the chaos game iterates — the grid's gutter width depends on
+        // the filter radius (rect.c:656), so the radius must be set in `params`
+        // at grid-allocation time. Same rationale as ReferenceRenderer.render.
+        let params = params.settingSpatialFilterRadius(flame.quality.filterRadius)
 
         // -------- Shared chaos payload (mirrors ChaosGameMetal.iterate) --------
         let xforms = MetalHost.packXforms(flame)
@@ -252,7 +257,7 @@ public enum MetalRenderer {
                  (contrast * area * whiteLevelD * sampleDensity * sumfilt)
 
         let (fw, kernelFloat) = DisplayPipelineMetal.makeSpatialKernelMetal(
-            oversample: oversample, radius: RenderParams.spatialFilterRadius)
+            oversample: oversample, radius: params.spatialFilterRadius)
         let gutter = (fw - oversample) / 2
 
         var dp = DisplayPipelineMetal.DisplayParams()
@@ -261,7 +266,7 @@ public enum MetalRenderer {
         dp.linrange = Float(flame.quality.gammaThreshold)
         dp.vibrancy = Float(flame.quality.vibrancy)
         dp.bgR = 0; dp.bgG = 0; dp.bgB = 0
-        dp.highlightPower = -1.0
+        dp.highlightPower = Float(flame.quality.highlightPower)
         dp.gw = UInt32(gw); dp.gh = UInt32(gh)
         dp.width = UInt32(params.width); dp.height = UInt32(params.height)
         dp.oversample = UInt32(oversample)
@@ -418,6 +423,10 @@ public enum MetalRenderer {
         precondition(!temporal.isEmpty,
             "renderTemporalFused: temporal must contain at least one sub-sample")
         let center = blendAt(centerTime)
+        // Thread the center flame's `filterRadius` into `params.spatialFilterRadius`
+        // — quality / display params are frame-level (rect.c:911-937), driven by
+        // the center CP. Same as renderFused.
+        let params = params.settingSpatialFilterRadius(center.quality.filterRadius)
         let N = temporal.count
 
         guard let (device, _) = deviceAndLibrary() else {
@@ -474,7 +483,7 @@ public enum MetalRenderer {
                  (contrast * area * whiteLevelD * sampleDensity * sumfilt)
 
         let (fw, kernelFloat) = DisplayPipelineMetal.makeSpatialKernelMetal(
-            oversample: oversample, radius: RenderParams.spatialFilterRadius)
+            oversample: oversample, radius: params.spatialFilterRadius)
         let gutter = (fw - oversample) / 2
 
         var dp = DisplayPipelineMetal.DisplayParams()
@@ -483,7 +492,7 @@ public enum MetalRenderer {
         dp.linrange = Float(center.quality.gammaThreshold)
         dp.vibrancy = Float(center.quality.vibrancy)
         dp.bgR = 0; dp.bgG = 0; dp.bgB = 0
-        dp.highlightPower = -1.0
+        dp.highlightPower = Float(center.quality.highlightPower)
         dp.gw = UInt32(gw); dp.gh = UInt32(gh)
         dp.width = UInt32(params.width); dp.height = UInt32(params.height)
         dp.oversample = UInt32(oversample)
@@ -728,7 +737,8 @@ public enum MetalRenderer {
     @MainActor
     static func renderUnfused(flame: Flame, params: RenderParams) -> RGBA8Image {
         do {
-            var hist = try ChaosGameMetal.iterate(flame: flame, params: params)
+            let p = params.settingSpatialFilterRadius(flame.quality.filterRadius)
+            var hist = try ChaosGameMetal.iterate(flame: flame, params: p)
             if flame.quality.estimatorRadius > 0 {
                 hist = try DensityEstimationMetal.apply(hist,
                     radius: flame.quality.estimatorRadius,
@@ -736,12 +746,14 @@ public enum MetalRenderer {
                     curve: flame.quality.estimatorCurveRate)
             }
             return try DisplayPipelineMetal.render(histogram: hist,
-                width: params.width, height: params.height, oversample: params.oversample,
+                width: p.width, height: p.height, oversample: p.oversample,
                 gamma: flame.quality.gamma, gammaThreshold: flame.quality.gammaThreshold,
                 vibrancy: flame.quality.vibrancy,
                 brightness: flame.quality.brightness,
-                sampleDensity: Double(params.samplesPerPixel),
-                pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom))
+                sampleDensity: Double(p.samplesPerPixel),
+                pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom),
+                highlightPower: flame.quality.highlightPower,
+                spatialFilterRadius: p.spatialFilterRadius)
         } catch {
             fatalError("Metal render (unfused) failed: \(error)")
         }

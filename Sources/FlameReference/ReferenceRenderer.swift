@@ -8,7 +8,15 @@ import FlameKit
 public enum ReferenceRenderer {
     /// Render `flame` at `params` to an 8-bit RGBA image.
     public static func render(flame: Flame, params: RenderParams) -> RGBA8Image {
-        var hist = ChaosGame.iterate(flame: flame, params: params)
+        // Thread `flame.quality.filterRadius` into `params.spatialFilterRadius`
+        // before the chaos game iterates — the grid's gutter width depends on
+        // the filter radius (rect.c:656), so the radius must be set in `params`
+        // at grid-allocation time, not after. This is the only correct place to
+        // apply the genome's `filter="…"` attr: `RenderParams` is constructed by
+        // callers without access to `flame.quality`, but the renderer always has
+        // both. `settingSpatialFilterRadius` returns a copy (Sendable sound).
+        let p = params.settingSpatialFilterRadius(flame.quality.filterRadius)
+        var hist = ChaosGame.iterate(flame: flame, params: p)
         if flame.quality.estimatorRadius > 0 {
             hist = DensityEstimation.apply(hist,
                 radius: flame.quality.estimatorRadius,
@@ -16,12 +24,14 @@ public enum ReferenceRenderer {
                 curve: flame.quality.estimatorCurveRate)
         }
         return ToneMapping.render(histogram: hist,
-            width: params.width, height: params.height, oversample: params.oversample,
+            width: p.width, height: p.height, oversample: p.oversample,
             gamma: flame.quality.gamma, gammaThreshold: flame.quality.gammaThreshold,
             vibrancy: flame.quality.vibrancy,
             brightness: flame.quality.brightness,
-            sampleDensity: Double(params.samplesPerPixel),
-            pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom))
+            sampleDensity: Double(p.samplesPerPixel),
+            pixelsPerUnit: flame.camera.scale * pow(2, flame.camera.zoom),
+            highlightPower: flame.quality.highlightPower,
+            spatialFilterRadius: p.spatialFilterRadius)
     }
 
     /// Temporal motion-blur render: faithful port of flam3's `temporal_samples`
@@ -58,6 +68,10 @@ public enum ReferenceRenderer {
         precondition(!temporal.isEmpty,
             "ReferenceRenderer.render(blendAt:…): temporal must contain at least one sub-sample")
         let center = blendAt(centerTime)
+        // Thread the center flame's `filterRadius` into `params.spatialFilterRadius`
+        // — quality / display params are frame-level (rect.c:911-937), driven by
+        // the center CP. Same rationale as the single-path `render(flame:params:)`.
+        let params = params.settingSpatialFilterRadius(center.quality.filterRadius)
         let N = temporal.count
         // Budget split (rect.c:833). Distribute the integer remainder across the
         // first `rem` passes so the total budget is exact when samplesPerPixel ≥ N
@@ -108,6 +122,8 @@ public enum ReferenceRenderer {
             brightness: center.quality.brightness,
             sampleDensity: Double(params.samplesPerPixel),
             pixelsPerUnit: center.camera.scale * pow(2, center.camera.zoom),
-            sumfilt: sumfilt)
+            sumfilt: sumfilt,
+            highlightPower: center.quality.highlightPower,
+            spatialFilterRadius: params.spatialFilterRadius)
     }
 }
