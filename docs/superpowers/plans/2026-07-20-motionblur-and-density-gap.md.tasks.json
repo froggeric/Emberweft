@@ -31,7 +31,7 @@
     {
       "id": 19,
       "subject": "Task 5: Density-gap diagnostic (localize the ≈20 dB)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Localize WHERE Emberweft's density distribution diverges from flam3 on a real genome (~20 dB PSNR), giving Task 6 a concrete target. Hypothesis: Emberweft chaos histogram is peakier.\n\n**Files:** Create Tools/density_diff.py, Tools/density_diff.md.\n\n**Acceptance Criteria:** density_diff.py renders 00256 (no blur, matched: 800x592, oversample=1, estimator_radius=0, same seed/isaac_seed, q1000) in both Emberweft CPU + flam3 (flam3-render env-driven: format=png nthreads=1 in=<path> out=<path> seed=S isaac_seed=SS — same pattern as Tools/regen_goldens.sh:84-89; sanitize via the same regex approach as Flam3Oracle.injectMotionBlurOff plus estimator_radius=0 supersample=1), prints brightness histogram (>=8 buckets), % above {4,32,128}, centroid + active bbox; density_diff.md states divergent region + ranked causes (chaos distribution / DE curve / k2-sampleDensity / spatial filter).\n\n**Verify:** python3 Tools/density_diff.py prints both distributions; .md documents localization.\n\n```json:metadata\n{\"files\": [\"Tools/density_diff.py\", \"Tools/density_diff.md\"], \"verifyCommand\": \"python3 Tools/density_diff.py\", \"acceptanceCriteria\": [\"renders both with matched sanitized params\", \"prints histogram/thresholds/centroid/bbox\", \"md localizes region + ranks causes\"], \"modelTier\": \"standard\"}\n```"
     },
     {
