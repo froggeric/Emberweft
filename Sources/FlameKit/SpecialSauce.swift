@@ -106,10 +106,30 @@ public enum SpecialSauce {
         return arr
     }
 
-    /// A flam3 default padding xform: `linear = 1`, identity coefs, `padding = 1`.
-    /// flam3_align:854 ("Remove linear") relies on this initial linear=1.
+    /// A flam3 default padding xform: `linear = 1`, identity coefs, `padding = 1`,
+    /// and **structural `weight = 0`** (invisible in the chaos game).
+    ///
+    /// Faithful to flam3's `initialize_xforms` (variations.c:2401-2417), which
+    /// every padding xform passes through before `flam3_copy_xform` overwrites
+    /// the real-xform slots: `density = 0.0` (line 2406), `var[VAR_LINEAR] = 1.0`
+    /// (line 2411), identity coefs (lines 2418-2423). flam3's
+    /// `flam3_create_chaos_distrib` (flam3.c:179) draws directly from
+    /// `xform[i].density`, so weight-0 padding xforms are NEVER selected; and
+    /// `INTERP(xform[i].density)` (interpolation.c:530) interpolates it, so the
+    /// real xform's weight fades out across the blend and reaches exactly 0 at
+    /// t=1 — making the transition→loop boundary seamless (align(B) renders
+    /// identically to raw B).
+    ///
+    /// NOTE: the variation weight `linear = 1.0` is distinct from this structural
+    /// `weight = 0`. flam3_align:854 ("Remove linear") and the rest-position
+    /// logic below operate on VARIATION weights (linear/spherical/…); the
+    /// structural weight (chaos-game density) is what makes the xform selectable.
+    /// Leaving structural weight at `Xform.init`'s default 1.0 caused the
+    /// real-genome transition→loop seam: 9 weight-1.0 padding xforms rendered at
+    /// t=1, distorting align(B) relative to raw B.
     private static func makePaddingXform() -> Xform {
         Xform(affine: .identity,
+              weight: 0.0,
               variations: [Variation(name: "linear", weight: 1.0)],
               padding: 1)
     }
