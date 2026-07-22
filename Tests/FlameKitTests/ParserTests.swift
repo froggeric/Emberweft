@@ -120,6 +120,45 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(f.hueRotation, 0.25, accuracy: 1e-9)
         XCTAssertEqual(f.xforms[0].animate, 0)
     }
+    /// Legacy `symmetry=` attr (deprecated; flam3 parser.c:856-861) sets BOTH
+    /// `color_speed = (1 - sym) / 2` AND `animate = sym > 0 ? 0 : 1`. Real
+    /// Electric Sheep genomes gen-169..243 use `symmetry` exclusively (no
+    /// `color_speed`/`animate`); the wrong factor (1-sym vs (1-sym)/2) or
+    /// missing animate derivation costs ~40 dB on the CV6 real-genome parity
+    /// gate (242.00099 etc.). Pinned here so a regression can't silently
+    /// re-introduce the bug.
+    func testParsesLegacySymmetryAsColorSpeedAndAnimate() throws {
+        let xml = """
+        <flames><flame>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1" symmetry="0"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1" symmetry="1"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1" symmetry="-1"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1" symmetry="0.5"/>
+          <xform weight="1" coefs="1 0 0 1 0 0" linear="1" color_speed="0.25" animate="0"/>
+        </flame></flames>
+        """
+        let f = try Flam3Parser.parse(xml.data(using: .utf8)!)[0]
+        // xform 0: no symmetry / no color_speed / no animate → defaults
+        XCTAssertEqual(f.xforms[0].colorSpeed, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[0].animate, 1.0, accuracy: 1e-9)
+        // xform 1: symmetry="0" → color_speed=(1-0)/2=0.5; animate = 0>0 ? 0 : 1 = 1
+        XCTAssertEqual(f.xforms[1].colorSpeed, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[1].animate, 1.0, accuracy: 1e-9)
+        // xform 2: symmetry="1" → color_speed=(1-1)/2=0.0; animate = 1>0 ? 0 : 1 = 0
+        XCTAssertEqual(f.xforms[2].colorSpeed, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[2].animate, 0.0, accuracy: 1e-9)
+        // xform 3: symmetry="-1" → color_speed=(1-(-1))/2=1.0; animate = -1>0 ? 0 : 1 = 1
+        XCTAssertEqual(f.xforms[3].colorSpeed, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[3].animate, 1.0, accuracy: 1e-9)
+        // xform 4: symmetry="0.5" → color_speed=(1-0.5)/2=0.25; animate = 0.5>0 ? 0 : 1 = 0
+        XCTAssertEqual(f.xforms[4].colorSpeed, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[4].animate, 0.0, accuracy: 1e-9)
+        // xform 5: explicit color_speed wins; explicit animate wins (symmetry
+        // is NOT set so the legacy fallback doesn't fire).
+        XCTAssertEqual(f.xforms[5].colorSpeed, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(f.xforms[5].animate, 0.0, accuracy: 1e-9)
+    }
     func testMatchParamAttributeResolvesExactlyOneVariation() {
         // Every parametric attr resolves to exactly one variation; no prefix collisions
         // (fan2_ does NOT match fan_, rings2_ does NOT match rings_).

@@ -169,17 +169,35 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         // tail of flam3's xform array), matching flam3's exact default.
         x.color = attr["color"].flatMap { Double($0) } ?? Double(index & 1)
         // Prefer the explicit `color_speed` attribute (what we serialize); fall
-        // back to legacy `symmetry` (flam3/Apophysis) for imported genomes.
-        if let cs = attr["color_speed"].flatMap({ Double($0) }) { x.colorSpeed = cs }
-        else if let sym = attr["symmetry"].flatMap({ Double($0) }) { x.colorSpeed = 1 - sym }
-        else { x.colorSpeed = 0.5 }
+        // back to legacy `symmetry` (flam3/Apophesis) for imported genomes.
+        // flam3 parser.c:856-861: `symmetry` is DEPRECATED and sets BOTH
+        // `color_speed = (1 - sym) / 2` AND `animate = sym > 0 ? 0 : 1`. The
+        // legacy genomes (gen-169..243 edges + early sheep) use `symmetry`
+        // exclusively — without this faithful mapping they render with the
+        // wrong color blend (off by 2×) AND the wrong animate flag, breaking
+        // vs-flam3 parity by ~40 dB (CV6 real-genome gate on 242.00099).
+        if let cs = attr["color_speed"].flatMap({ Double($0) }) {
+            x.colorSpeed = cs
+        } else if let sym = attr["symmetry"].flatMap({ Double($0) }) {
+            x.colorSpeed = (1 - sym) / 2
+        } else {
+            x.colorSpeed = 0.5
+        }
         x.opacity = attr["opacity"].flatMap { Double($0) } ?? 1
         if let cf = attr["coefs"] { x.affine = parseAffine(cf) ?? .identity }
         if let pf = attr["post"] { x.postAffine = parseAffine(pf) ?? .identity }
         if let ch = attr["chaos"] { x.chaos = floats(ch) }
         // flam3 convention: `animate` is an xform attribute (0 => symmetry xform,
-        // rotation skipped). Absent => 1.0 (random default rotates).
-        x.animate = attr["animate"].flatMap { Double($0) } ?? 1.0
+        // rotation skipped). Absent => 1.0 (random default rotates). When the
+        // genome uses legacy `symmetry` AND omits `animate`, flam3 derives
+        // animate from symmetry (`sym > 0 ? 0 : 1` — parser.c:860).
+        if let an = attr["animate"].flatMap({ Double($0) }) {
+            x.animate = an
+        } else if let sym = attr["symmetry"].flatMap({ Double($0) }) {
+            x.animate = sym > 0 ? 0 : 1
+        } else {
+            x.animate = 1.0
+        }
         // flam3/Apophysis convention: variation weights are xform ATTRIBUTES
         // (e.g. `<xform linear="1" sinusoidal="0.5" .../>`). This is the ONLY
         // form flam3-render reads, so the frozen golden genomes (Task 12) MUST
