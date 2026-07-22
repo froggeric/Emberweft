@@ -68,17 +68,16 @@ final class RealGenomeParityTests: XCTestCase {
         ("electricsheep.248.00084", .gate),
         ("electricsheep.248.00256", .gate),
         ("electricsheep.248.00268", .gate),
-        // The 3 below all use unimplemented variations. The hp+sf fix is
-        // verified on them too (PSNR is printed); the gap is the missing
+        // The 1 below still uses unimplemented variations. The hp+sf fix is
+        // verified on it too (PSNR is printed); the gap is the missing
         // variation, NOT a ToneMapping / spatial-filter regression. Closing
-        // these gaps is a separate M3/M4 task (variations backlog), NOT in
-        // Task-6 scope.
+        // this gap is a separate M3/M4 task (variations backlog), NOT in
+        // Task-6 scope. (05739 + 31943 were flipped to `.gate` once `bubble`
+        // landed; 00000 stays gap until eyefish/pie/radial_blur land.)
         ("electricsheep.248.00000",
-         .knownGap(reason: "uses unimplemented variations: bubble, eyefish (alias of fisheye), pie, radial_blur")),
-        ("electricsheep.248.05739",
-         .knownGap(reason: "finalxform uses unimplemented variation: bubble (negative weight -0.714)")),
-        ("electricsheep.248.31943",
-         .knownGap(reason: "uses unimplemented variation: bubble")),
+         .knownGap(reason: "uses unimplemented variations: eyefish, pie, radial_blur")),
+        ("electricsheep.248.05739", .gate),
+        ("electricsheep.248.31943", .gate),
     ]
 
     private func repoRoot() -> URL {

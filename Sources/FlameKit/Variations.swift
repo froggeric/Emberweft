@@ -22,7 +22,9 @@ public enum Variations {
         // 14 special-sauce (M3): faithful ports of variations.c var21..var79
         "rings", "fan", "blob", "fan2", "rings2", "perspective", "julian",
         "juliascope", "ngon", "curl", "rectangles", "super_shape",
-        "wedge_julia", "wedge_sph"
+        "wedge_julia", "wedge_sph",
+        // var28_bubble: paramless, RNG-free
+        "bubble"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -331,6 +333,12 @@ public enum Variations {
         }
         // var29_cylinder: (sin(tx), ty)
         t["cylinder"]    = { p, w, _, _ in SIMD2(w * sin(p.x), w * p.y) }
+        // var28_bubble (variations.c:671-678): r = weight / (0.25*sumsq + 1);
+        //   (r*tx, r*ty). Paramless; 0 RNG draws.
+        t["bubble"]      = { p, w, _, _ in
+            let r = w / (0.25 * (p.x*p.x + p.y*p.y) + 1)
+            return SIMD2(r * p.x, r * p.y)
+        }
 
         // ---- 14 special-sauce (M3): line-for-line ports of variations.c ----
 
@@ -477,9 +485,9 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 33-name authority: M1's 19 + the 14 special-sauce). Only `julia`
-    /// consumes the RNG; with a single RNG-consuming variation, canonical-order
-    /// iteration is RNG-equivalent to CPU genome-order.
+    /// (the 34-name authority: M1's 19 + the 14 special-sauce + bubble). Only
+    /// `julia` consumes the RNG; with a single RNG-consuming variation,
+    /// canonical-order iteration is RNG-equivalent to CPU genome-order.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -496,9 +504,9 @@ public extension Variations {
     ///     with ≥3 active variations would diverge from CPU by FP-associativity
     ///     ULPs — still inside the statistical-parity envelope, not a bug.
     ///
-    /// Slots 19..32 are the special-sauce set; `apply_xform_body` reads them
-    /// positionally and pulls their params from `varParams[slot*8 + idx]`. The
-    /// MSL if-chain is now 33 lines (`Kernels.metal`) and the 14 `v_<name>`
-    /// functions landed in Task 6.
+    /// Slots 19..32 are the special-sauce set; slot 33 is `bubble` (var28,
+    /// paramless). `apply_xform_body` reads them positionally and pulls their
+    /// params from `varParams[slot*8 + idx]`. The MSL if-chain is now 34 lines
+    /// (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

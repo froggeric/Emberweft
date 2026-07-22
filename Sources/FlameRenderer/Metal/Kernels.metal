@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+33+(33*8) = 312 floats = 1248 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+34+(34*8) = 321 floats = 1284 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 33
+#define NUM_XFORM_SLOTS_MS 34
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 33
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 33*8 = 264
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 34
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 34*8 = 272
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 33 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 34 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 33 variation terms (canonical slot order). Each returns the term that CPU
+// 34 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -198,6 +198,12 @@ static inline float2 v_cosine(float2 p, float w) {
     return float2(w * cos(p.x * M_PI_F) * cosh(p.y), w * (-sin(p.x * M_PI_F)) * sinh(p.y));
 }
 static inline float2 v_cylinder(float2 p, float w) { return float2(w * sin(p.x), w * p.y); }
+// var28_bubble (variations.c:671-678): r = w/(0.25*sumsq + 1); (r*p.x, r*p.y).
+// Paramless; 0 RNG draws.
+static inline float2 v_bubble(float2 p, float w) {
+    float r = w / (0.25f * (p.x*p.x + p.y*p.y) + 1.0f);
+    return float2(r * p.x, r * p.y);
+}
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
     return float2(w * sin(a) * cos(r), w * cos(a) * sin(r));
@@ -431,7 +437,7 @@ static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
     return float2(r * cos(a), r * sin(a));
 }
 
-// Sum the 33 canonical slots. julian/juliascope/super_shape/wedge_julia also
+// Sum the 34 canonical slots. julian/juliascope/super_shape/wedge_julia also
 // consume the RNG (one isaac_01 each); super_shape draws UNCONDITIONALLY.
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
@@ -442,8 +448,8 @@ static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
 static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
     float2 pre = apply_affine(x, p);
     float2 acc = float2(0.0f);
-    float w[33];
-    for (int i = 0; i < 33; i++) w[i] = x.varWeights[i];
+    float w[NUM_XFORM_SLOTS_MS];
+    for (int i = 0; i < NUM_XFORM_SLOTS_MS; i++) w[i] = x.varWeights[i];
     if (w[0]  != 0.0f) acc += v_bent(pre, w[0]);
     if (w[1]  != 0.0f) acc += v_cosine(pre, w[1]);
     if (w[2]  != 0.0f) acc += v_cylinder(pre, w[2]);
@@ -480,6 +486,8 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[30] != 0.0f) acc += v_super_shape(pre, w[30], &x.varParams[30*SLOT_WIDTH_MS], rng);
     if (w[31] != 0.0f) acc += v_wedge_julia(pre, w[31], &x.varParams[31*SLOT_WIDTH_MS], rng);
     if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]);
+    // slot 33 — bubble (var28_bubble, paramless, RNG-free)
+    if (w[33] != 0.0f) acc += v_bubble(pre, w[33]);
     return apply_post(x, acc);
 }
 

@@ -78,6 +78,8 @@ final class SpecialSauceParityTests: XCTestCase {
     @MainActor func testWedgeSph() throws      { try assertParity("wedge_sph", ["wedge_sph_angle": 0.05, "wedge_sph_count": 3, "wedge_sph_hole": 0.0, "wedge_sph_swirl": 0.1]) }
     @MainActor func testSpherical() throws     { try assertParity("spherical", [:]) }
     @MainActor func testPolar() throws         { try assertParity("polar", [:]) }
+    // var28_bubble: paramless, 0 RNG draws. Simplest Metal↔CPU parity case.
+    @MainActor func testBubble() throws        { try assertParity("bubble", [:]) }
 
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must

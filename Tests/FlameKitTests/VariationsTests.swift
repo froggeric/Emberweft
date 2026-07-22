@@ -37,6 +37,19 @@ final class VariationsTests: XCTestCase {
     func testBentMatchesFlam3() {
         XCTAssertEqual(eval("bent", SIMD2(-1, -4)), SIMD2<Double>(-2, -2), accuracy: 1e-6)
     }
+    // var28_bubble (variations.c:671-678): r = weight / (0.25*sumsq + 1);
+    //   (r*tx, r*ty). Paramless; 0 RNG draws.
+    func testBubble() {
+        // Hand-traced: sumsq = 0.6² + 0.8² = 1.0 → r = 1/(0.25+1) = 0.8 → (0.48, 0.64)
+        XCTAssertEqual(eval("bubble", SIMD2(0.6, 0.8), 1.0), SIMD2<Double>(0.48, 0.64), accuracy: 1e-9)
+        // Origin: sumsq=0 → r = w → output = w*p (maps origin to itself).
+        XCTAssertEqual(eval("bubble", SIMD2(0, 0), 1.0), SIMD2<Double>.zero, accuracy: 1e-9)
+        // Weight folds into r: 2.0 at (0.3,0.4): sumsq=0.25 → r=2/(1.0625);
+        //   out = (r*0.3, r*0.4)
+        let p = SIMD2<Double>(0.3, 0.4)
+        let r = 2.0 / (0.25 * (p.x*p.x + p.y*p.y) + 1.0)
+        XCTAssertEqual(eval("bubble", p, 2.0), SIMD2<Double>(r*p.x, r*p.y), accuracy: 1e-9)
+    }
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")
