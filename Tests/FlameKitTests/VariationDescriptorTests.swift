@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 49)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 49, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 52)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 52, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -122,6 +122,27 @@ final class VariationDescriptorTests: XCTestCase {
         let expected: [(String, Int)] = [
             ("noise", 44), ("blur", 45), ("gaussian_blur", 46),
             ("arch", 47), ("square", 48),
+        ]
+        for (name, slot) in expected {
+            let d = VariationDescriptor.descriptor(for: name)
+            XCTAssertNotNil(d, name)
+            XCTAssertTrue(d!.parameters.isEmpty, "\(name): must be paramless")
+            XCTAssertTrue(d!.defaults.isEmpty, "\(name): no defaults (paramless)")
+            XCTAssertTrue(d!.rest.isEmpty, "\(name): no special-sauce rest")
+            XCTAssertEqual(VariationDescriptor.canonicalSlot(for: name), slot,
+                           "\(name): expected slot \(slot)")
+        }
+    }
+
+    /// var44_rays / var45_blade / var47_twintrian (Task 4 CV4): 3 RNG-consuming
+    /// paramless variations with Inf/badvalue hazards. All paramless (no XML
+    /// params), each exactly 1 isaac_01 draw. Slot indices 49..51 immediately
+    /// follow the RNG simple set (44..48). rays is un-guarded tan(ang); twintrian
+    /// has the badvalue→-30.0 replacement on log10(sinr²)+cosr (both CPU+Metal).
+    func testRngInfBadvalueSlotsAreParamlessAt49to51() {
+        // rays=1 draw, blade=1 draw, twintrian=1 draw.
+        let expected: [(String, Int)] = [
+            ("rays", 49), ("blade", 50), ("twintrian", 51),
         ]
         for (name, slot) in expected {
             let d = VariationDescriptor.descriptor(for: name)

@@ -62,7 +62,17 @@ public enum Variations {
         "arch",
         // var43_square: 2 isaac_01 draws; output bounded in [-w/2, w/2]².
         // RNG-consuming → lives in `evaluate`'s switch.
-        "square"
+        "square",
+        // var44_rays: 1 isaac_01 draw; UN-GUARDED tan(ang) (ang=w*d1*π).
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "rays",
+        // var45_blade: 1 isaac_01 draw; p0=w*tx*(cosr+sinr), p1=w*tx*(cosr-sinr).
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "blade",
+        // var47_twintrian: 1 isaac_01 draw; BADVALUE-GUARDED log10(sinr²)+cosr
+        // (→ -30.0 when NaN/Inf/|x|>1e10). RNG-consuming → lives in `evaluate`'s
+        // switch.
+        "twintrian"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -85,8 +95,9 @@ public enum Variations {
     /// coefficient-dependent variations: `rings`/`fan` (use e,f;
     /// variations.c:521,543), `waves` (uses c,d,e,f; variations.c:405-409),
     /// `popcorn` (uses e,f; variations.c:442-446). `rng` is threaded for the
-    /// twelve RNG-consuming variations (julia/julian/juliascope/super_shape/
-    /// wedge_julia/pie/radial_blur/noise/blur/gaussian_blur/arch/square):
+    /// fifteen RNG-consuming variations (julia/julian/juliascope/super_shape/
+    /// wedge_julia/pie/radial_blur/noise/blur/gaussian_blur/arch/square/
+    /// rays/blade/twintrian):
     /// julia/julian/juliascope/super_shape/wedge_julia each draw one
     /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
     /// `isaac_01` words in flam3's exact order (slice → angular → radial);
@@ -96,7 +107,9 @@ public enum Variations {
     /// `blur`, which is NOT input-scaled); `blur` draws two (angle, radius);
     /// `gaussian_blur` draws five (1 angle + 4-sum into `weight*(Σ-2)`);
     /// `arch` draws one (angle, scaled by `weight*π`); `square` draws two
-    /// (independent for p0 and p1).
+    /// (independent for p0 and p1); `rays` draws one (angle, un-guarded tan);
+    /// `blade` draws one (r = d1*w*sqrt; both p0,p1 use tx); `twintrian` draws
+    /// one (r = d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr → -30.0).
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -127,6 +140,12 @@ public enum Variations {
                 term = arch(p, weight: v.weight, rng: &rng)
             case "square":
                 term = square(p, weight: v.weight, rng: &rng)
+            case "rays":
+                term = rays(p, weight: v.weight, rng: &rng)
+            case "blade":
+                term = blade(p, weight: v.weight, rng: &rng)
+            case "twintrian":
+                term = twintrian(p, weight: v.weight, rng: &rng)
             case "super_shape":
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
@@ -353,6 +372,78 @@ public enum Variations {
         let d1 = rng.isaac01()                                     // draw #1 (p0)
         let d2 = rng.isaac01()                                     // draw #2 (p1)
         return SIMD2(weight * (d1 - 0.5), weight * (d2 - 0.5))
+    }
+
+    /// flam3 `var44_rays` (variations.c:915-944). Consumes ONE
+    /// `flam3_random_isaac_01` word, with UN-GUARDED `tan(ang)`:
+    ///   ang  = weight * d1 * π                                  // draw #1 (angle)
+    ///   r    = weight / (precalc_sumsq + EPS)                  // sumsq = tx²+ty²; EPS guard
+    ///   tanr = weight * tan(ang) * r                            // UN-GUARDED (ang=π/2+kπ → Inf)
+    ///   p0 += tanr * cos(tx);   p1 += tanr * sin(ty)
+    /// The `cos(tx)`/`sin(ty)` are over the INPUT POINT, not the drawn angle —
+    /// the only role of the drawn `ang` is to feed `tan`. NO per-term finiteness
+    /// guard on `tanr` — match flam3 (the chaos game's post-affine badvalue
+    /// check handles Inf downstream, redrawing). `p` is UNUSED for output
+    /// scaling beyond the cos/sin factors (rays's output IS input-dependent,
+    /// unlike arch/blur/square — it uses p.x in cos, p.y in sin, and p in sumsq).
+    private static func rays(_ p: SIMD2<Double>, weight: Double,
+                             rng: inout ISAAC) -> SIMD2<Double> {
+        let d1 = rng.isaac01()                                     // draw #1 (angle)
+        let ang = weight * d1 * .pi
+        let sumsq = p.x*p.x + p.y*p.y                              // precalc_sumsq
+        let r = weight / (sumsq + 1e-10)                           // EPS guard
+        let tanr = weight * tan(ang) * r                           // UN-GUARDED
+        return SIMD2(tanr * cos(p.x),
+                     tanr * sin(p.y))
+    }
+
+    /// flam3 `var45_blade` (variations.c:946-974). Consumes ONE
+    /// `flam3_random_isaac_01` word:
+    ///   r = d1 * weight * precalc_sqrt;  sincos(r, &sinr, &cosr)   // draw #1
+    ///   p0 += weight * tx * (cosr + sinr)
+    ///   p1 += weight * tx * (cosr - sinr)
+    /// NOTE: both p0 AND p1 use `tx` (NOT ty for p1) — surprising but verbatim
+    /// from flam3. Bounded output (no poles) → the orbit is well-behaved at
+    /// any weight.
+    private static func blade(_ p: SIMD2<Double>, weight: Double,
+                              rng: inout ISAAC) -> SIMD2<Double> {
+        let d1 = rng.isaac01()                                     // draw #1
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let r = d1 * weight * precalcSqrt
+        let sinr = sin(r)
+        let cosr = cos(r)
+        return SIMD2(weight * p.x * (cosr + sinr),
+                     weight * p.x * (cosr - sinr))                // BOTH use tx
+    }
+
+    /// flam3 `var47_twintrian` (variations.c:998-1031). Consumes ONE
+    /// `flam3_random_isaac_01` word, with a BADVALUE GUARD on `log10(sinr²)`:
+    ///   r = d1 * weight * precalc_sqrt;  sincos(r, &sinr, &cosr)   // draw #1
+    ///   diff = log10(sinr * sinr) + cosr                          // → -Inf when sinr≈0
+    ///   if (badvalue(diff)) diff = -30.0                          // CRITICAL — both CPU+Metal
+    ///   p0 += weight * tx * diff
+    ///   p1 += weight * tx * (diff - sinr * π)
+    /// `badvalue(x)` is flam3's macro: `(x != x) || (x > 1e10) || (x < -1e10)`
+    /// (variations.c:22) — covers NaN, ±Inf, and any |x| > 1e10. The Metal
+    /// `badvalue_ms` mirror uses the same BAD_MS=1e10 threshold (Kernels.metal).
+    /// The replacement is load-bearing: without it, `log10(0)` returns -Inf
+    /// whenever `sinr*sinr` underflows (sub-|p.x| ≈ 1e-162 → sinr² ≈ 0), and the
+    /// orbit diverges. NOTE: both p0 AND p1 use `tx` (NOT ty for p1).
+    private static func twintrian(_ p: SIMD2<Double>, weight: Double,
+                                  rng: inout ISAAC) -> SIMD2<Double> {
+        let d1 = rng.isaac01()                                     // draw #1
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let r = d1 * weight * precalcSqrt
+        let sinr = sin(r)
+        let cosr = cos(r)
+        var diff = log10(sinr * sinr) + cosr
+        // flam3's badvalue(x) = (x != x) || (x > 1e10) || (x < -1e10) — covers NaN,
+        // +Inf, -Inf, and any |x| > 1e10. Mirrored verbatim
+        // (variations.c:22 + 1024-1026). The Metal `badvalue_ms` mirror uses
+        // the same BAD_MS=1e10 threshold.
+        if diff != diff || diff > 1e10 || diff < -1e10 { diff = -30.0 }
+        return SIMD2(weight * p.x * diff,
+                     weight * p.x * (diff - sinr * .pi))           // BOTH use tx
     }
 
     /// flam3 `var50_supershape` (variations.c:1093-1117) + `supershape_precalc`
@@ -791,14 +882,15 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 49-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 52-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
-    /// noise/blur/gaussian_blur/arch/square).
+    /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian).
     ///
-    /// RNG-EQUIVALENCE NOTE: twelve variations consume the ISAAC stream
+    /// RNG-EQUIVALENCE NOTE: fifteen variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/
-    /// blur/gaussian_blur/arch/square). CPU `evaluate` walks an xform's
-    /// variations in ARRAY order, which the parser sorts ALPHABETICALLY
+    /// blur/gaussian_blur/arch/square/rays/blade/twintrian). CPU `evaluate`
+    /// walks an xform's variations in ARRAY order, which the parser sorts
+    /// ALPHABETICALLY
     /// (Flam3Parser.swift:223); Metal `apply_xform_body` walks them in
     /// CANONICAL-SLOT order (the if-chain at Kernels.metal). For the RNG-
     /// alignment coincidence to hold, the canonical slots of the RNG-consuming
@@ -807,18 +899,22 @@ public extension Variations {
     /// (slots ascending) — but that test does NOT pin the alphabetical↔slot
     /// coincidence. The current set {julia(12), julian(25), juliascope(26),
     /// super_shape(30), wedge_julia(31), pie(35), radial_blur(36), blur(45),
-    /// gaussian_blur(46), noise(44), arch(47), square(48)} is alphabetical
-    /// == slot order EXCEPT for pie and radial_blur: pie sits alphabetically
-    /// between juliascope and super_shape but at slot 35 (after wedge_julia);
-    /// radial_blur sits alphabetically between pie and super_shape but at slot
-    /// 36 (also after wedge_julia). The two orderings therefore diverge for an
-    /// xform containing pie AND {super_shape,wedge_julia,julia,julian,juliascope},
-    /// OR radial_blur AND {super_shape,wedge_julia,julia,julian,juliascope} —
-    /// no frozen/fuzz/real-fixture genome has either combination (verified: in
-    /// the real genome 00000 the only pie xform is [linear, pie] and the only
-    /// radial_blur xform is [linear, eyefish, bubble, radial_blur]). The
-    /// divergence is the load-bearing assumption to re-check if a future genome
-    /// violates it.
+    /// gaussian_blur(46), noise(44), arch(47), square(48), rays(49), blade(50),
+    /// twintrian(51)} is alphabetical == slot order EXCEPT for pie, radial_blur,
+    /// and the new rays/blade/twintrian trio: pie sits alphabetically between
+    /// juliascope and super_shape but at slot 35 (after wedge_julia); radial_blur
+    /// sits alphabetically between pie and super_shape but at slot 36 (also after
+    /// wedge_julia); blade (slot 50) sits alphabetically BEFORE blur (slot 45);
+    /// rays (slot 49) sits alphabetically BETWEEN radial_blur (slot 36) and square
+    /// (slot 48); twintrian (slot 51) sits alphabetically BETWEEN square (48) and
+    /// wedge_julia (31). The two orderings therefore diverge for an xform
+    /// containing pie AND {super_shape,wedge_julia,julia,julian,juliascope},
+    /// OR radial_blur AND {super_shape,wedge_julia,julia,julian,juliascope},
+    /// OR any of {rays,blade,twintrian} AND any earlier-slot RNG variation —
+    /// no frozen/fuzz/real-fixture genome has any of these combinations (the new
+    /// 3 are not yet used by any fixture genome; Task 6 CV6 will gate them as
+    /// single-variation fixtures). The divergence is the load-bearing assumption
+    /// to re-check if a future genome violates it.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -851,8 +947,14 @@ public extension Variations {
     /// 5 draws: 1 angle + 4-sum into w*(Σ-2)), `arch` (var41, 1 draw, un-guarded
     /// sinr²/cosr — NO per-term guard, matches flam3), `square` (var43, 2 draws,
     /// bounded in [-w/2, w/2]²; RNG not paramless despite the name).
+    /// Slots 49..51 are the corpus-variations RNG + Inf/badvalue care set:
+    /// `rays` (var44, 1 draw, un-guarded tan(ang) — ang=w*d1*π has a pole at
+    /// ang=π/2+kπ; no per-term guard, matches flam3), `blade` (var45, 1 draw;
+    /// both p0 and p1 use tx, NOT ty for p1), `twintrian` (var47, 1 draw,
+    /// badvalue-guarded log10(sinr²)+cosr → -30.0 when NaN/Inf/|x|>1e10 —
+    /// the load-bearing care item, mirrored verbatim in BOTH CPU+Metal).
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 49 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 52 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

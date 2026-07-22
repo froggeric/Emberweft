@@ -216,6 +216,38 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("square", [:], weight: 0.4)
     }
 
+    // ---- corpus-variations RNG + Inf/badvalue care set (slots 49..51).
+    // All paramless, RNG-consuming (exactly 1 isaac_01 draw each). The PSNR is
+    // the real RNG-parity oracle: a draw-count or draw-order mismatch collapses
+    // PSNR well below 38 (the CPU VariationsTests draw-count + closed-form tests
+    // pin the count and order, ruling that out). ----
+
+    // var44_rays (variations.c:915-944): 1 isaac_01 draw; UN-GUARDED tan(ang).
+    // ang = d1*w*π has a pole at d1=1/(2w) (ang=π/2) where tan→±Inf. weight=0.4
+    // keeps ang ∈ [0, 0.4π] ≈ [0, 1.26] rad, well clear of the π/2 pole (same
+    // chaos-taming precedent as radial_blur/tangent/arch). r = w/(sumsq+EPS) is
+    // EPS-guarded (finite unless sumsq is astronomically large); tanr = w*tan(ang)*r
+    // can still be Inf at the pole — match flam3 (NO per-term guard; the chaos
+    // game's post-affine badvalue check handles Inf downstream). Paramless.
+    @MainActor func testRays() throws {
+        try assertParity("rays", [:], weight: 0.4)
+    }
+    // var45_blade (variations.c:946-974): 1 isaac_01 draw; r = d1*w*sqrt (bounded
+    // for finite input); p0 = w*tx*(cosr+sinr), p1 = w*tx*(cosr-sinr). No poles,
+    // bounded orbit → weight=1 is safe. Kept at 0.4 for consistency with the rest
+    // of the RNG set.
+    @MainActor func testBlade() throws {
+        try assertParity("blade", [:], weight: 0.4)
+    }
+    // var47_twintrian (variations.c:998-1031): 1 isaac_01 draw; BADVALUE-GUARDED
+    // log10(sinr²)+cosr → -30.0 when NaN/Inf/|x|>1e10 (BOTH CPU+Metal — the
+    // load-bearing care item, pinned by testTwintrianBadvalueReplacementFires).
+    // The guard keeps diff finite, so the orbit stays bounded. weight=0.4 for
+    // consistency (same chaos-taming precedent as the rest of the RNG set).
+    @MainActor func testTwintrian() throws {
+        try assertParity("twintrian", [:], weight: 0.4)
+    }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

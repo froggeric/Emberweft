@@ -755,6 +755,182 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, expected, accuracy: 1e-12)
     }
 
+    // MARK: - corpus-variations RNG + Inf/badvalue care set (slots 49..51).
+    // Hand-traced closed forms + draw-count invariants for the 3 RNG-consuming
+    // variations rays/blade/twintrian. Each pins BOTH the draw COUNT (exactly 1)
+    // AND the exact draw ORDER — any reorder diverges the ISAAC stream. Plus a
+    // dedicated test proving the twintrian badvalue→-30.0 replacement fires.
+
+    // var44_rays (variations.c:915-944): ONE isaac_01 draw, UN-GUARDED tan(ang):
+    //   ang  = weight * d1 * π                            // draw #1 (angle)
+    //   r    = weight / (sumsq + EPS)                     // sumsq = tx²+ty²; EPS guard
+    //   tanr = weight * tan(ang) * r                      // UN-GUARDED (ang=π/2+kπ → Inf)
+    //   p0 += tanr * cos(tx);  p1 += tanr * sin(ty)
+    // Note the surprising cos(tx)/sin(ty) (NOT cos(ang)/sin(ang)) — the angle draw
+    // only enters via tan(ang); the input point enters via cos/sin. NO per-term
+    // guard on tanr — match flam3 (the chaos game's post-affine badvalue check
+    // handles Inf downstream, redrawing).
+    func testRaysDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "rays", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        // rays consumed exactly 1 word (angle) from rng1.
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "rays x not finite")
+        XCTAssertTrue(out.y.isFinite, "rays y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "rays must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for rays: 1 draw (angle), then r=w/(sumsq+EPS), tanr=w*tan(ang)*r,
+    /// output = (tanr*cos(tx), tanr*sin(ty)). Pins count (1), order (angle is the
+    /// only draw), and the un-guarded tan structure.
+    func testRaysClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "rays-closed-form")
+        var rng2 = ISAAC(isaacSeed: "rays-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let out = Variations.evaluate(
+            [Variation(name: "rays", weight: weight, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                      // draw #1 (angle)
+        let ang = weight * d1 * .pi
+        let sumsq = p.x*p.x + p.y*p.y
+        let r = weight / (sumsq + 1e-10)                             // EPS = 1e-10
+        let tanr = weight * tan(ang) * r                             // UN-GUARDED
+        let expected = SIMD2<Double>(tanr * cos(p.x),
+                                     tanr * sin(p.y))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var45_blade (variations.c:946-974): ONE isaac_01 draw:
+    //   r = d1 * weight * precalc_sqrt;  sincos(r, &sinr, &cosr)   // draw #1
+    //   p0 += weight * tx * (cosr + sinr)
+    //   p1 += weight * tx * (cosr - sinr)
+    // NOTE: both p0 AND p1 use `tx` (NOT ty for p1). Easy to typo as ty.
+    func testBladeDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "blade", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "blade x not finite")
+        XCTAssertTrue(out.y.isFinite, "blade y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "blade must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for blade: 1 draw (r = d1*w*sqrt), then (w*tx*(cosr+sinr),
+    /// w*tx*(cosr-sinr)). Note BOTH terms use tx. Pins count (1), order, formula.
+    func testBladeClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "blade-closed-form")
+        var rng2 = ISAAC(isaacSeed: "blade-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let out = Variations.evaluate(
+            [Variation(name: "blade", weight: weight, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                      // draw #1
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let r = d1 * weight * precalcSqrt
+        let sinr = sin(r), cosr = cos(r)
+        let expected = SIMD2<Double>(weight * p.x * (cosr + sinr),
+                                     weight * p.x * (cosr - sinr))   // BOTH use tx
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var47_twintrian (variations.c:998-1031): ONE isaac_01 draw, BADVALUE-GUARDED:
+    //   r = d1 * weight * precalc_sqrt;  sincos(r, &sinr, &cosr)   // draw #1
+    //   diff = log10(sinr*sinr) + cosr                              // log10(sinr²)→-Inf at sinr≈0
+    //   if (badvalue(diff)) diff = -30.0                            // CRITICAL — see test below
+    //   p0 += weight * tx * diff
+    //   p1 += weight * tx * (diff - sinr * π)
+    // The badvalue→-30.0 replacement is the load-bearing care item: both CPU AND
+    // Metal must replicate it EXACTLY (or the orbit diverges). Pinned by
+    // `testTwintrianBadvalueReplacementFires` below.
+    func testTwintrianDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "twintrian", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "twintrian x not finite")
+        XCTAssertTrue(out.y.isFinite, "twintrian y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "twintrian must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for twintrian: 1 draw, then badvalue-guarded diff computation.
+    /// Pins count (1), order, the log10(sinr²)+cosr formula, the badvalue→-30.0
+    /// replacement (mirrored verbatim from flam3 variations.c:1024-1026), AND the
+    /// surprising `tx` in BOTH p0 and p1.
+    func testTwintrianClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "twintrian-closed-form")
+        var rng2 = ISAAC(isaacSeed: "twintrian-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let out = Variations.evaluate(
+            [Variation(name: "twintrian", weight: weight, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                      // draw #1
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let r = d1 * weight * precalcSqrt
+        let sinr = sin(r), cosr = cos(r)
+        var diff = log10(sinr * sinr) + cosr
+        // flam3's badvalue(x) = (x != x) || (x > 1e10) || (x < -1e10) — covers NaN,
+        // +Inf, -Inf, and any |x| > 1e10. Mirrored verbatim (variations.c:22 + 1025).
+        if diff != diff || diff > 1e10 || diff < -1e10 { diff = -30.0 }
+        let expected = SIMD2<Double>(weight * p.x * diff,
+                                     weight * p.x * (diff - sinr * .pi))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    /// PROOF that the twintrian badvalue→-30.0 replacement fires (the load-bearing
+    /// care item). Constructs an input where `sinr` is small enough that
+    /// `sinr*sinr` UNDERFLOWS to +0 (sub-eps: |p.x| = 1e-200 → precalc_sqrt = 1e-200
+    /// → r ≈ d1*1e-200 ≈ 1e-200 → sinr ≈ 1e-200 → sinr² underflows to +0 →
+    /// log10(+0) = -Inf → diff = -Inf → badvalue fires → diff = -30.0).
+    ///
+    /// Without the guard: output would be (1e-200 * -Inf, ...) = (-Inf, -Inf).
+    /// With the guard: output is (1e-200 * -30, ...) ≈ (-3e-199, -3e-199) — FINITE.
+    /// So asserting finiteness + exact-equality-with-the-guarded-form proves the
+    /// replacement fired in BOTH form and value.
+    ///
+    /// Asserts the SAME replacement semantics as flam3's `badvalue(diff)` macro
+    /// (NaN/Inf/|x|>1e10 → -30.0); the Metal `badvalue_ms` mirror uses the same
+    /// threshold (BAD_MS = 1e10), so a Metal-only OR CPU-only guard would fail
+    /// this test (or its Metal↔CPU parity test in SpecialSauceParityTests).
+    func testTwintrianBadvalueReplacementFires() {
+        var rng = ISAAC(isaacSeed: "twintrian-badvalue")
+        // |p.x| = 1e-200 → precalc_sqrt = 1e-200 → sinr² underflows → log10(0) = -Inf.
+        let p = SIMD2<Double>(1e-200, 0)
+        let out = Variations.evaluate(
+            [Variation(name: "twintrian", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng)
+        // Verify the un-guarded precondition: diff would be -Inf/NaN.
+        var rngRef = ISAAC(isaacSeed: "twintrian-badvalue")
+        let d1 = rngRef.isaac01()
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()      // = 1e-200
+        let r = d1 * 1.0 * precalcSqrt
+        let sinr = sin(r)                                       // ≈ 1e-200 (small-angle)
+        let cosr = cos(r)                                       // ≈ 1
+        let diffUnguarded = log10(sinr * sinr) + cosr           // log10(0) = -Inf
+        XCTAssertTrue(diffUnguarded.isInfinite || diffUnguarded.isNaN,
+                      "precondition: un-guarded diff must be -Inf/NaN here; got \(diffUnguarded)")
+        // The replacement makes the output FINITE — proves the guard fired.
+        XCTAssertTrue(out.x.isFinite,
+                      "twintrian x must be finite (badvalue→-30.0 replacement); got \(out.x)")
+        XCTAssertTrue(out.y.isFinite,
+                      "twintrian y must be finite (badvalue→-30.0 replacement); got \(out.y)")
+        // And specifically: the output EQUALS the guarded formula with diff = -30.0
+        // (not just any finite value) — pins the exact replacement constant.
+        let diffGuarded = -30.0
+        let expected = SIMD2<Double>(1.0 * p.x * diffGuarded,
+                                     1.0 * p.x * (diffGuarded - sinr * .pi))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

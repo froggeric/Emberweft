@@ -1,16 +1,17 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 49-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 52-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
-/// noise/blur/gaussian_blur/arch/square; spherical/polar counted once),
+/// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian;
+/// spherical/polar counted once),
 /// per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 49-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 52-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -20,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 49-device-slot layout) ----
-    /// Fixed 49-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 52-device-slot layout) ----
+    /// Fixed 52-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -33,7 +34,10 @@ public struct VariationDescriptor: Sendable {
     /// RNG simple set: `noise` (var31, 2 draws, INPUT-SCALED), `blur` (var34,
     /// 2 draws, NOT input-scaled), `gaussian_blur` (var35, 5 draws), `arch`
     /// (var41, 1 draw, un-guarded sinr²/cosr), `square` (var43, 2 draws) at
-    /// slots 44..48.
+    /// slots 44..48; then the corpus-variations RNG + Inf/badvalue care set:
+    /// `rays` (var44, 1 draw, un-guarded tan(ang)), `blade` (var45, 1 draw),
+    /// `twintrian` (var47, 1 draw, badvalue→-30.0 guard on log10(sinr²)+cosr)
+    /// at slots 49..51.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -94,8 +98,18 @@ public struct VariationDescriptor: Sendable {
         "arch",
         // var43_square: 2 draws; output bounded in [-w/2, w/2]² (indep of input).
         "square",
+        // --- corpus-variations RNG + Inf/badvalue care set (slots 49..51). All
+        //     paramless; exactly 1 isaac_01 draw each. Verified formulas against
+        //     /private/tmp/flam3-build/variations.c (Task 4 CV4). ---
+        // var44_rays: 1 draw; UN-GUARDED tan(ang) (ang=w*d1*π → Inf at ang=π/2+kπ).
+        "rays",
+        // var45_blade: 1 draw; r=d1*w*sqrt, p0=w*tx*(cosr+sinr), p1=w*tx*(cosr-sinr).
+        "blade",
+        // var47_twintrian: 1 draw; BADVALUE-GUARDED log10(sinr²)+cosr → -30.0
+        // (BOTH CPU+Metal — the load-bearing care item).
+        "twintrian",
     ]
-    /// Canonical device-slot index for a variation name (0..<49), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<52), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -193,6 +207,15 @@ public struct VariationDescriptor: Sendable {
         d("arch", [], [:])
         // var43_square (2 draws, bounded in [-w/2, w/2]²)
         d("square", [], [:])
+        // --- corpus-variations RNG + Inf/badvalue care set (slots 49..51). All
+        //     paramless; exactly 1 isaac_01 draw each → live in `evaluate`'s
+        //     switch, NOT the table. ---
+        // var44_rays (1 draw, un-guarded tan(ang))
+        d("rays", [], [:])
+        // var45_blade (1 draw; both p0,p1 use tx)
+        d("blade", [], [:])
+        // var47_twintrian (1 draw, badvalue→-30.0 on log10(sinr²)+cosr)
+        d("twintrian", [], [:])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

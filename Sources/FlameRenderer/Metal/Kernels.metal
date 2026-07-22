@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+49+(49*8) = 456 floats = 1824 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+52+(52*8) = 483 floats = 1932 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 49
+#define NUM_XFORM_SLOTS_MS 52
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 49
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 49*8 = 392
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 52
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 52*8 = 416
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 49 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 52 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 49 variation terms (canonical slot order). Each returns the term that CPU
+// 52 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -357,6 +357,61 @@ static inline float2 v_square(float2 p, float w, thread IsaacState& rng) {
     float d1 = isaac_01(rng);                          // draw #1 (p0)
     float d2 = isaac_01(rng);                          // draw #2 (p1)
     return float2(w * (d1 - 0.5f), w * (d2 - 0.5f));
+}
+// var44_rays (variations.c:915-944). ONE isaac_01 draw, UN-GUARDED tan(ang):
+//   ang  = w * d1 * π                                       // draw #1 (angle)
+//   r    = w / (sumsq + EPS)                                // sumsq = tx²+ty²; EPS guard
+//   tanr = w * tan(ang) * r                                 // UN-GUARDED (ang=π/2+kπ → Inf)
+//   (tanr * cos(tx), tanr * sin(ty))
+// The cos(tx)/sin(ty) are over the INPUT POINT (not the drawn angle). NO
+// per-term guard on tanr — match flam3 (cosr=0 → Inf; the chaos game's
+// post-affine badvalue check handles Inf downstream). Paramless; RNG-consuming.
+static inline float2 v_rays(float2 p, float w, thread IsaacState& rng) {
+    float d1 = isaac_01(rng);                          // draw #1 (angle)
+    float ang = w * d1 * M_PI_F;
+    float sumsq = p.x*p.x + p.y*p.y;                   // precalc_sumsq
+    float r = w / (sumsq + EPS_MS);                    // EPS guard
+    float tanr = w * tan(ang) * r;                     // UN-GUARDED
+    return float2(tanr * cos(p.x),
+                  tanr * sin(p.y));
+}
+// var45_blade (variations.c:946-974). ONE isaac_01 draw:
+//   r = d1 * w * precalc_sqrt;  sincos(r, &sinr, &cosr)     // draw #1
+//   p0 += w * tx * (cosr + sinr)
+//   p1 += w * tx * (cosr - sinr)
+// NOTE: both p0 AND p1 use `tx` (NOT ty for p1). Bounded output (no poles).
+// Paramless; RNG-consuming.
+static inline float2 v_blade(float2 p, float w, thread IsaacState& rng) {
+    float d1 = isaac_01(rng);                          // draw #1
+    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float r = d1 * w * precalc_sqrt;
+    float sinr = sin(r);
+    float cosr = cos(r);
+    return float2(w * p.x * (cosr + sinr),
+                  w * p.x * (cosr - sinr));            // BOTH use tx
+}
+// var47_twintrian (variations.c:998-1031). ONE isaac_01 draw, BADVALUE-GUARDED:
+//   r = d1 * w * precalc_sqrt;  sincos(r, &sinr, &cosr)     // draw #1
+//   diff = log10(sinr*sinr) + cosr                          // → -Inf when sinr≈0
+//   if (badvalue(diff)) diff = -30.0                        // CRITICAL — see below
+//   p0 += w * tx * diff
+//   p1 += w * tx * (diff - sinr * π)
+// The badvalue→-30.0 replacement is LOAD-BEARING for CPU↔Metal parity: without
+// it, `log10(0)` returns -Inf whenever `sinr*sinr` underflows (sub-|p| ≈ 1e-162
+// → sinr² → +0), and the orbit diverges. The CPU Variations.twintrian mirrors
+// the EXACT same replacement using flam3's `badvalue(x) = (x != x) || (x > 1e10)
+// || (x < -1e10)` (BAD_MS = 1e10). NOTE: both p0 AND p1 use `tx`. Paramless;
+// RNG-consuming.
+static inline float2 v_twintrian(float2 p, float w, thread IsaacState& rng) {
+    float d1 = isaac_01(rng);                          // draw #1
+    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float r = d1 * w * precalc_sqrt;
+    float sinr = sin(r);
+    float cosr = cos(r);
+    float diff = log10(sinr * sinr) + cosr;
+    if (badvalue_ms(diff)) diff = -30.0f;              // CRITICAL — matches flam3 + CPU
+    return float2(w * p.x * diff,
+                  w * p.x * (diff - sinr * M_PI_F));   // BOTH use tx
 }
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
@@ -639,13 +694,15 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 49 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
-// radial_blur/noise/blur/gaussian_blur/arch/square also consume the RNG
-// (julian/juliascope/wedge_julia: one isaac_01 each; super_shape: one
-// UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s; radial_blur: FOUR
-// isaac_01s summed left-to-right; noise: TWO (angle, radius) INPUT-SCALED;
-// blur: TWO (angle, radius) NOT input-scaled; gaussian_blur: FIVE (1 angle +
-// 4-sum); arch: ONE (angle); square: TWO (independent for p0, p1)).
+// Sum the 52 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian also
+// consume the RNG (julian/juliascope/wedge_julia: one isaac_01 each;
+// super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
+// radial_blur: FOUR isaac_01s summed left-to-right; noise: TWO (angle, radius)
+// INPUT-SCALED; blur: TWO (angle, radius) NOT input-scaled; gaussian_blur:
+// FIVE (1 angle + 4-sum); arch: ONE (angle); square: TWO (independent for p0,
+// p1); rays: ONE (angle, un-guarded tan); blade: ONE (r=d1*w*sqrt); twintrian:
+// ONE (r=d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr → -30.0)).
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -734,6 +791,15 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[47] != 0.0f) acc += v_arch(pre, w[47], rng);
     // slot 48 — square (var43_square, 2 isaac_01 draws, bounded in [-w/2, w/2]²).
     if (w[48] != 0.0f) acc += v_square(pre, w[48], rng);
+    // ---- corpus-variations RNG + Inf/badvalue care set (slots 49..51). All
+    // paramless; exactly 1 isaac_01 draw each → take `rng`. ----
+    // slot 49 — rays (var44_rays, 1 isaac_01 draw; UN-GUARDED tan(ang), r=w/(sumsq+EPS)).
+    if (w[49] != 0.0f) acc += v_rays(pre, w[49], rng);
+    // slot 50 — blade (var45_blade, 1 isaac_01 draw; both p0,p1 use tx).
+    if (w[50] != 0.0f) acc += v_blade(pre, w[50], rng);
+    // slot 51 — twintrian (var47_twintrian, 1 isaac_01 draw; BADVALUE-GUARDED
+    // log10(sinr²)+cosr → -30.0 — load-bearing for CPU↔Metal parity).
+    if (w[51] != 0.0f) acc += v_twintrian(pre, w[51], rng);
     return apply_post(x, acc);
 }
 
