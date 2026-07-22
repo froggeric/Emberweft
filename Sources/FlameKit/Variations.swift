@@ -84,7 +84,13 @@ public enum Variations {
         // var53_parabola: TWO per-axis isaac_01 draws (draw #1 → p0 via
         // height*sin²*r; draw #2 → p1 via width*cos*r); params
         // parabola_height + parabola_width. RNG-consuming.
-        "parabola"
+        "parabola",
+        // var46_secant2: paramless; 0 RNG draws. UN-GUARDED 1/cos (cr=0 → Inf;
+        // match flam3). Intended as a 'fixed' version of secant.
+        "secant2",
+        // var49_disc2: parametric (disc2_rot, disc2_twist, default 0); 0 RNG
+        // draws. disc2_precalc (timespi/sinadd/cosadd) inlined into the closure.
+        "disc2"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -823,6 +829,50 @@ public enum Variations {
             else                           { p0 -= w * p.x }
             return SIMD2(p0, p1)
         }
+        // var46_secant2 (variations.c:920-944). Paramless; 0 RNG draws.
+        // Intended as a 'fixed' version of secant. UN-GUARDED 1/cos (cr=0 → Inf;
+        // match flam3 — NO per-term guard; the chaos game's post-affine badvalue
+        // check handles Inf downstream, redrawing).
+        //   r   = w * precalc_sqrt (= w*sqrt(tx²+ty²)); cr = cos(r); icr = 1/cr;
+        //   p0 += w * tx;
+        //   if (cr < 0) p1 += w * (icr + 1);   // positive branch offset
+        //   else        p1 += w * (icr - 1);   // negative branch offset
+        t["secant2"]     = { p, w, _, _ in
+            let r = w * (p.x*p.x + p.y*p.y).squareRoot()       // w * precalc_sqrt
+            let cr = cos(r)
+            let icr = 1.0 / cr                                 // UN-GUARDED (cr=0 → Inf)
+            let p1 = cr < 0 ? w * (icr + 1.0) : w * (icr - 1.0)
+            return SIMD2(w * p.x, p1)
+        }
+        // var49_disc2 (variations.c:1019-1052) + disc2_precalc (variations.c:1977-1997).
+        // Parametric (`disc2_rot`, `disc2_twist`, both default 0); 0 RNG draws.
+        // disc2_precalc is inlined here (like radial_blur's spinvar/zoomvar) —
+        // `disc2_timespi`/`disc2_sinadd`/`disc2_cosadd` are derived, NOT XML params.
+        // PRECALC:
+        //   timespi = rot * π
+        //   add     = twist
+        //   sincos(add, &sinadd, &cosadd);  cosadd -= 1
+        //   if (add >  2π)  k = 1 + add - 2π;  cosadd *= k; sinadd *= k
+        //   if (add < -2π)  k = 1 + add + 2π;  cosadd *= k; sinadd *= k
+        // BODY:
+        //   t   = timespi * (tx + ty);  sincos(t, &sinr, &cosr)
+        //   r   = w * precalc_atan / π     (precalc_atan = atan2(tx, ty) — flam3 order)
+        //   p0 += (sinr + cosadd) * r
+        //   p1 += (cosr + sinadd) * r
+        t["disc2"]       = { p, w, par, _ in
+            let rot   = resolve("disc2", "disc2_rot", par)
+            let twist = resolve("disc2", "disc2_twist", par)
+            let timespi = rot * .pi
+            let add = twist
+            var sinadd = sin(add)
+            var cosadd = cos(add) - 1.0
+            if add >  2 * .pi { let k = 1 + add - 2 * .pi; cosadd *= k; sinadd *= k }
+            if add < -2 * .pi { let k = 1 + add + 2 * .pi; cosadd *= k; sinadd *= k }
+            let t = timespi * (p.x + p.y)
+            let sinr = sin(t), cosr = cos(t)
+            let r = w * atan2(p.x, p.y) / .pi                // atan2(tx,ty) — flam3 order
+            return SIMD2((sinr + cosadd) * r, (cosr + sinadd) * r)
+        }
 
         // ---- 14 special-sauce (M3): line-for-line ports of variations.c ----
 
@@ -971,10 +1021,10 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 55-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 57-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
     /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
-    /// flower/conic/parabola).
+    /// flower/conic/parabola + secant2/disc2).
     ///
     /// RNG-EQUIVALENCE NOTE: eighteen variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/
@@ -1063,8 +1113,16 @@ public extension Variations {
     /// draws, params parabola_height + parabola_width; draw #1 → p0 via
     /// height*sin²*r, draw #2 → p1 via width*cos*r — separate isaac01()
     /// statements in that order).
+    /// Slots 55..56 are the corpus-variations final pair (CV7): `secant2`
+    /// (var46, paramless, un-guarded 1/cos — cr=0 → Inf, match flam3; the chaos
+    /// game's post-affine badvalue check handles Inf downstream), `disc2`
+    /// (var49, parametric disc2_rot/disc2_twist default 0; disc2_precalc —
+    /// timespi=rot·π, sincos(twist)→sinadd/cosadd with cosadd-=1 and |twist|>2π
+    /// scaling branches — is inlined into the closure + MSL function, NOT
+    /// exposed as XML params; precalc_atan = atan2(tx,ty) flam3 order). Both
+    /// non-RNG → live in the table closures / w-guarded MSL dispatch chain.
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 55 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 57 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

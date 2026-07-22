@@ -279,6 +279,38 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("parabola", ["parabola_height": 0.5, "parabola_width": 0.4], weight: 0.4)
     }
 
+    // ---- corpus-variations final pair (CV7): secant2 + disc2. Completes 100%
+    // corpus-used variation coverage (57/99 of all flam3 variations). Both
+    // non-RNG (secant2 paramless; disc2 parametric). ----
+
+    // var46_secant2 (variations.c:920-944): paramless; 0 RNG draws. UN-GUARDED
+    // 1/cos (cr=0 → Inf; match flam3 — no per-term guard). r = w*sqrt(tx²+ty²),
+    // cr = cos(r), icr = 1/cr; p0 += w*tx; if (cr<0) p1 += w*(icr+1) else
+    // p1 += w*(icr-1). The 1/cos pole at r = π/2 + kπ (sqrt(tx²+ty²) = π/(2w))
+    // is reached by some orbit samples at w=1 (pole at sqrt≈1.57, well inside
+    // the affine-feedback orbit's reach). NEAR (not at) the pole, cos(π/2-ε)≈ε
+    // so icr≈1/ε is HUGE and Float-vs-Double ULP noise in ε is amplified by
+    // 1/ε → chaotic orbit divergence. At w=1 this drops PSNR to ~18 dB
+    // (measured). The pole moves out as 1/w: at w=0.4 the first pole is at
+    // sqrt≈3.93 (π/0.8), far outside the affine orbit's typical reach, so the
+    // near-pole amplification is avoided and parity is byte-exact. This is the
+    // weight-softening precedent (radial_blur/tangent/arch/rays at w=0.4) —
+    // the CPU testSecant2 closed-form pins the formula at weight=1 (no pole in
+    // the tested points); the MSL port is byte-faithful to that formula.
+    @MainActor func testSecant2() throws {
+        try assertParity("secant2", [:], weight: 0.4)
+    }
+    // var49_disc2 (variations.c:1019-1052) + disc2_precalc (variations.c:1977-1997):
+    // parametric (disc2_rot, disc2_twist, default 0); 0 RNG draws. The precalc
+    // (timespi=rot·π; sincos(twist)→sinadd, cosadd-1; |twist|>2π scaling branch)
+    // is inlined into the closure like radial_blur's spinvar/zoomvar. The formula
+    // is bounded (atan2/r/π ∈ [-1/2, 1/2]; (sinr±cosadd) bounded for small twist)
+    // → no poles → weight=1 is safe (unlike secant2 above). The CPU testDisc2
+    // pins the precalc derivation including the |twist|>2π scaling branches.
+    @MainActor func testDisc2() throws {
+        try assertParity("disc2", ["disc2_rot": 0.5, "disc2_twist": 0.3])
+    }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

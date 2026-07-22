@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+55+(55*8) = 510 floats = 2040 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+57+(57*8) = 528 floats = 2112 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 55
+#define NUM_XFORM_SLOTS_MS 57
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 55
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 55*8 = 440
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 57
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 57*8 = 456
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 55 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 57 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 55 variation terms (canonical slot order). Each returns the term that CPU
+// 57 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -283,6 +283,47 @@ static inline float2 v_split(float2 p, float w, thread const float* pr) {
     if (cos(p.y * ysize * M_PI_F) >= 0.0f) { p0 += w * p.x; }
     else                                   { p0 -= w * p.x; }
     return float2(p0, p1);
+}
+// var46_secant2 (variations.c:920-944). Paramless; 0 RNG draws. Intended as a
+// 'fixed' version of secant. UN-GUARDED 1/cos (cr=0 → Inf; match flam3 — NO
+// per-term guard; the chaos game's post-affine badvalue check handles Inf
+// downstream, redrawing).
+//   r = w*sqrt(tx²+ty²); cr = cos(r); icr = 1/cr;
+//   p0 += w*tx;
+//   if (cr<0) p1 += w*(icr+1);  else  p1 += w*(icr-1).
+static inline float2 v_secant2(float2 p, float w) {
+    float r  = w * sqrt(p.x*p.x + p.y*p.y);
+    float cr = cos(r);
+    float icr = 1.0f / cr;                                     // UN-GUARDED
+    float p1 = (cr < 0.0f) ? w * (icr + 1.0f) : w * (icr - 1.0f);
+    return float2(w * p.x, p1);
+}
+// var49_disc2 (variations.c:1019-1052) + disc2_precalc (variations.c:1977-1997).
+// Parametric (disc2_rot, disc2_twist, default 0); 0 RNG draws. The precalc is
+// inlined here (like v_radial_blur's spinvar/zoomvar) — disc2_timespi/sinadd/
+// cosadd are derived, NOT XML params.
+// PRECALC:
+//   timespi = rot * π; add = twist
+//   sincos(add, sinadd, cosadd); cosadd -= 1
+//   if (add >  2π) k = 1+add-2π;  cosadd *= k; sinadd *= k
+//   if (add < -2π) k = 1+add+2π;  cosadd *= k; sinadd *= k
+// BODY:
+//   t = timespi*(tx+ty); sincos(t, sinr, cosr)
+//   r = w * atan2(tx,ty) / π    (flam3 precalc_atan order: atan2(x,y))
+//   p0 += (sinr+cosadd)*r;  p1 += (cosr+sinadd)*r.
+// Param order in pr[0..1] = descriptor-declared order: disc2_rot, disc2_twist.
+static inline float2 v_disc2(float2 p, float w, thread const float* pr) {
+    float rot = pr[0], twist = pr[1];
+    float timespi = rot * M_PI_F;
+    float add = twist;
+    float sinadd = sin(add);
+    float cosadd = cos(add) - 1.0f;
+    if (add >  2.0f*M_PI_F) { float k = 1.0f + add - 2.0f*M_PI_F; cosadd *= k; sinadd *= k; }
+    if (add < -2.0f*M_PI_F) { float k = 1.0f + add + 2.0f*M_PI_F; cosadd *= k; sinadd *= k; }
+    float t = timespi * (p.x + p.y);
+    float sinr = sin(t), cosr = cos(t);
+    float r = w * atan2(p.x, p.y) / M_PI_F;                    // atan2(x,y) flam3 order
+    return float2((sinr + cosadd) * r, (cosr + sinadd) * r);
 }
 // var31_noise (variations.c:696-708). TWO isaac_01 draws in EXACT order:
 // (1) angle   tmpr = d1*2π;  sincos(tmpr, &sinr, &cosr)
@@ -748,7 +789,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 55 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 57 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
 // flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
 // one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
@@ -872,6 +913,16 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // draw #2 → p1 via width*cos*r).
     // Param order in pr[0..1] = descriptor-declared order: parabola_height, parabola_width.
     if (w[54] != 0.0f) acc += v_parabola(pre, w[54], &x.varParams[54*SLOT_WIDTH_MS], rng);
+    // ---- corpus-variations final pair (CV7; slots 55..56). Both non-RNG → no
+    // `rng` arg. secant2 is paramless; disc2 is parametric. ----
+    // slot 55 — secant2 (var46_secant2, paramless; UN-GUARDED 1/cos — cr=0 → Inf,
+    // match flam3; the chaos game's post-affine badvalue check handles Inf).
+    if (w[55] != 0.0f) acc += v_secant2(pre, w[55]);
+    // slot 56 — disc2 (var49_disc2, parametric: disc2_rot + disc2_twist default 0;
+    // disc2_precalc — timespi=rot·π, sincos(twist)→sinadd/cosadd with cosadd-=1
+    // and |twist|>2π scaling branches — is inlined into v_disc2).
+    // Param order in pr[0..1] = descriptor-declared order: disc2_rot, disc2_twist.
+    if (w[56] != 0.0f) acc += v_disc2(pre, w[56], &x.varParams[56*SLOT_WIDTH_MS]);
     return apply_post(x, acc);
 }
 

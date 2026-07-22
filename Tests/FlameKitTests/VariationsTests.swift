@@ -1069,6 +1069,132 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, expected, accuracy: 1e-12)
     }
 
+    // MARK: - corpus-variations final pair: secant2 + disc2 (CV7).
+    // Hand-traced closed forms against flam3 variations.c. These complete
+    // 100% corpus-used variation coverage (57/99 of all flam3 variations).
+
+    // var46_secant2 (variations.c:920-944). Paramless; 0 RNG draws.
+    // Intended as a 'fixed' version of secant. UN-GUARDED 1/cos (cr=0 → Inf;
+    // match flam3 — NO per-term guard; the chaos game's post-affine badvalue
+    // check handles Inf downstream, redrawing).
+    //   r   = w * precalc_sqrt (= w*sqrt(tx²+ty²)); cr = cos(r); icr = 1/cr;
+    //   p0 += w * tx;
+    //   if (cr < 0) p1 += w * (icr + 1);   // positive branch offset
+    //   else        p1 += w * (icr - 1);   // negative branch offset
+    func testSecant2() {
+        // Case 1: cr ≥ 0 (else branch). (0.3, 0.4): sqrt=0.5, r=0.5, cr=cos(0.5)≈0.8776.
+        //   icr = 1/cos(0.5); p1 = (icr - 1).
+        let p1 = SIMD2<Double>(0.3, 0.4)
+        let r1 = (p1.x*p1.x + p1.y*p1.y).squareRoot()                  // 0.5
+        let cr1 = cos(r1)
+        let icr1 = 1.0 / cr1
+        let out1 = eval("secant2", p1, 1.0)
+        XCTAssertEqual(out1.x, 1.0 * p1.x, accuracy: 1e-9)
+        XCTAssertEqual(out1.y, 1.0 * (icr1 - 1.0), accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(cr1, 0, "case 1 must hit the else (cr≥0) branch")
+
+        // Case 2: cr < 0 (if branch). (2, 0): sqrt=2, r=2, cr=cos(2)≈-0.4161.
+        //   icr = 1/cos(2); p1 = (icr + 1).
+        let p2 = SIMD2<Double>(2.0, 0.0)
+        let r2 = (p2.x*p2.x + p2.y*p2.y).squareRoot()                  // 2.0
+        let cr2 = cos(r2)
+        let icr2 = 1.0 / cr2
+        let out2 = eval("secant2", p2, 1.0)
+        XCTAssertEqual(out2.x, 1.0 * p2.x, accuracy: 1e-9)
+        XCTAssertEqual(out2.y, 1.0 * (icr2 + 1.0), accuracy: 1e-9)
+        XCTAssertLessThan(cr2, 0, "case 2 must hit the if (cr<0) branch")
+
+        // Case 3: another cr<0 point with non-zero ty, to pin that ty does NOT
+        // feed p1 (only tx does). (1.2, 1.6): sqrt=2.0, same r/cr/icr as case 2,
+        // so p1 is identical to case 2; only p0 differs (uses tx=1.2 not 2.0).
+        let p3 = SIMD2<Double>(1.2, 1.6)
+        let out3 = eval("secant2", p3, 1.0)
+        XCTAssertEqual(out3.x, 1.0 * p3.x, accuracy: 1e-9)
+        XCTAssertEqual(out3.y, 1.0 * (icr2 + 1.0), accuracy: 1e-9)
+            // same p1 as p2: confirms ty is unused by the p1 term
+
+        // Weight folds into BOTH r (r = w*sqrt(...)) AND the outer p0/p1 factor.
+        // At w=2.0: r = 2.0*0.5 = 1.0 (NOT 0.5) → cr = cos(1.0); icr = 1/cos(1.0).
+        // So p0 = 2.0*0.3 = 0.6; p1 = 2.0*(icr - 1) [cos(1.0)>0 → else branch].
+        // This is NOT a simple "w*(icr1±1)" fold — weight lives inside r too.
+        let outW = eval("secant2", p1, 2.0)
+        let rW = 2.0 * (p1.x*p1.x + p1.y*p1.y).squareRoot()        // 2.0 * 0.5 = 1.0
+        let crW = cos(rW)
+        let icrW = 1.0 / crW
+        XCTAssertEqual(outW.x, 2.0 * p1.x, accuracy: 1e-9)
+        XCTAssertEqual(outW.y, 2.0 * (icrW - 1.0), accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(crW, 0, "weight case must hit the else (cr≥0) branch")
+
+        // Origin: sqrt=0 → r=0 → cr=cos(0)=1 > 0 → else → p1 = w*(1-1) = 0.
+        // p0 = w*0 = 0. No pole at the origin.
+        XCTAssertEqual(eval("secant2", .zero, 1.0), SIMD2<Double>.zero, accuracy: 1e-9)
+    }
+
+    // var49_disc2 (variations.c:1019-1052) + disc2_precalc (variations.c:1977-1997).
+    // Parametric (`disc2_rot`, `disc2_twist`, both default 0); 0 RNG draws.
+    // PRECALC (inlined into the closure, mirroring radial_blur's spinvar/zoomvar):
+    //   timespi = rot * π
+    //   add     = twist
+    //   sincos(add, &sinadd, &cosadd);  cosadd -= 1
+    //   if (add >  2π)  k = 1 + add - 2π;  cosadd *= k; sinadd *= k
+    //   if (add < -2π)  k = 1 + add + 2π;  cosadd *= k; sinadd *= k
+    // BODY:
+    //   t   = timespi * (tx + ty);  sincos(t, &sinr, &cosr)
+    //   r   = w * precalc_atan / π    (precalc_atan = atan2(tx, ty) — flam3 order)
+    //   p0 += (sinr + cosadd) * r
+    //   p1 += (cosr + sinadd) * r
+    func testDisc2() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        // |twist| < 2π → no scaling branch.
+        let params: [String:Double] = ["disc2_rot": 0.5, "disc2_twist": 0.3]
+        // Hand-traced precalc: timespi = 0.5π; sinadd = sin(0.3); cosadd = cos(0.3) - 1.
+        let timespi = 0.5 * .pi
+        let sinadd = sin(0.3)
+        let cosadd = cos(0.3) - 1.0
+        let t = timespi * (p.x + p.y)
+        let sinr = sin(t), cosr = cos(t)
+        let r = 1.0 * atan2(p.x, p.y) / .pi                       // atan2(tx,ty) flam3 order
+        let out = eval("disc2", p, 1.0, params)
+        XCTAssertEqual(out.x, (sinr + cosadd) * r, accuracy: 1e-9)
+        XCTAssertEqual(out.y, (cosr + sinadd) * r, accuracy: 1e-9)
+
+        // Weight folds into the outer r term (both p0 and p1 scale with w).
+        let outW = eval("disc2", p, 2.0, params)
+        XCTAssertEqual(outW.x, 2.0 * (sinr + cosadd) * r, accuracy: 1e-9)
+        XCTAssertEqual(outW.y, 2.0 * (cosr + sinadd) * r, accuracy: 1e-9)
+
+        // twist > 2π scaling branch: k = 1 + twist - 2π multiplies BOTH cosadd and sinadd.
+        let paramsBig: [String:Double] = ["disc2_rot": 0.5, "disc2_twist": 7.0]
+        let addBig = 7.0
+        let kBig = 1.0 + addBig - 2.0 * .pi
+        let sinaddBig = sin(addBig) * kBig
+        let cosaddBig = (cos(addBig) - 1.0) * kBig
+        let outBig = eval("disc2", p, 1.0, paramsBig)
+        // timespi unchanged (rot same) → t, sinr, cosr, r all identical to above.
+        XCTAssertEqual(outBig.x, (sinr + cosaddBig) * r, accuracy: 1e-9)
+        XCTAssertEqual(outBig.y, (cosr + sinaddBig) * r, accuracy: 1e-9)
+
+        // twist < -2π scaling branch: k = 1 + twist + 2π.
+        let paramsNeg: [String:Double] = ["disc2_rot": 0.5, "disc2_twist": -7.0]
+        let addNeg = -7.0
+        let kNeg = 1.0 + addNeg + 2.0 * .pi
+        let sinaddNeg = sin(addNeg) * kNeg
+        let cosaddNeg = (cos(addNeg) - 1.0) * kNeg
+        let outNeg = eval("disc2", p, 1.0, paramsNeg)
+        XCTAssertEqual(outNeg.x, (sinr + cosaddNeg) * r, accuracy: 1e-9)
+        XCTAssertEqual(outNeg.y, (cosr + sinaddNeg) * r, accuracy: 1e-9)
+
+        // Default-0 params (rot=0, twist=0): timespi=0, sinadd=0, cosadd=cos(0)-1=0.
+        //   t=0 → sinr=0, cosr=1; r = w*atan2(x,y)/π.
+        //   p0 = (0 + 0)*r = 0;  p1 = (1 + 0)*r = r.
+        // So a genome omitting disc2_rot/twist gets a pure angular disc (p0=0,
+        // p1 = w*atan2(tx,ty)/π), independent of magnitude.
+        let outDefault = eval("disc2", p, 1.0, [:])
+        let rDef = 1.0 * atan2(p.x, p.y) / .pi
+        XCTAssertEqual(outDefault.x, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(outDefault.y, rDef, accuracy: 1e-9)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

@@ -1,17 +1,17 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 55-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 57-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
-/// flower/conic/parabola; spherical/polar counted once),
+/// flower/conic/parabola + secant2/disc2; spherical/polar counted once),
 /// per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 55-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 57-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 55-device-slot layout) ----
-    /// Fixed 55-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 57-device-slot layout) ----
+    /// Fixed 57-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -42,7 +42,11 @@ public struct VariationDescriptor: Sendable {
     /// flower_freq], /sqrt NO EPS), `conic` (var52, 1 draw, params
     /// conic_eccentricity + conic_holes, TWO /sqrt NO EPS), `parabola` (var53,
     /// 2 per-axis draws, params parabola_height + parabola_width) at slots
-    /// 52..54.
+    /// 52..54; then the corpus-variations final pair: `secant2` (var46,
+    /// paramless, un-guarded 1/cos), `disc2` (var49, parametric disc2_rot/
+    /// disc2_twist default 0, precalc inlined) at slots 55..56. The 2 final
+    /// slots bring Emberweft to 57/99 — 100% of the variations that appear
+    /// in the 23k-genome corpus survey.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -126,8 +130,18 @@ public struct VariationDescriptor: Sendable {
         // var53_parabola: 2 per-axis draws (p0 first via height*sin²*r, then p1
         // via width*cos*r); params parabola_height + parabola_width.
         "parabola",
+        // --- corpus-variations final pair (CV7): the last 2 corpus-used flam3
+        //     variations (slots 55..56). Brings Emberweft to 57/99 — 100% of the
+        //     variations that appear in the 23k-genome corpus survey. Both are
+        //     non-RNG → live in the table closures, NOT `evaluate`'s switch.
+        //     Verified formulas against /private/tmp/flam3-build/variations.c. ---
+        // var46_secant2: paramless; UN-GUARDED 1/cos (cr=0 → Inf; match flam3).
+        "secant2",
+        // var49_disc2: parametric (disc2_rot, disc2_twist, default 0);
+        // disc2_precalc (timespi/cosadd/sinadd) inlined into the closure.
+        "disc2",
     ]
-    /// Canonical device-slot index for a variation name (0..<55), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<57), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -249,6 +263,17 @@ public struct VariationDescriptor: Sendable {
         // var53_parabola (2 per-axis draws; params parabola_height + parabola_width)
         d("parabola", ["parabola_height","parabola_width"],
           ["parabola_height":0,"parabola_width":0])
+        // --- corpus-variations final pair (CV7). Both non-RNG (secant2 paramless;
+        //     disc2 parametric). Disc2's `disc2_timespi`/`disc2_sinadd`/
+        //     `disc2_cosadd` are derived by `disc2_precalc` inlined into the
+        //     closure (NOT XML params). flam3 `clear_cp` does NOT initialize
+        //     disc2_rot/twist → missing XML attrs parse as 0 (memset(0) in
+        //     parser.c:229 wins), same as pdj/split/flower/conic/parabola. ---
+        // var46_secant2 (paramless; UN-GUARDED 1/cos)
+        d("secant2", [], [:])
+        // var49_disc2 (parametric: disc2_rot, disc2_twist, default 0)
+        d("disc2", ["disc2_rot","disc2_twist"],
+          ["disc2_rot":0,"disc2_twist":0])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

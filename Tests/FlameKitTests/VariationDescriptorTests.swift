@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 55)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 55, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 57)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 57, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -184,5 +184,34 @@ final class VariationDescriptorTests: XCTestCase {
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "flower"), 52)
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "conic"), 53)
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "parabola"), 54)
+    }
+
+    /// var46_secant2 + var49_disc2 (Task 7 CV7): the final 2 corpus-used flam3
+    /// variations (the last 2 of the 44 missing-from-Emberweft variations that
+    /// appear in the 23k-genome corpus survey — all other 42 unused). Completes
+    /// 100% corpus-used variation coverage (Emberweft 57/99). secant2 is
+    /// paramless + non-RNG (slot 55); disc2 is parametric (`disc2_rot`,
+    /// `disc2_twist`, default 0) + non-RNG (slot 56). flam3's `clear_cp` does
+    /// NOT initialize disc2_rot/disc2_twist (memset(0) in parser.c:229 wins) →
+    /// missing XML attrs parse as 0 (same reasoning as pdj/split/flower/conic/
+    /// parabola). disc2 additionally derives `disc2_timespi`/`disc2_sinadd`/
+    /// `disc2_cosadd` via `disc2_precalc` (variations.c:1977-1997), inlined
+    /// into the CPU closure + MSL function — NOT exposed as XML params.
+    func testSecant2AndDisc2Descriptors() {
+        let secant2 = VariationDescriptor.descriptor(for: "secant2")!
+        XCTAssertTrue(secant2.parameters.isEmpty, "secant2: must be paramless")
+        XCTAssertTrue(secant2.defaults.isEmpty, "secant2: no defaults (paramless)")
+        XCTAssertTrue(secant2.rest.isEmpty, "secant2: no special-sauce rest")
+
+        let disc2 = VariationDescriptor.descriptor(for: "disc2")!
+        XCTAssertEqual(disc2.parameters, ["disc2_rot", "disc2_twist"])
+        XCTAssertEqual(disc2.defaults, ["disc2_rot": 0, "disc2_twist": 0])
+        XCTAssertTrue(disc2.rest.isEmpty, "disc2 has no special-sauce rest")
+
+        // Slot indices 55, 56 (immediately after the parametric+RNG trio at 52..54).
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "secant2"), 55)
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "disc2"), 56)
+        // Canonical-order authority for the full 57.
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 57)
     }
 }
