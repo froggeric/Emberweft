@@ -68,15 +68,13 @@ final class RealGenomeParityTests: XCTestCase {
         ("electricsheep.248.00084", .gate),
         ("electricsheep.248.00256", .gate),
         ("electricsheep.248.00268", .gate),
-        // The 1 below still uses unimplemented variations. The hp+sf fix is
-        // verified on it too (PSNR is printed); the gap is the missing
-        // variation, NOT a ToneMapping / spatial-filter regression. Closing
-        // this gap is a separate M3/M4 task (variations backlog), NOT in
-        // Task-6 scope. (05739 + 31943 were flipped to `.gate` once `bubble`
-        // landed; 00000 stays gap until pie/radial_blur land — eyefish is now
-        // implemented but 00000 also uses those two.)
-        ("electricsheep.248.00000",
-         .knownGap(reason: "uses unimplemented variations: pie, radial_blur")),
+        // 00000 was the last `.knownGap` (used pie + radial_blur, the final
+        // two unimplemented variations). All four of its variations — bubble,
+        // eyefish, pie, radial_blur — landed in the missing-variations plan
+        // (HEAD aeed7f205); it is now `.gate` and the last fixture under the
+        // real-genome parity gate. (05739 + 31943 were flipped to `.gate`
+        // earlier once `bubble` landed.)
+        ("electricsheep.248.00000", .gate),
         ("electricsheep.248.05739", .gate),
         ("electricsheep.248.31943", .gate),
     ]

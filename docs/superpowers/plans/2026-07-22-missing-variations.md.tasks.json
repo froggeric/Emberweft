@@ -24,14 +24,14 @@
     {
       "id": 24,
       "subject": "V4: port radial_blur (1 param, 4 summed RNG draws)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [23],
       "description": "**Goal:** Port flam3 `radial_blur` (var36, variations.c:775-793; param radial_blur_angle=0; 4 isaac_01 draws summed left-to-right). RNG-consuming → evaluate switch. Unblocks 00000 (partially).\n\n**4 draws summed:** `rndG = weight*(d1+d2+d3+d4-2.0)`. `spinvar=sin(angle*π/2); zoomvar=cos(angle*π/2); ra=sqrt(p.x²+p.y²); tmpa=atan2(p.y,p.x)+spinvar*rndG; rz=zoomvar*rndG-1; return (ra*cos(tmpa)+rz*p.x, ra*sin(tmpa)+rz*p.y)`.\n\n**Files:** VariationDescriptor.swift (canonicalOrder + descriptor; count→37), Variations.swift (evaluate switch + static `radialBlur(_:weight:params:rng:)`; 4 rng.isaac01() summed in order), Kernels.metal (count→37, v_radial_blur(p,w,pr,rng) with 4 isaac_01(rng) summed + dispatch), VariationsTests.swift (closed-form + draw-count-4 test), VariationDescriptorTests.swift + ParamChannelParityTests.swift (bump→37), SpecialSauceParityTests.swift (testRadialBlur ≥38dB).\n\n**Acceptance Criteria:** CPU draws exactly 4 isaac_01 summed as weight*(d+d+d+d-2) (draw-count test); closed-form passes; Metal↔CPU ≥38dB; count→37; make test-fast green.\n\n```json:metadata\n{\"files\": [\"Sources/FlameKit/Variations.swift\", \"Sources/FlameRenderer/Metal/Kernels.metal\", \"Tests/FlameKitTests/VariationsTests.swift\"], \"verifyCommand\": \"swift test --filter VariationsTests --filter SpecialSauceParityTests\", \"acceptanceCriteria\": [\"radial_blur 4 summed draws\", \"radial_blur CPU closed-form\", \"radial_blur Metal↔CPU ≥38dB\", \"slot count→37\", \"make test-fast green\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 25,
       "subject": "V5: flip 00000 to .gate + final verify + re-render faithful clip",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [21, 22, 23, 24],
       "description": "**Goal:** With all 4 variations in, flip 00000 to `.gate` (all 7 fixtures ≥38 dB); run full parity verification; re-render the now-faithful Task-4 clip (05739→31943, bubble faithful) for the user's visual confirmation.\n\n**Files:** RealGenomeParityTests.swift (flip 00000 → .gate).\n\n**Acceptance Criteria:** all 7 RealGenomeParityTests fixtures ≥38 dB/0.95 SSIM; GoldenParity unchanged (51-72 dB); make test-fast green; AnimationParityTests (M3 vs flam3) unchanged; re-rendered clip boundary PSNR still smooth (≤ within-loop + ~1 dB); user visual confirms clip faithful to official 05739/31943 videos.\n\n**Verify:** swift test --filter RealGenomeParityTests (all 7 ≥38) + swift test --filter GoldenParityTests + make test-fast; then re-render clip (release) + boundary PSNR + open for user.\n\n```json:metadata\n{\"files\": [\"Tests/FlameReferenceTests/RealGenomeParityTests.swift\"], \"verifyCommand\": \"swift test --filter RealGenomeParityTests && swift test --filter GoldenParityTests\", \"acceptanceCriteria\": [\"all 7 fixtures ≥38dB\", \"GoldenParity unchanged\", \"make test-fast green\", \"clip boundary smooth\", \"user visual faithful\"], \"modelTier\": \"standard\"}\n```"
     }
