@@ -10,7 +10,7 @@
     {
       "id": 22,
       "subject": "V2: port eyefish (CPU + Metal; NOT a fisheye alias)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [21],
       "description": "**Goal:** Port flam3 `eyefish` (var27, variations.c:659-669; paramless, 0 RNG draws). NOT an alias of fisheye — output is UN-SWAPPED `(r*p.x, r*p.y)` vs fisheye's swapped `(r*p.y, r*p.x)`. Unblocks 00000 (partially).\n\n**Formula:** `r = (weight*2)/(sqrt(p.x*p.x+p.y*p.y) + 1); return SIMD2(r*p.x, r*p.y)` (no axis swap).\n\n**Files:** VariationDescriptor.swift (canonicalOrder + descriptor; count→35), Variations.swift (table), Kernels.metal (count→35, v_eyefish + dispatch), VariationsTests.swift (closed-form + ASSERT eyefish≠fisheye for non-axis-symmetric input), VariationDescriptorTests.swift + ParamChannelParityTests.swift (bump→35), SpecialSauceParityTests.swift (testEyefish ≥38dB), RealGenomeParityTests.swift (correct the \"(alias of fisheye)\" comment at :77).\n\n**Acceptance Criteria:** CPU closed-form passes; eyefish≠fisheye assertion passes (un-swapped); Metal↔CPU ≥38dB; count→35; make test-fast green; goldens unchanged.\n\n```json:metadata\n{\"files\": [\"Sources/FlameKit/Variations.swift\", \"Sources/FlameRenderer/Metal/Kernels.metal\", \"Tests/FlameKitTests/VariationsTests.swift\"], \"verifyCommand\": \"swift test --filter VariationsTests --filter SpecialSauceParityTests\", \"acceptanceCriteria\": [\"eyefish CPU closed-form\", \"eyefish≠fisheye (un-swapped)\", \"eyefish Metal↔CPU ≥38dB\", \"slot count→35\", \"make test-fast green\"], \"modelTier\": \"mechanical\"}\n```"
     },
