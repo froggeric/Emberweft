@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+42+(42*8) = 393 floats = 1572 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+44+(44*8) = 411 floats = 1644 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 42
+#define NUM_XFORM_SLOTS_MS 44
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 42
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 42*8 = 336
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 44
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 44*8 = 352
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 42 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 44 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 42 variation terms (canonical slot order). Each returns the term that CPU
+// 44 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -253,6 +253,36 @@ static inline float2 v_cross(float2 p, float w) {
     float s = p.x*p.x - p.y*p.y;
     float r = w * sqrt(1.0f / (s*s + EPS_MS));
     return float2(p.x * r, p.y * r);
+}
+// var24_pdj (variations.c:579-596). 4 params (pdj_a/b/c/d), all default 0.
+//   nx1 = cos(pdj_b*tx); nx2 = sin(pdj_c*tx);
+//   ny1 = sin(pdj_a*ty); ny2 = cos(pdj_d*ty);
+//   (w*(ny1 - nx1), w*(nx2 - ny2)). Parametric; 0 RNG draws.
+// Param order in pr[0..3] = descriptor-declared order: pdj_a, pdj_b, pdj_c, pdj_d.
+static inline float2 v_pdj(float2 p, float w, thread const float* pr) {
+    float a = pr[0], b = pr[1], c = pr[2], d = pr[3];
+    float nx1 = cos(b * p.x);
+    float nx2 = sin(c * p.x);
+    float ny1 = sin(a * p.y);
+    float ny2 = cos(d * p.y);
+    return float2(w * (ny1 - nx1), w * (nx2 - ny2));
+}
+// var74_split (variations.c:1603-1617). 2 params (split_xsize/ysize), default 0.
+// p1 branch comes FIRST in C source (mirror structure; p0/p1 accumulate
+// independently so order is observationally equivalent). CROSS-COUPLING:
+// tx controls p1, ty controls p0.
+//   if (cos(tx*split_xsize*π) >= 0) p1 += w*ty  else  p1 -= w*ty;
+//   if (cos(ty*split_ysize*π) >= 0) p0 += w*tx  else  p0 -= w*tx;
+// Parametric; 0 RNG draws.
+// Param order in pr[0..1] = descriptor-declared order: split_xsize, split_ysize.
+static inline float2 v_split(float2 p, float w, thread const float* pr) {
+    float xsize = pr[0], ysize = pr[1];
+    float p0 = 0.0f, p1 = 0.0f;
+    if (cos(p.x * xsize * M_PI_F) >= 0.0f) { p1 += w * p.y; }
+    else                                   { p1 -= w * p.y; }
+    if (cos(p.y * ysize * M_PI_F) >= 0.0f) { p0 += w * p.x; }
+    else                                   { p0 -= w * p.x; }
+    return float2(p0, p1);
 }
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
@@ -535,7 +565,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 42 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 44 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur also consume the RNG (julian/juliascope/wedge_julia: one isaac_01
 // each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
 // radial_blur: FOUR isaac_01s summed left-to-right).
@@ -608,6 +638,13 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[40] != 0.0f) acc += v_tangent(pre, w[40]);
     // slot 41 — cross (var48_cross, paramless).
     if (w[41] != 0.0f) acc += v_cross(pre, w[41]);
+    // ---- corpus-variations parametric non-RNG set (slots 42..43). ----
+    // slot 42 — pdj (var24_pdj, parametric: 4 params all default 0; 0 RNG draws).
+    // Param order in pr[0..3] = descriptor-declared order: pdj_a, pdj_b, pdj_c, pdj_d.
+    if (w[42] != 0.0f) acc += v_pdj(pre, w[42], &x.varParams[42*SLOT_WIDTH_MS]);
+    // slot 43 — split (var74_split, parametric: 2 params default 0; 0 RNG draws).
+    // Param order in pr[0..1] = descriptor-declared order: split_xsize, split_ysize.
+    if (w[43] != 0.0f) acc += v_split(pre, w[43], &x.varParams[43*SLOT_WIDTH_MS]);
     return apply_post(x, acc);
 }
 

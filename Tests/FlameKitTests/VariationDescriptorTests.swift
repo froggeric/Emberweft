@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 42)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 42, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 44)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 44, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -88,5 +88,27 @@ final class VariationDescriptorTests: XCTestCase {
             // params not in `rest` are intentionally kept at default (Group A-ish / "kept")
         }
         XCTAssertEqual(expected.count, 12, "all 12 parametric rows asserted")
+    }
+
+    /// var24_pdj + var74_split (Task 2 CV2): parametric non-RNG ports. All params
+    /// default 0 (flam3 `clear_cp` is preceded by `memset(0)`; pdj_a/b/c/d and
+    /// split_xsize/ysize are not explicitly initialized in clear_cp → missing
+    /// XML attrs parse as 0). The Emberweft descriptor defaults of 0 mirror this.
+    /// Asserted separately so the table-fully-asserted count above stays at the
+    /// 12 special-sauce rows (these two have no `rest` overrides).
+    func testPdjAndSplitDefaultsAreZero() {
+        let pdj = VariationDescriptor.descriptor(for: "pdj")!
+        XCTAssertEqual(pdj.parameters, ["pdj_a", "pdj_b", "pdj_c", "pdj_d"])
+        XCTAssertEqual(pdj.defaults, ["pdj_a": 0, "pdj_b": 0, "pdj_c": 0, "pdj_d": 0])
+        XCTAssertTrue(pdj.rest.isEmpty, "pdj has no special-sauce rest")
+
+        let split = VariationDescriptor.descriptor(for: "split")!
+        XCTAssertEqual(split.parameters, ["split_xsize", "split_ysize"])
+        XCTAssertEqual(split.defaults, ["split_xsize": 0, "split_ysize": 0])
+        XCTAssertTrue(split.rest.isEmpty, "split has no special-sauce rest")
+
+        // Slot indices 42, 43 (after the 5 paramless non-RNG ports at 37..41).
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "pdj"), 42)
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "split"), 43)
     }
 }

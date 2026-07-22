@@ -147,6 +147,26 @@ final class SpecialSauceParityTests: XCTestCase {
     // var48_cross (variations.c:1033-1052): paramless.
     @MainActor func testCross() throws    { try assertParity("cross", [:]) }
 
+    // ---- corpus-variations parametric non-RNG set (slots 42..43). ----
+
+    // var24_pdj (variations.c:579-596): 4 params, all default 0. Parametric, 0
+    // RNG draws. Formula is bounded (cos/sin of params·tx,ty), no poles →
+    // Float-vs-Double ULP noise stays bounded across the orbit.
+    // Params: 244.00178 fixture values (a real ES edge genome that uses pdj).
+    @MainActor func testPdj() throws {
+        try assertParity("pdj", ["pdj_a": 0.2, "pdj_b": -1.18, "pdj_c": 1.36, "pdj_d": -2.01])
+    }
+    // var74_split (variations.c:1603-1617): 2 params, default 0. Parametric, 0
+    // RNG draws. Branchy: `cos(tx*xsize*π) >= 0` decides ± for p1, likewise ty
+    // for p0. With small split_xsize/ysize the branch decision stays well away
+    // from the cos≈0 boundary (so Float/Double orbits agree on the branch), and
+    // the output is piecewise-linear in (tx, ty) — bounded ULP amplification.
+    // The branch LOGIC itself is pinned by the CPU testSplit (all 4 branch
+    // combinations hand-traced); this test only verifies Metal↔CPU agreement.
+    @MainActor func testSplit() throws {
+        try assertParity("split", ["split_xsize": 0.3, "split_ysize": 0.4])
+    }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

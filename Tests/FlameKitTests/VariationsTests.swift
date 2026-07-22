@@ -151,6 +151,87 @@ final class VariationsTests: XCTestCase {
         let r = 1.0 * (1.0 / (s*s + eps)).squareRoot()
         XCTAssertEqual(out, SIMD2<Double>(p.x*r, p.y*r), accuracy: 1e-9)
     }
+
+    // MARK: - corpus-variations parametric non-RNG set (slots 42..43).
+    // Hand-traced closed forms against flam3 variations.c.
+
+    // var24_pdj (variations.c:579-596). 4 params, all default 0 (flam3's
+    // `clear_cp` is preceded by `memset(0)` on the genome in parser.c:229, and
+    // none of pdj_a/b/c/d are explicitly initialized in clear_cp → missing XML
+    // attrs parse as 0; Emberweft's descriptor default of 0 mirrors this).
+    //   nx1 = cos(pdj_b * tx); nx2 = sin(pdj_c * tx);
+    //   ny1 = sin(pdj_a * ty); ny2 = cos(pdj_d * ty);
+    //   p0 += w*(ny1 - nx1); p1 += w*(nx2 - ny2).
+    func testPdj() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        // Real ES edge genome 244.00178's pdj params (a corpus fixture).
+        let params: [String:Double] = ["pdj_a":0.2, "pdj_b":-1.18, "pdj_c":1.36, "pdj_d":-2.01]
+        let out = eval("pdj", p, 1.0, params)
+        let nx1 = cos(-1.18 * p.x)
+        let nx2 = sin( 1.36 * p.x)
+        let ny1 = sin( 0.20 * p.y)
+        let ny2 = cos(-2.01 * p.y)
+        XCTAssertEqual(out.x, 1.0 * (ny1 - nx1), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * (nx2 - ny2), accuracy: 1e-9)
+        // Weight folds into both p0 and p1 (outer factor).
+        let outW = eval("pdj", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(2.0*(ny1-nx1), 2.0*(nx2-ny2)), accuracy: 1e-9)
+        // Default-0 params (missing attrs → descriptor default 0):
+        //   nx1=cos(0)=1, nx2=sin(0)=0, ny1=sin(0)=0, ny2=cos(0)=1
+        //   → p0 += (0-1) = -1; p1 += (0-1) = -1 (constant, independent of p).
+        // A genome omitting pdj_a/b/c/d therefore gets a constant (-w, -w) term.
+        let outDefault = eval("pdj", p, 1.0, [:])
+        XCTAssertEqual(outDefault, SIMD2<Double>(-1, -1), accuracy: 1e-9)
+    }
+
+    // var74_split (variations.c:1603-1617). 2 params, default 0.
+    // NOTE: in the C source the p1 branch comes FIRST. p0/p1 accumulate
+    // independently (no carry), so order is observationally equivalent — but we
+    // mirror the C structure anyway. CROSS-COUPLING: tx controls p1, ty controls p0.
+    //   if (cos(tx*split_xsize*π) >= 0) p1 += w*ty  else  p1 -= w*ty;
+    //   if (cos(ty*split_ysize*π) >= 0) p0 += w*tx  else  p0 -= w*tx;
+    func testSplit() {
+        let params = ["split_xsize":0.4, "split_ysize":0.5]
+        // Case 1: both branches POSITIVE (small tx, ty).
+        //   cos(0.3*0.4*π)=cos(0.12π)≈0.930 ≥0 → p1 += 0.4
+        //   cos(0.4*0.5*π)=cos(0.20π)≈0.809 ≥0 → p0 += 0.3
+        let p1 = SIMD2<Double>(0.3, 0.4)
+        let out1 = eval("split", p1, 1.0, params)
+        XCTAssertEqual(out1.x,  1.0 * p1.x, accuracy: 1e-9)   // p0 += tx
+        XCTAssertEqual(out1.y,  1.0 * p1.y, accuracy: 1e-9)   // p1 += ty
+        // Case 2: branch 1 (p1) NEGATIVE; branch 2 (p0) still positive.
+        //   cos(3.0*0.4*π)=cos(1.2π)≈-0.809 <0 → p1 -= 0.4
+        //   cos(0.4*0.5*π)            ≥0      → p0 += 3.0
+        let p2 = SIMD2<Double>(3.0, 0.4)
+        let out2 = eval("split", p2, 1.0, params)
+        XCTAssertEqual(out2.x,  1.0 * p2.x, accuracy: 1e-9)
+        XCTAssertEqual(out2.y, -1.0 * p2.y, accuracy: 1e-9)
+        // Case 3: branch 1 (p1) positive; branch 2 (p0) NEGATIVE.
+        //   cos(0.3*0.4*π)≈0.930     ≥0      → p1 += 2.0
+        //   cos(2.0*0.5*π)=cos(π)=-1 <0      → p0 -= 0.3
+        let p3 = SIMD2<Double>(0.3, 2.0)
+        let out3 = eval("split", p3, 1.0, params)
+        XCTAssertEqual(out3.x, -1.0 * p3.x, accuracy: 1e-9)
+        XCTAssertEqual(out3.y,  1.0 * p3.y, accuracy: 1e-9)
+        // Case 4: BOTH branches negative.
+        //   cos(3.0*0.4*π) <0 → p1 -= ty; cos(2.0*0.5*π) <0 → p0 -= tx.
+        let p4 = SIMD2<Double>(3.0, 2.0)
+        let out4 = eval("split", p4, 1.0, params)
+        XCTAssertEqual(out4.x, -1.0 * p4.x, accuracy: 1e-9)
+        XCTAssertEqual(out4.y, -1.0 * p4.y, accuracy: 1e-9)
+        // Default-0 params (split_xsize=0, split_ysize=0):
+        //   cos(tx*0*π)=cos(0)=1 ≥0 → p1 += ty; cos(ty*0*π)=cos(0)=1 ≥0 → p0 += tx.
+        //   → (w*tx, w*ty): default-0 split acts as LINEAR. So a genome omitting
+        //   split_xsize/ysize attrs gets a plain pass-through (the dispatch guard
+        //   still requires weight != 0).
+        let outDefault = eval("split", SIMD2(0.7, -0.3), 1.0, [:])
+        XCTAssertEqual(outDefault, SIMD2<Double>(0.7, -0.3), accuracy: 1e-9)
+        // Weight folds into both p0 and p1.
+        let outW = eval("split", p1, 2.0, params)
+        XCTAssertEqual(outW.x, 2.0 * p1.x, accuracy: 1e-9)
+        XCTAssertEqual(outW.y, 2.0 * p1.y, accuracy: 1e-9)
+    }
+
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")

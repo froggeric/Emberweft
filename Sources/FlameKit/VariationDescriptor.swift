@@ -1,15 +1,15 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 42-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 44-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
-/// radial_blur + waves/popcorn/power/tangent/cross; spherical/polar counted
-/// once), per-variation params/defaults,
+/// radial_blur + waves/popcorn/power/tangent/cross + pdj/split; spherical/polar
+/// counted once), per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 37-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 44-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -19,8 +19,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 42-device-slot layout) ----
-    /// Fixed 42-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 44-device-slot layout) ----
+    /// Fixed 44-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -66,8 +66,17 @@ public struct VariationDescriptor: Sendable {
         "tangent",
         // var48_cross
         "cross",
+        // --- corpus-variations parametric non-RNG set (slots 42..43). Both are
+        //     parametric (4 + 2 params) with default 0 + 0 RNG draws → live in
+        //     the table closures, NOT `evaluate`'s switch. Verified formulas
+        //     against /private/tmp/flam3-build/variations.c (Task 2 CV2). ---
+        // var24_pdj: 4 params (pdj_a/b/c/d), all default 0.
+        "pdj",
+        // var74_split: 2 params (split_xsize/ysize), default 0. p1 branch FIRST
+        // in C source (observationally equivalent — p0/p1 accumulate separately).
+        "split",
     ]
-    /// Canonical device-slot index for a variation name (0..<42), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<44), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -144,6 +153,15 @@ public struct VariationDescriptor: Sendable {
         d("tangent", [], [:])
         // var48_cross (paramless)
         d("cross", [], [:])
+        // --- corpus-variations parametric non-RNG set (slots 42..43) ---
+        // var24_pdj (4 params, all default 0 — flam3 clear_cp is preceded by
+        // memset(0) on the genome in parser.c:229, and none of pdj_a/b/c/d are
+        // explicitly initialized in clear_cp → missing XML attrs parse as 0).
+        d("pdj", ["pdj_a","pdj_b","pdj_c","pdj_d"],
+          ["pdj_a":0,"pdj_b":0,"pdj_c":0,"pdj_d":0])
+        // var74_split (2 params, default 0; p1 branch FIRST in C source).
+        d("split", ["split_xsize","split_ysize"],
+          ["split_xsize":0,"split_ysize":0])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

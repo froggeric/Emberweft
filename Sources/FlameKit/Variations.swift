@@ -43,7 +43,11 @@ public enum Variations {
         // var42_tangent: paramless, RNG-free.
         "tangent",
         // var48_cross: paramless, RNG-free.
-        "cross"
+        "cross",
+        // var24_pdj: parametric (4 params, all default 0), RNG-free.
+        "pdj",
+        // var74_split: parametric (2 params, default 0), RNG-free.
+        "split"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -482,6 +486,38 @@ public enum Variations {
             let r = w * (1.0 / (s*s + eps)).squareRoot()
             return SIMD2(p.x * r, p.y * r)
         }
+        // var24_pdj (variations.c:579-596). 4 params, all default 0. Parametric;
+        // 0 RNG draws. Bounded trig of params·tx/ty (no poles).
+        //   nx1 = cos(pdj_b * tx); nx2 = sin(pdj_c * tx);
+        //   ny1 = sin(pdj_a * ty); ny2 = cos(pdj_d * ty);
+        //   p0 += w*(ny1 - nx1); p1 += w*(nx2 - ny2).
+        t["pdj"]         = { p, w, par, _ in
+            let a = resolve("pdj", "pdj_a", par)
+            let b = resolve("pdj", "pdj_b", par)
+            let c = resolve("pdj", "pdj_c", par)
+            let d = resolve("pdj", "pdj_d", par)
+            let nx1 = cos(b * p.x)
+            let nx2 = sin(c * p.x)
+            let ny1 = sin(a * p.y)
+            let ny2 = cos(d * p.y)
+            return SIMD2(w * (ny1 - nx1), w * (nx2 - ny2))
+        }
+        // var74_split (variations.c:1603-1617). 2 params, default 0. Parametric;
+        // 0 RNG draws. NOTE: the p1 branch comes FIRST in the C source (mirror
+        // the structure). CROSS-COUPLING: tx controls p1, ty controls p0.
+        //   if (cos(tx*split_xsize*π) >= 0) p1 += w*ty  else  p1 -= w*ty;
+        //   if (cos(ty*split_ysize*π) >= 0) p0 += w*tx  else  p0 -= w*tx;
+        // p0/p1 accumulate independently so order is observationally equivalent.
+        t["split"]       = { p, w, par, _ in
+            let xsize = resolve("split", "split_xsize", par)
+            let ysize = resolve("split", "split_ysize", par)
+            var p0 = 0.0, p1 = 0.0
+            if cos(p.x * xsize * .pi) >= 0 { p1 += w * p.y }
+            else                           { p1 -= w * p.y }
+            if cos(p.y * ysize * .pi) >= 0 { p0 += w * p.x }
+            else                           { p0 -= w * p.x }
+            return SIMD2(p0, p1)
+        }
 
         // ---- 14 special-sauce (M3): line-for-line ports of variations.c ----
 
@@ -630,8 +666,8 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 42-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
-    /// + pie + radial_blur + waves/popcorn/power/tangent/cross).
+    /// (the 44-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split).
     ///
     /// RNG-EQUIVALENCE NOTE: seven variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur). CPU
@@ -678,8 +714,11 @@ public extension Variations {
     /// left-to-right). Slots 37..41 are the corpus-variations paramless non-RNG
     /// set: `waves` (var15, needs affine c,d,e,f), `popcorn` (var17, e,f),
     /// `power` (var19, precalc sina/cosa), `tangent` (var42), `cross` (var48).
+    /// Slots 42..43 are the corpus-variations parametric non-RNG set:
+    /// `pdj` (var24, 4 params all default 0), `split` (var74, 2 params default 0;
+    /// p1 branch first in C source, tx controls p1 / ty controls p0).
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 42 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 44 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }
