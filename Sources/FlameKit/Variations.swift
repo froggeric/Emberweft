@@ -32,7 +32,18 @@ public enum Variations {
         "pie",
         // var36_radial_blur: 4 isaac_01 draws summed left-to-right
         // (weight*(d1+d2+d3+d4-2)). RNG-consuming → lives in `evaluate`'s switch.
-        "radial_blur"
+        "radial_blur",
+        // var15_waves: paramless, RNG-free; needs affine c,d,e,f
+        // (waves_dx2=1/(e²+EPS), waves_dy2=1/(f²+EPS)).
+        "waves",
+        // var17_popcorn: paramless, RNG-free; needs affine e,f.
+        "popcorn",
+        // var19_power: paramless, RNG-free; precalc sina/cosa/sqrt.
+        "power",
+        // var42_tangent: paramless, RNG-free.
+        "tangent",
+        // var48_cross: paramless, RNG-free.
+        "cross"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -50,20 +61,22 @@ public enum Variations {
     /// and only checks `badvalue` on the final post-affine result (variations.c:2392).
     /// The chaos game performs that check + 2-word redraw (ChaosGame badvalue path).
     ///
-    /// `ef` carries the xform's affine translation coefficients `e`=`c[2][0]` and
-    /// `f`=`c[2][1]`, needed by the coefficient-dependent variations `rings`/`fan`
-    /// (variations.c:521,543). `rng` is threaded for the seven RNG-consuming
-    /// variations (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur):
-    /// julia/julian/juliascope/super_shape/wedge_julia each draw one
-    /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
-    /// `isaac_01` words in flam3's exact order (slice → angular → radial);
-    /// `radial_blur` draws four `isaac_01` words summed left-to-right into
-    /// `weight*(d1+d2+d3+d4-2.0)`.
+    /// `affine` carries the xform's pre-affine 2×2 + translation as a SIMD4 of
+    /// `(c, d, e, f)` (flam3 `c[1][0], c[1][1], c[2][0], c[2][1]`), needed by the
+    /// coefficient-dependent variations: `rings`/`fan` (use e,f;
+    /// variations.c:521,543), `waves` (uses c,d,e,f; variations.c:405-409),
+    /// `popcorn` (uses e,f; variations.c:442-446). `rng` is threaded for the
+    /// seven RNG-consuming variations (julia/julian/juliascope/super_shape/
+    /// wedge_julia/pie/radial_blur): julia/julian/juliascope/super_shape/
+    /// wedge_julia each draw one `flam3_random_isaac_01`/`_bit` word when
+    /// reached; `pie` draws three `isaac_01` words in flam3's exact order
+    /// (slice → angular → radial); `radial_blur` draws four `isaac_01` words
+    /// summed left-to-right into `weight*(d1+d2+d3+d4-2.0)`.
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
     public static func evaluate(_ variations: [Variation], at p: SIMD2<Double>,
-                                ef: SIMD2<Double>, rng: inout ISAAC) -> SIMD2<Double> {
+                                affine: SIMD4<Double>, rng: inout ISAAC) -> SIMD2<Double> {
         var acc = SIMD2<Double>.zero
         for v in variations {
             guard v.weight != 0 else { continue }
@@ -85,7 +98,7 @@ public enum Variations {
                 term = wedgeJulia(p, weight: v.weight, params: v.parameters, rng: &rng)
             default:
                 if let fn = table[v.name] {
-                    term = fn(p, v.weight, v.parameters, ef)
+                    term = fn(p, v.weight, v.parameters, affine)
                 } else {
                     warnUnknown(v.name)
                     continue
@@ -284,12 +297,17 @@ public enum Variations {
     // first access and never mutated; the closures it holds are pure (no shared
     // mutable state). The CPU reference path is single-threaded by design.
     //
-    // Each closure takes `(p, weight, params, ef)` and returns the term that
+    // Each closure takes `(p, weight, params, affine)` and returns the term that
     // flam3 would add to `f.p0`/`f.p1`, with weight folded in at flam3's exact
     // position. Formulas are line-for-line ports of flam3 variations.c (varN_*),
     // using flam3's `precalc_atan = atan2(tx, ty)` = atan2(x, y),
     // `precalc_atanyx = atan2(ty, tx)` = atan2(y, x), and `EPS = 1e-10`
     // (private.h:47). C source lines cited per closure.
+    //
+    // `affine` is SIMD4(c, d, e, f) = flam3 c[1][0], c[1][1], c[2][0], c[2][1]:
+    // the xform's pre-affine 2×2 second row + translation. Used by the four
+    // coefficient-dependent variations: `rings` (e), `fan` (e,f), `waves`
+    // (c,d,e,f), `popcorn` (e,f). All other closures ignore it (`_`).
     //
     // NOTE on sina/cosa: flam3 computes `precalc_sina = tx/sqrt`,
     // `precalc_cosa = ty/sqrt` (variations.c:2164-2165). These equal
@@ -297,8 +315,8 @@ public enum Variations {
     // (spiral/hyperbolic/diamond/…) uses the `cos(a)`/`sin(a)` form, so the new
     // ports follow that same convention for table-wide consistency. The ULP-level
     // difference is inside the M1 statistical-parity envelope.
-    private nonisolated(unsafe) static let table: [String: (SIMD2<Double>, Double, [String: Double], SIMD2<Double>) -> SIMD2<Double>] = {
-        var t: [String: (SIMD2<Double>, Double, [String: Double], SIMD2<Double>) -> SIMD2<Double>] = [:]
+    private nonisolated(unsafe) static let table: [String: (SIMD2<Double>, Double, [String: Double], SIMD4<Double>) -> SIMD2<Double>] = {
+        var t: [String: (SIMD2<Double>, Double, [String: Double], SIMD4<Double>) -> SIMD2<Double>] = [:]
         let eps = 1e-10
         // var0_linear (variations.c:143-152): p0 += weight*tx
         t["linear"]      = { p, w, _, _ in SIMD2(w * p.x, w * p.y) }
@@ -414,27 +432,79 @@ public enum Variations {
             let r = (w * 2.0) / ((p.x*p.x + p.y*p.y).squareRoot() + 1.0)
             return SIMD2(r * p.x, r * p.y)
         }
+        // var15_waves (variations.c:396-413) + waves_precalc (L1969-1975).
+        //   waves_dx2 = 1/(e²+EPS); waves_dy2 = 1/(f²+EPS); (e=c[2][0], f=c[2][1])
+        //   nx = tx + c * sin(ty * waves_dx2);                (c = c[1][0])
+        //   ny = ty + d * sin(tx * waves_dy2);                (d = c[1][1])
+        //   (w*nx, w*ny). Paramless; 0 RNG draws. Needs affine c,d,e,f.
+        t["waves"]       = { p, w, _, affine in
+            let c = affine.x, d = affine.y, e = affine.z, f = affine.w
+            let wavesDx2 = 1.0 / (e*e + eps)                 // 1/(e²+EPS)
+            let wavesDy2 = 1.0 / (f*f + eps)                 // 1/(f²+EPS)
+            let nx = p.x + c * sin(p.y * wavesDx2)
+            let ny = p.y + d * sin(p.x * wavesDy2)
+            return SIMD2(w * nx, w * ny)
+        }
+        // var17_popcorn (variations.c:433-450) — affine e,f (c[2][0], c[2][1]).
+        //   dx = tan(3*ty); dy = tan(3*tx);
+        //   nx = tx + e * sin(dx); ny = ty + f * sin(dy);
+        //   (w*nx, w*ny). Paramless; 0 RNG draws.
+        t["popcorn"]     = { p, w, _, affine in
+            let e = affine.z, f = affine.w
+            let dx = tan(3.0 * p.y)
+            let dy = tan(3.0 * p.x)
+            let nx = p.x + e * sin(dx)
+            let ny = p.y + f * sin(dy)
+            return SIMD2(w * nx, w * ny)
+        }
+        // var19_power (variations.c:472-487) — precalc sina/cosa/sqrt.
+        //   sina = tx/sqrt; cosa = ty/sqrt; sqrt = sqrt(tx²+ty²)
+        //   r = w * pow(sqrt, sina); (r*cosa, r*sina).
+        //   Paramless; 0 RNG draws.
+        t["power"]       = { p, w, _, _ in
+            let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+            let sina = p.x / precalcSqrt                     // precalc_sina = tx/sqrt
+            let cosa = p.y / precalcSqrt                     // precalc_cosa = ty/sqrt
+            let r = w * pow(precalcSqrt, sina)
+            return SIMD2(r * cosa, r * sina)
+        }
+        // var42_tangent (variations.c:885-898).
+        //   p0 += w * sin(tx)/cos(ty); p1 += w * tan(ty).
+        //   Paramless; 0 RNG draws.
+        t["tangent"]     = { p, w, _, _ in
+            SIMD2(w * sin(p.x) / cos(p.y), w * tan(p.y))
+        }
+        // var48_cross (variations.c:1033-1052).
+        //   s = tx² - ty²; r = w * sqrt(1/(s²+EPS));
+        //   (tx*r, ty*r). Paramless; 0 RNG draws.
+        t["cross"]       = { p, w, _, _ in
+            let s = p.x*p.x - p.y*p.y
+            let r = w * (1.0 / (s*s + eps)).squareRoot()
+            return SIMD2(p.x * r, p.y * r)
+        }
 
         // ---- 14 special-sauce (M3): line-for-line ports of variations.c ----
 
-        // var21_rings (variations.c:509-527) — ef.x = c[2][0] = e.
+        // var21_rings (variations.c:509-527) — affine.z = c[2][0] = e.
         //   dx = e*e + EPS; r = precalc_sqrt;
         //   r = w*(fmod(r+dx,2*dx) - dx + r*(1-dx));
         //   (r*cosa, r*sina) where cosa=cos(atan2(x,y)), sina=sin(atan2(x,y)).
-        t["rings"] = { p, w, _, ef in
-            let dx = ef.x*ef.x + eps
+        t["rings"] = { p, w, _, affine in
+            let e = affine.z
+            let dx = e*e + eps
             var r = (p.x*p.x + p.y*p.y).squareRoot()          // precalc_sqrt
             let a = atan2(p.x, p.y)                            // precalc_atan = atan2(x,y)
             r = w * (fmod(r + dx, 2*dx) - dx + r * (1 - dx))
             return SIMD2(r * cos(a), r * sin(a))               // r*cosa, r*sina
         }
-        // var22_fan (variations.c:529-556) — ef.x=e=c[2][0], ef.y=f=c[2][1].
+        // var22_fan (variations.c:529-556) — affine.z=e=c[2][0], affine.w=f=c[2][1].
         //   dx = π*(e*e+EPS); dy = f; dx2 = dx/2; a = precalc_atan;
         //   a += (fmod(a+dy,dx) > dx2) ? -dx2 : dx2;
         //   r = w*precalc_sqrt; (r*cos a, r*sin a).
-        t["fan"] = { p, w, _, ef in
-            let dx = .pi * (ef.x*ef.x + eps)
-            let dy = ef.y
+        t["fan"] = { p, w, _, affine in
+            let e = affine.z, f = affine.w
+            let dx = .pi * (e*e + eps)
+            let dy = f
             let dx2 = 0.5 * dx
             var a = atan2(p.x, p.y)                            // precalc_atan
             let r = w * (p.x*p.x + p.y*p.y).squareRoot()
@@ -560,8 +630,8 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 37-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
-    /// + pie + radial_blur).
+    /// (the 42-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// + pie + radial_blur + waves/popcorn/power/tangent/cross).
     ///
     /// RNG-EQUIVALENCE NOTE: seven variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur). CPU
@@ -605,8 +675,11 @@ public extension Variations {
     /// paramless), slot 34 is `eyefish` (var27, paramless, NOT a fisheye alias),
     /// slot 35 is `pie` (var37, RNG-consuming, 3 ordered isaac_01 draws),
     /// slot 36 is `radial_blur` (var36, RNG-consuming, 4 isaac_01 draws summed
-    /// left-to-right). `apply_xform_body` reads them positionally and pulls
+    /// left-to-right). Slots 37..41 are the corpus-variations paramless non-RNG
+    /// set: `waves` (var15, needs affine c,d,e,f), `popcorn` (var17, e,f),
+    /// `power` (var19, precalc sina/cosa), `tangent` (var42), `cross` (var48).
+    /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 37 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 42 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

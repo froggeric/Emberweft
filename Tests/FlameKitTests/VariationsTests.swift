@@ -2,13 +2,14 @@ import XCTest
 @testable import FlameKit
 
 final class VariationsTests: XCTestCase {
-    /// Single-variation eval helper. `ef` carries the xform's affine e,f
-    /// coefficients (needed by rings/fan); params holds the full XML param keys.
+    /// Single-variation eval helper. `affine` carries the xform's pre-affine
+    /// 2×2 + translation as SIMD4(c, d, e, f) (needed by rings/fan/waves/popcorn);
+    /// params holds the full XML param keys.
     private func eval(_ name: String, _ p: SIMD2<Double>, _ w: Double = 1,
-                      _ params: [String:Double] = [:], _ ef: SIMD2<Double> = .zero) -> SIMD2<Double> {
+                      _ params: [String:Double] = [:], _ affine: SIMD4<Double> = .zero) -> SIMD2<Double> {
         var rng = ISAAC(isaacSeed: "variations-test")
         return Variations.evaluate([Variation(name: name, weight: w, parameters: params)],
-                                   at: p, ef: ef, rng: &rng)
+                                   at: p, affine: affine, rng: &rng)
     }
     func testLinearIsIdentity() {
         let p = SIMD2<Double>(0.3, -0.7)
@@ -87,12 +88,75 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(eye,  SIMD2<Double>(r*p.x, r*p.y), accuracy: 1e-9)   // un-swapped
         XCTAssertEqual(fish, SIMD2<Double>(r*p.y, r*p.x), accuracy: 1e-9)   // swapped
     }
+
+    // MARK: - corpus-variations paramless non-RNG set (slots 37..41).
+    // Hand-traced closed forms against flam3 variations.c.
+
+    // var15_waves (variations.c:396-413) + waves_precalc (L1969-1975).
+    //   waves_dx2 = 1/(e²+EPS); waves_dy2 = 1/(f²+EPS);
+    //   nx = tx + c·sin(ty·dx2); ny = ty + d·sin(tx·dy2); (w·nx, w·ny).
+    //   affine SIMD4 = (c, d, e, f).
+    func testWaves() {
+        let p = SIMD2<Double>(0.2, 0.3)
+        let (c, d, e, f) = (Double(0.3), Double(0.4), Double(0.5), Double(0.6))
+        let out = eval("waves", p, 1.0, [:], SIMD4(c, d, e, f))
+        let eps = 1e-10
+        let dx2 = 1.0 / (e*e + eps)
+        let dy2 = 1.0 / (f*f + eps)
+        let nx = p.x + c * sin(p.y * dx2)
+        let ny = p.y + d * sin(p.x * dy2)
+        XCTAssertEqual(out, SIMD2<Double>(nx, ny), accuracy: 1e-9)
+        // Weight folds into both nx and ny (weight is on the outer term).
+        let out2 = eval("waves", p, 2.0, [:], SIMD4(c, d, e, f))
+        XCTAssertEqual(out2, SIMD2<Double>(2.0*nx, 2.0*ny), accuracy: 1e-9)
+    }
+    // var17_popcorn (variations.c:433-450). affine SIMD4 = (c, d, e, f); reads e,f.
+    //   dx = tan(3·ty); dy = tan(3·tx); nx = tx + e·sin(dx); ny = ty + f·sin(dy).
+    func testPopcorn() {
+        let p = SIMD2<Double>(0.2, 0.3)
+        let (e, f) = (Double(0.5), Double(0.6))
+        let out = eval("popcorn", p, 1.0, [:], SIMD4(0, 0, e, f))
+        let dx = tan(3.0 * p.y); let dy = tan(3.0 * p.x)
+        let nx = p.x + e * sin(dx); let ny = p.y + f * sin(dy)
+        XCTAssertEqual(out, SIMD2<Double>(nx, ny), accuracy: 1e-9)
+    }
+    // var19_power (variations.c:472-487) — precalc sina/cosa/sqrt.
+    //   sina = tx/sqrt; cosa = ty/sqrt; r = w·pow(sqrt, sina); (r·cosa, r·sina).
+    func testPower() {
+        // (0.6, 0.8): sqrt=1.0, sina=0.6, cosa=0.8 → pow(1.0, 0.6)=1.0 → (0.8, 0.6)
+        XCTAssertEqual(eval("power", SIMD2(0.6, 0.8), 1.0),
+                       SIMD2<Double>(0.8, 0.6), accuracy: 1e-9)
+        // General case at (0.3, 0.4): sqrt=0.5, sina=0.6, cosa=0.8.
+        let p = SIMD2<Double>(0.3, 0.4)
+        let ps = (p.x*p.x + p.y*p.y).squareRoot()
+        let sina = p.x / ps, cosa = p.y / ps
+        let r = 1.0 * pow(ps, sina)
+        XCTAssertEqual(eval("power", p, 1.0), SIMD2<Double>(r*cosa, r*sina), accuracy: 1e-9)
+    }
+    // var42_tangent (variations.c:885-898).
+    //   p0 += w·sin(tx)/cos(ty); p1 += w·tan(ty).
+    func testTangent() {
+        let p = SIMD2<Double>(0.5, 0.4)
+        let out = eval("tangent", p, 1.0)
+        XCTAssertEqual(out.x, sin(0.5)/cos(0.4), accuracy: 1e-9)
+        XCTAssertEqual(out.y, tan(0.4), accuracy: 1e-9)
+    }
+    // var48_cross (variations.c:1033-1052).
+    //   s = tx² - ty²; r = w·sqrt(1/(s²+EPS)); (tx·r, ty·r).
+    func testCross() {
+        let p = SIMD2<Double>(0.6, 0.8)
+        let out = eval("cross", p, 1.0)
+        let eps = 1e-10
+        let s = p.x*p.x - p.y*p.y
+        let r = 1.0 * (1.0 / (s*s + eps)).squareRoot()
+        XCTAssertEqual(out, SIMD2<Double>(p.x*r, p.y*r), accuracy: 1e-9)
+    }
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")
         let p = SIMD2<Double>(0.5, 0.5)
-        let a = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, ef: .zero, rng: &r1)
-        let b = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, ef: .zero, rng: &r2)
+        let a = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, affine: .zero, rng: &r1)
+        let b = Variations.evaluate([Variation(name: "julia", weight: 1)], at: p, affine: .zero, rng: &r2)
         XCTAssertEqual(a, b, accuracy: 1e-6)        // same seed => same bit => same output
     }
 
@@ -102,9 +166,10 @@ final class VariationsTests: XCTestCase {
     // var21_rings (variations.c:509-527): dx = e*e + EPS; r = precalc_sqrt;
     //   r = w*( fmod(r+dx, 2*dx) - dx + r*(1-dx) ); (r*cos(a), r*sin(a))
     //   where a = precalc_atan = atan2(x,y); cosa/sina via cos/sin(atan).
+    //   affine SIMD4 = (c, d, e, f); rings only reads e (at .z).
     func testRings() {
         let p = SIMD2<Double>(0.5, 0.0); let e = 0.7; let eps = 1e-10
-        let out = eval("rings", p, 1.0, [:], SIMD2(e, 0.0))
+        let out = eval("rings", p, 1.0, [:], SIMD4(0, 0, e, 0))
         let dx = e*e + eps; let r = sqrt(p.x*p.x + p.y*p.y); let a = atan2(p.x, p.y)
         let rr = 1.0 * (fmod(r+dx, 2*dx) - dx + r*(1-dx))
         XCTAssertEqual(out.x, rr*cos(a), accuracy: 1e-9)
@@ -113,9 +178,10 @@ final class VariationsTests: XCTestCase {
     // var22_fan (variations.c:529-556): dx = π*(e*e+EPS); dy = f; dx2 = dx/2;
     //   a = atan2(x,y); a += (fmod(a+dy,dx) > dx2) ? -dx2 : dx2;
     //   r = w*sqrt; (r*cos a, r*sin a).
+    //   affine SIMD4 = (c, d, e, f); fan reads e (.z) and f (.w).
     func testFan() {
         let p = SIMD2<Double>(0.3, 0.4); let e = 0.5; let f = 0.2
-        let out = eval("fan", p, 1.0, [:], SIMD2(e, f))
+        let out = eval("fan", p, 1.0, [:], SIMD4(0, 0, e, f))
         let dx = .pi*(e*e + 1e-10); let dy = f; let dx2 = 0.5*dx
         var a = atan2(p.x, p.y); let r = 1.0*sqrt(p.x*p.x+p.y*p.y)
         a += (fmod(a+dy, dx) > dx2) ? -dx2 : dx2
@@ -237,7 +303,7 @@ final class VariationsTests: XCTestCase {
         let p = SIMD2<Double>(0.3, 0.2)
         let out = Variations.evaluate(
             [Variation(name: "julian", weight: 1, parameters: ["julian_power":2,"julian_dist":1.0])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         _ = rng2.isaac01()   // julian consumed exactly one word from rng1
         XCTAssertTrue(out.x.isFinite, "julian x not finite")
         XCTAssertTrue(out.y.isFinite, "julian y not finite")
@@ -249,7 +315,7 @@ final class VariationsTests: XCTestCase {
         let p = SIMD2<Double>(0.3, 0.2)
         let out = Variations.evaluate(
             [Variation(name: "juliascope", weight: 1, parameters: ["juliascope_power":2,"juliascope_dist":1.0])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         _ = rng2.isaac01()
         XCTAssertTrue(out.x.isFinite); XCTAssertTrue(out.y.isFinite)
         XCTAssertEqual(rng1.isaac01(), rng2.isaac01())
@@ -263,7 +329,7 @@ final class VariationsTests: XCTestCase {
             [Variation(name: "super_shape", weight: 1, parameters: [
                 "super_shape_rnd":0,"super_shape_m":4,"super_shape_n1":2,
                 "super_shape_n2":2,"super_shape_n3":2,"super_shape_holes":0])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         _ = rng2.isaac01()   // super_shape consumed one word (unconditional draw)
         XCTAssertTrue(out.x.isFinite, "super_shape x not finite at \(p)")
         XCTAssertTrue(out.y.isFinite, "super_shape y not finite at \(p)")
@@ -277,7 +343,7 @@ final class VariationsTests: XCTestCase {
             [Variation(name: "wedge_julia", weight: 1, parameters: [
                 "wedge_julia_angle":0.3,"wedge_julia_count":3,
                 "wedge_julia_power":2,"wedge_julia_dist":1.0])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         _ = rng2.isaac01()
         XCTAssertTrue(out.x.isFinite); XCTAssertTrue(out.y.isFinite)
         XCTAssertEqual(rng1.isaac01(), rng2.isaac01())
@@ -298,7 +364,7 @@ final class VariationsTests: XCTestCase {
         let out = Variations.evaluate(
             [Variation(name: "pie", weight: 1,
                        parameters: ["pie_slices":6, "pie_rotation":0.0, "pie_thickness":0.5])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         // pie consumed exactly 3 words (slice, angular, radial) from rng1.
         _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
         XCTAssertTrue(out.x.isFinite, "pie x not finite")
@@ -318,7 +384,7 @@ final class VariationsTests: XCTestCase {
         let params: [String: Double] = ["pie_slices":6, "pie_rotation":0.0, "pie_thickness":0.5]
         let out = Variations.evaluate(
             [Variation(name: "pie", weight: 1, parameters: params)],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         // SPEC ORDER (variations.c:799-805): slice draw → angular draw (inside
         // `a`'s parens) → radial draw. Match the formula term-for-term.
         let slices = 6.0, rotation = 0.0, thickness = 0.5
@@ -350,7 +416,7 @@ final class VariationsTests: XCTestCase {
         let out = Variations.evaluate(
             [Variation(name: "radial_blur", weight: 1,
                        parameters: ["radial_blur_angle": 0.0])],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         // radial_blur consumed exactly 4 words from rng1.
         _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
         XCTAssertTrue(out.x.isFinite, "radial_blur x not finite")
@@ -372,7 +438,7 @@ final class VariationsTests: XCTestCase {
         let params: [String: Double] = ["radial_blur_angle": -0.583296]
         let out = Variations.evaluate(
             [Variation(name: "radial_blur", weight: 1, parameters: params)],
-            at: p, ef: .zero, rng: &rng1)
+            at: p, affine: .zero, rng: &rng1)
         // SPEC ORDER (variations.c:775-793): four isaac_01 draws summed
         // left-to-right into rndG = weight*(d1+d2+d3+d4 - 2.0). Match term-for-term.
         let angle = -0.583296
@@ -408,7 +474,7 @@ final class VariationsTests: XCTestCase {
         let v = [Variation(name: "julia", weight: 1),
                  Variation(name: "julian", weight: 1,
                            parameters: ["julian_power":2, "julian_dist":1.0])]
-        let out = Variations.evaluate(v, at: p, ef: .zero, rng: &rngShared)
+        let out = Variations.evaluate(v, at: p, affine: .zero, rng: &rngShared)
         XCTAssertTrue(out.x.isFinite); XCTAssertTrue(out.y.isFinite)
         // Each variation consumed exactly 1 word → 2 words total.
         var rngRef = ISAAC(isaacSeed: "align")
@@ -440,7 +506,7 @@ final class VariationsTests: XCTestCase {
             if name == "perspective" { continue }
             let point = m1Names.contains(name) ? origin : nonSingular
             var rng = ISAAC(isaacSeed: "finiteness")
-            let r = Variations.evaluate([Variation(name: name, weight: 1)], at: point, ef: .zero, rng: &rng)
+            let r = Variations.evaluate([Variation(name: name, weight: 1)], at: point, affine: .zero, rng: &rng)
             XCTAssertTrue(r.x.isFinite, "\(name) at \(point) x not finite")
             XCTAssertTrue(r.y.isFinite, "\(name) at \(point) y not finite")
         }
@@ -449,7 +515,7 @@ final class VariationsTests: XCTestCase {
         Variations.resetWarnings()
         var rng = ISAAC(isaacSeed: "unknown-var")
         XCTAssertEqual(Variations.evaluate([Variation(name: "not_a_real_variation", weight: 5)],
-                                          at: SIMD2(1, 1), ef: .zero, rng: &rng), .zero)
+                                          at: SIMD2(1, 1), affine: .zero, rng: &rng), .zero)
         XCTAssertTrue(Variations.warnings.contains("not_a_real_variation"))
     }
     func testOverflowingVariationPropagatesToBadvalue() {
@@ -461,7 +527,7 @@ final class VariationsTests: XCTestCase {
         let r = Variations.evaluate(
             [Variation(name: "linear", weight: 0.5),
              Variation(name: "cosine", weight: 0.5)],
-            at: SIMD2<Double>(1, 1e9), ef: .zero, rng: &rng)
+            at: SIMD2<Double>(1, 1e9), affine: .zero, rng: &rng)
         XCTAssertFalse(r.y.isFinite, "Inf from cosine must propagate, not be dropped")
     }
 }

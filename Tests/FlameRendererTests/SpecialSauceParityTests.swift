@@ -120,6 +120,33 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("radial_blur", ["radial_blur_angle": 0.0], weight: 0.4)
     }
 
+    // ---- corpus-variations paramless non-RNG set (slots 37..41).
+    // All paramless, 0 RNG draws → expect inf dB / 1.0 SSIM (byte-exact when the
+    // affine is the same on both sides), like bubble/eyefish before them. The
+    // affine passed by assertParity (a=0.6,b=0.2,c=-0.3,d=0.5,e=0.5,f=0.3) gives
+    // waves/popcorn meaningful c,d,e,f to consume. ----
+
+    // var15_waves (variations.c:396-413): paramless; needs affine c,d,e,f.
+    // waves_dx2=1/(e²+EPS), waves_dy2=1/(f²+EPS); (w·nx, w·ny).
+    @MainActor func testWaves() throws    { try assertParity("waves", [:]) }
+    // var17_popcorn (variations.c:433-450): paramless; needs affine e,f.
+    @MainActor func testPopcorn() throws  { try assertParity("popcorn", [:]) }
+    // var19_power (variations.c:472-487): paramless; precalc sina/cosa/sqrt.
+    @MainActor func testPower() throws    { try assertParity("power", [:]) }
+    // var42_tangent (variations.c:885-898): paramless. The formula
+    //   p1 += weight * tan(ty)
+    // has poles at ty = (n+1/2)·π; under the default assertParity affine
+    // (e=0.5, f=0.3) the orbit can land near the pole at π/2 ≈ 1.5708, where
+    // Float-vs-Double ULP noise is amplified to large trajectory divergence
+    // (expected statistical divergence, not a port bug — the MSL port is
+    // byte-faithful, as the CPU testTangent closed-form test pins at 1e-9).
+    // Weight=0.4 (the radial_blur precedent) keeps the orbit's feedback term
+    // 0.5·w·tan(ty) bounded so the next iter's ty stays well clear of the
+    // pole — same chaos-taming idea as radial_blur/ngon/perspective/wedge_sph.
+    @MainActor func testTangent() throws  { try assertParity("tangent", [:], weight: 0.4) }
+    // var48_cross (variations.c:1033-1052): paramless.
+    @MainActor func testCross() throws    { try assertParity("cross", [:]) }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

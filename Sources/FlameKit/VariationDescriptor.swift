@@ -1,8 +1,9 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 37-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 42-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
-/// radial_blur; spherical/polar counted once), per-variation params/defaults,
+/// radial_blur + waves/popcorn/power/tangent/cross; spherical/polar counted
+/// once), per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
@@ -18,13 +19,16 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 37-device-slot layout) ----
-    /// Fixed 37-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 42-device-slot layout) ----
+    /// Fixed 42-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
     /// preserve existing slots 0..32; then `pie` (var37, RNG-consuming, slot 35)
-    /// and `radial_blur` (var36, RNG-consuming, slot 36).
+    /// and `radial_blur` (var36, RNG-consuming, slot 36); then the corpus-
+    /// variations paramless non-RNG set: `waves` (var15, needs affine c,d,e,f),
+    /// `popcorn` (var17, e,f), `power` (var19, precalc sina/cosa), `tangent`
+    /// (var42), `cross` (var48) at slots 37..41.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -48,8 +52,22 @@ public struct VariationDescriptor: Sendable {
         //     `evaluate`'s switch, NOT the table. Unblocks 00000 (the last
         //     `.knownGap` fixture). ---
         "radial_blur",
+        // --- corpus-variations paramless non-RNG set (slots 37..41). Each is
+        //     paramless + 0 RNG draws → lives in the table closures, NOT
+        //     `evaluate`'s switch. Verified formulas against
+        //     /private/tmp/flam3-build/variations.c (Task 1 CV1). ---
+        // var15_waves: needs affine c,d,e,f (waves_dx2=1/(e²+EPS), dy2=1/(f²+EPS))
+        "waves",
+        // var17_popcorn: needs affine e,f
+        "popcorn",
+        // var19_power: precalc sina/cosa/sqrt
+        "power",
+        // var42_tangent
+        "tangent",
+        // var48_cross
+        "cross",
     ]
-    /// Canonical device-slot index for a variation name (0..<37), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<42), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -115,6 +133,17 @@ public struct VariationDescriptor: Sendable {
         // into rndG = weight*(d1+d2+d3+d4-2). RNG-consuming → lives in
         // `evaluate`'s switch, NOT the closure table.
         d("radial_blur", ["radial_blur_angle"], ["radial_blur_angle":0])
+        // --- corpus-variations paramless non-RNG set (slots 37..41) ---
+        // var15_waves (paramless; needs affine c,d,e,f)
+        d("waves", [], [:])
+        // var17_popcorn (paramless; needs affine e,f)
+        d("popcorn", [], [:])
+        // var19_power (paramless; precalc sina/cosa/sqrt)
+        d("power", [], [:])
+        // var42_tangent (paramless)
+        d("tangent", [], [:])
+        // var48_cross (paramless)
+        d("cross", [], [:])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

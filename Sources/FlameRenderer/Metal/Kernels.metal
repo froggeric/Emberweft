@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+37+(37*8) = 348 floats = 1392 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+42+(42*8) = 393 floats = 1572 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 37
+#define NUM_XFORM_SLOTS_MS 42
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 37
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 37*8 = 296
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 42
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 42*8 = 336
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 37 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 42 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 37 variation terms (canonical slot order). Each returns the term that CPU
+// 42 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -210,6 +210,49 @@ static inline float2 v_bubble(float2 p, float w) {
 static inline float2 v_eyefish(float2 p, float w) {
     float r = (w * 2.0f) / (sqrt(p.x*p.x + p.y*p.y) + 1.0f);
     return float2(r * p.x, r * p.y);
+}
+// var15_waves (variations.c:396-413) + waves_precalc (L1969-1975).
+//   waves_dx2 = 1/(e²+EPS); waves_dy2 = 1/(f²+EPS);  (e = c[2][0], f = c[2][1])
+//   nx = p.x + c*sin(p.y*waves_dx2);   ny = p.y + d*sin(p.x*waves_dy2);
+//   (w*nx, w*ny). Paramless; 0 RNG draws. Needs affine c,d,e,f.
+static inline float2 v_waves(float2 p, float w, float c, float d, float e, float f) {
+    float waves_dx2 = 1.0f / (e*e + EPS_MS);
+    float waves_dy2 = 1.0f / (f*f + EPS_MS);
+    float nx = p.x + c * sin(p.y * waves_dx2);
+    float ny = p.y + d * sin(p.x * waves_dy2);
+    return float2(w * nx, w * ny);
+}
+// var17_popcorn (variations.c:433-450). Paramless; 0 RNG draws. Needs affine e,f.
+//   dx = tan(3*ty); dy = tan(3*tx);
+//   nx = tx + e*sin(dx); ny = ty + f*sin(dy); (w*nx, w*ny).
+static inline float2 v_popcorn(float2 p, float w, float e, float f) {
+    float dx = tan(3.0f * p.y);
+    float dy = tan(3.0f * p.x);
+    float nx = p.x + e * sin(dx);
+    float ny = p.y + f * sin(dy);
+    return float2(w * nx, w * ny);
+}
+// var19_power (variations.c:472-487) — precalc sina/cosa/sqrt.
+//   sina = tx/sqrt; cosa = ty/sqrt; sqrt = sqrt(tx²+ty²);
+//   r = w*pow(sqrt, sina); (r*cosa, r*sina). Paramless; 0 RNG draws.
+static inline float2 v_power(float2 p, float w) {
+    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float sina = p.x / ps;
+    float cosa = p.y / ps;
+    float r = w * pow(ps, sina);
+    return float2(r * cosa, r * sina);
+}
+// var42_tangent (variations.c:885-898).
+//   (w * sin(tx)/cos(ty), w * tan(ty)). Paramless; 0 RNG draws.
+static inline float2 v_tangent(float2 p, float w) {
+    return float2(w * sin(p.x) / cos(p.y), w * tan(p.y));
+}
+// var48_cross (variations.c:1033-1052).
+//   s = tx² - ty²; r = w*sqrt(1/(s²+EPS)); (tx*r, ty*r). Paramless; 0 RNG draws.
+static inline float2 v_cross(float2 p, float w) {
+    float s = p.x*p.x - p.y*p.y;
+    float r = w * sqrt(1.0f / (s*s + EPS_MS));
+    return float2(p.x * r, p.y * r);
 }
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
@@ -492,7 +535,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 37 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 42 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur also consume the RNG (julian/juliascope/wedge_julia: one isaac_01
 // each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
 // radial_blur: FOUR isaac_01s summed left-to-right).
@@ -554,6 +597,17 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // summed left-to-right into rndG = w*(d1+d2+d3+d4-2)).
     // Param order in pr[0] = descriptor-declared order: radial_blur_angle.
     if (w[36] != 0.0f) acc += v_radial_blur(pre, w[36], &x.varParams[36*SLOT_WIDTH_MS], rng);
+    // ---- corpus-variations paramless non-RNG set (slots 37..41). ----
+    // slot 37 — waves (var15_waves, paramless; needs affine c,d,e,f).
+    if (w[37] != 0.0f) acc += v_waves(pre, w[37], x.c, x.d, x.e, x.f);
+    // slot 38 — popcorn (var17_popcorn, paramless; needs affine e,f).
+    if (w[38] != 0.0f) acc += v_popcorn(pre, w[38], x.e, x.f);
+    // slot 39 — power (var19_power, paramless; precalc sina/cosa/sqrt).
+    if (w[39] != 0.0f) acc += v_power(pre, w[39]);
+    // slot 40 — tangent (var42_tangent, paramless).
+    if (w[40] != 0.0f) acc += v_tangent(pre, w[40]);
+    // slot 41 — cross (var48_cross, paramless).
+    if (w[41] != 0.0f) acc += v_cross(pre, w[41]);
     return apply_post(x, acc);
 }
 
