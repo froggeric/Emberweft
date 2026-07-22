@@ -73,6 +73,36 @@ swift run emberweft --list-backends
 
 `--backend cpu` is the default. `metal` is used when a Metal device is available (check with `--list-backends`). `animate` honors `--temporal-samples N` for motion blur (defaults to the genome's value on CPU; capped at 64 on Metal).
 
+## Generating animations (loops & transitions)
+
+`emberweft animate` writes a PNG sequence + `manifest.json` to `--out`; mux to MP4 with `ffmpeg`. Segments alternate **loop → transition → loop → …** (even segments loop one sheep, odd segments morph between two). Motion blur is `--temporal-samples N`.
+
+**A single sheep loop** — `sheep_loop`: the genome rotates one full turn over the segment:
+
+```bash
+swift run -c release emberweft animate sheep.flam3 \
+  --segments 1 --frames 160 --loop-cycles 1 \
+  --backend metal --size 1280x720 --quality 500 --temporal-samples 32 --out loop/
+ffmpeg -framerate 30 -i loop/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart loop.mp4
+```
+
+**An edge / transition between two sheep** — `sheep_edge`: loop A → morph A→B → loop B:
+
+```bash
+swift run -c release emberweft animate a.flam3 b.flam3 \
+  --segments 3 --frames 160 --loop-cycles 1 --selector sequential \
+  --backend metal --size 1280x720 --quality 500 --temporal-samples 32 --out edge/
+ffmpeg -framerate 30 -i edge/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart edge.mp4
+```
+
+- `--segments 1` = loop only (one sheep); `--segments 3` = loop + transition + loop (needs ≥2 genomes). Default `--segments 3`.
+- `--frames N` = frames per segment (one loop revolution over N frames; 160 @ 30 fps ≈ 5.3 s). `--loop-cycles N` = N revolutions per loop segment.
+- `--temporal-samples N` = motion-blur sub-passes (defaults to the genome's `temporal_samples` on CPU; capped at 64 on Metal). Omit or set `1` for sharp frames.
+- `--selector sequential` walks the library in order (`similarity` does ε-greedy pairing; needs `--library <dir>`).
+- Use `--backend cpu` for byte-deterministic offline renders (uncapped temporal samples); `metal` for speed.
+
+Full flag reference + the `sheep_loop`/`sheep_edge` mapping: [docs/rendering/animation.md](docs/rendering/animation.md).
+
 ## Validation
 
 Emberweft is built test-first against two oracles: the CPU reference matches `flam3`, and Metal matches the CPU reference.

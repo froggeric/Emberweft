@@ -95,9 +95,17 @@ extension EmberweftCLI {
             }
         }
 
-        // --- ≥2-sheep guard ---
-        guard genomes.count >= 2 else {
-            err("error: animate requires at least 2 genomes (alternation needs ≥2 sheep); got \(genomes.count)\n")
+        // --- genome-count guard ---
+        // A single genome renders a loop-only sequence (--segments 1, a `sheep_loop`
+        // rotation). Transitions (--segments > 1) morph between two genomes, so they
+        // need ≥2. This lets `emberweft animate one-sheep.flam3 --segments 1` produce
+        // a single-sheep loop video directly.
+        guard genomes.count >= 1 else {
+            err("error: animate requires at least 1 genome; got \(genomes.count)\n")
+            return 2
+        }
+        if segmentCount > 1 && genomes.count < 2 {
+            err("error: animate --segments \(segmentCount) (transitions) needs at least 2 genomes; got \(genomes.count). Pass --segments 1 for a single-sheep loop.\n")
             return 2
         }
 

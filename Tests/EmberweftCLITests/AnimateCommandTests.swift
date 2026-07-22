@@ -113,7 +113,26 @@ final class AnimateCommandTests: XCTestCase {
         XCTAssertTrue(seg2Frames.allSatisfy { $0.kind == "loop" })
     }
 
-    /// AC: Empty/size-1 input → non-zero exit with a clear error.
+    /// AC: A single genome renders a loop-only sequence (--segments 1): exit 0,
+    /// `segments*frames` PNGs + manifest. (Transitions need ≥2 genomes; a loop
+    /// needs only one.)
+    func testSingleSheepLoopSucceeds() throws {
+        let a = tmp(genomeA, name: "anim_loop.flam3")
+        let out = freshOut("loop")
+        let code = EmberweftCLI.run([
+            "emberweft", "animate", a.path,
+            "--frames", "4", "--segments", "1",
+            "--backend", "cpu", "--size", "16x16", "--quality", "10",
+            "--out", out.path,
+        ])
+        XCTAssertEqual(code, 0, "Single genome + --segments 1 (loop) must succeed")
+        let pngs = (try? FileManager.default.contentsOfDirectory(atPath: out.path))?
+            .filter { $0.hasSuffix(".png") } ?? []
+        XCTAssertEqual(pngs.count, 4, "1 segment × 4 frames = 4 PNGs")
+    }
+
+    /// AC: A single genome with --segments > 1 (transitions) → non-zero exit
+    /// (transitions need ≥2 genomes to morph between).
     func testSize1InputErrors() throws {
         let a = tmp(genomeA, name: "anim_single.flam3")
         let out = freshOut("single")
@@ -122,7 +141,7 @@ final class AnimateCommandTests: XCTestCase {
             "emberweft", "animate", a.path,
             "--frames", "4", "--segments", "2", "--out", out.path,
         ])
-        XCTAssertNotEqual(code, 0, "Single genome must produce a non-zero exit")
+        XCTAssertNotEqual(code, 0, "Single genome + --segments > 1 (transitions) must error")
     }
 
     /// AC: Size-0 input → non-zero exit.

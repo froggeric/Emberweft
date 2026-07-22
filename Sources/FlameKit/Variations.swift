@@ -608,5 +608,5 @@ public extension Variations {
     /// left-to-right). `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
     /// 37 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
-    public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
+    static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }
