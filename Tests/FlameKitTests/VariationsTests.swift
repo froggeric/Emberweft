@@ -931,6 +931,144 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, expected, accuracy: 1e-12)
     }
 
+    // MARK: - corpus-variations parametric + RNG hybrid set (slots 52..54).
+    // Hand-traced closed forms + draw-count invariants for the 3 parametric
+    // RNG-consuming variations flower/conic/parabola. Each pins BOTH the draw
+    // COUNT and the exact draw ORDER — any reorder diverges the ISAAC stream.
+    // All params default 0 (flam3 clear_cp does NOT initialize them; memset(0)
+    // in parser.c:229 wins, so missing XML attrs parse as 0).
+
+    // var51_flower (variations.c:1118-1131): ONE isaac_01 draw, params
+    // flower_holes + flower_petals (both default 0). Divide by precalc_sqrt
+    // with NO +EPS — match flam3 (origin → 0/0 = NaN; the chaos game's
+    // post-affine badvalue check handles Inf/NaN downstream, redrawing).
+    //   theta = precalc_atanyx = atan2(ty, tx)
+    //   r = weight * (d1 - flower_holes) * cos(flower_petals*theta) / precalc_sqrt
+    //   p0 += r * tx;   p1 += r * ty
+    // Note the param is `flower_petals`, NOT `flower_freq` (flam3 has no
+    // flower_freq — parser.c:1090, flam3.h:302).
+    func testFlowerDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "flower", weight: 1,
+                       parameters: ["flower_holes": 0.1, "flower_petals": 2.0])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "flower x not finite")
+        XCTAssertTrue(out.y.isFinite, "flower y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "flower must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for flower: 1 draw, then r = w*(d1-holes)*cos(petals*theta)/sqrt
+    /// with NO +EPS. Pins count (1), order (draw is the inner-most random factor),
+    /// the /sqrt-no-EPS structure, and the (tx, ty) propagation.
+    func testFlowerClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "flower-closed-form")
+        var rng2 = ISAAC(isaacSeed: "flower-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let holes = 0.1, petals = 2.0
+        let out = Variations.evaluate(
+            [Variation(name: "flower", weight: weight,
+                       parameters: ["flower_holes": holes, "flower_petals": petals])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                      // draw #1
+        let theta = atan2(p.y, p.x)                                  // precalc_atanyx
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let r = weight * (d1 - holes) * cos(petals * theta) / precalcSqrt   // NO EPS
+        let expected = SIMD2<Double>(r * p.x, r * p.y)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var52_conic (variations.c:1133-1146): ONE isaac_01 draw, params
+    // conic_eccentricity + conic_holes (both default 0). Divide by precalc_sqrt
+    // with NO +EPS — match flam3 (origin → 0/0 = NaN; badvalue handles it
+    // downstream). NOTE: with eccentricity=0 (the parse default), r = 0 for all
+    // inputs → conic outputs (0,0) regardless of input. Real genomes always set
+    // a nonzero eccentricity; the closed-form test uses ecc=0.5 to exercise the
+    // actual formula.
+    //   ct = tx / precalc_sqrt (NO EPS)
+    //   r = weight * (d1 - conic_holes) * conic_eccentricity
+    //       / (1 + conic_eccentricity*ct) / precalc_sqrt (NO EPS)
+    //   p0 += r * tx;   p1 += r * ty
+    func testConicDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "conic", weight: 1,
+                       parameters: ["conic_eccentricity": 0.5, "conic_holes": 0.1])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "conic x not finite")
+        XCTAssertTrue(out.y.isFinite, "conic y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "conic must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for conic: 1 draw, then ct = tx/sqrt, r = w*(d1-holes)*ecc
+    /// / (1+ecc*ct) / sqrt — all with NO +EPS. Pins count (1), order, formula.
+    func testConicClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "conic-closed-form")
+        var rng2 = ISAAC(isaacSeed: "conic-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let ecc = 0.5, holes = 0.1
+        let out = Variations.evaluate(
+            [Variation(name: "conic", weight: weight,
+                       parameters: ["conic_eccentricity": ecc, "conic_holes": holes])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                      // draw #1
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let ct = p.x / precalcSqrt                                   // NO EPS
+        let r = weight * (d1 - holes) * ecc
+                / (1 + ecc * ct) / precalcSqrt                       // NO EPS
+        let expected = SIMD2<Double>(r * p.x, r * p.y)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var53_parabola (variations.c:1148-1162): TWO per-axis isaac_01 draws
+    // (draw #1 → p0, draw #2 → p1). Params parabola_height + parabola_width
+    // (both default 0).
+    //   r = precalc_sqrt;  sincos(r, &sr, &cr)
+    //   p0 += parabola_height * weight * sr*sr * isaac01()   // draw #1
+    //   p1 += parabola_width  * weight * cr    * isaac01()   // draw #2
+    // The draw order is load-bearing: each isaac01() is a SEPARATE statement
+    // (MSL/C++ arg-eval order is unspecified — see chaosGame in Kernels.metal).
+    func testParabolaDrawsTwoAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "parabola", weight: 1,
+                       parameters: ["parabola_height": 0.5, "parabola_width": 0.4])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "parabola x not finite")
+        XCTAssertTrue(out.y.isFinite, "parabola y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "parabola must consume exactly 2 ISAAC words")
+    }
+    /// Closed form for parabola: 2 draws (p0 first, then p1). Pins count (2),
+    /// order (draw #1 → p0 via height*sin²*r; draw #2 → p1 via width*cos*r),
+    /// and the per-axis separation (no shared draw).
+    func testParabolaClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "parabola-closed-form")
+        var rng2 = ISAAC(isaacSeed: "parabola-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let height = 0.5, width = 0.4
+        let out = Variations.evaluate(
+            [Variation(name: "parabola", weight: weight,
+                       parameters: ["parabola_height": height, "parabola_width": width])],
+            at: p, affine: .zero, rng: &rng1)
+        let r = (p.x*p.x + p.y*p.y).squareRoot()                    // precalc_sqrt
+        let sr = sin(r), cr = cos(r)
+        let d1 = rng2.isaac01()                                      // draw #1 → p0
+        let d2 = rng2.isaac01()                                      // draw #2 → p1
+        let expected = SIMD2<Double>(height * weight * sr * sr * d1,
+                                     width  * weight * cr      * d2)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

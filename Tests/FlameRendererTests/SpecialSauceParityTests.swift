@@ -248,6 +248,37 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("twintrian", [:], weight: 0.4)
     }
 
+    // ---- corpus-variations parametric + RNG hybrid set (slots 52..54).
+    // Each has 2 params (default 0) and 1..2 isaac_01 draws. The PSNR is the real
+    // RNG-parity oracle: a draw-count or draw-order mismatch collapses PSNR well
+    // below 38 (the CPU VariationsTests draw-count + closed-form tests pin the
+    // count and order, ruling that out). ----
+
+    // var51_flower (variations.c:1118-1131): 1 isaac_01 draw; params
+    // flower_holes + flower_petals. r = w*(d1-holes)*cos(petals*theta)/sqrt —
+    // divide by precalc_sqrt with NO +EPS (origin → 0/0 → NaN; badvalue handles
+    // it downstream). Parametric + RNG-consuming → lives in `evaluate`'s switch.
+    // weight=0.4 (the radial_blur precedent) keeps the orbit multiplier bounded
+    // (the `(d1-holes)` factor ∈ [-holes, 1-holes] can sign-flip the orbit
+    // feedback through the affine; weight=0.4 tames Float-vs-Double divergence).
+    @MainActor func testFlower() throws {
+        try assertParity("flower", ["flower_holes": 0.1, "flower_petals": 2.0], weight: 0.4)
+    }
+    // var52_conic (variations.c:1133-1146): 1 isaac_01 draw; params
+    // conic_eccentricity + conic_holes. r = w*(d1-holes)*ecc/(1+ecc*ct)/sqrt —
+    // TWO divides by precalc_sqrt-equivalent (one for ct = tx/sqrt, one for r),
+    // both with NO +EPS. weight=0.4 (same chaos-taming as flower/radial_blur).
+    @MainActor func testConic() throws {
+        try assertParity("conic", ["conic_eccentricity": 0.5, "conic_holes": 0.1], weight: 0.4)
+    }
+    // var53_parabola (variations.c:1148-1162): TWO per-axis isaac_01 draws
+    // (draw #1 → p0 via height*sin²*r, draw #2 → p1 via width*cos*r). Params
+    // parabola_height + parabola_width. Parametric + RNG-consuming → lives in
+    // `evaluate`'s switch. weight=0.4 (same chaos-taming precedent).
+    @MainActor func testParabola() throws {
+        try assertParity("parabola", ["parabola_height": 0.5, "parabola_width": 0.4], weight: 0.4)
+    }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

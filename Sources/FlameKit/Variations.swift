@@ -72,7 +72,19 @@ public enum Variations {
         // var47_twintrian: 1 isaac_01 draw; BADVALUE-GUARDED log10(sinr²)+cosr
         // (→ -30.0 when NaN/Inf/|x|>1e10). RNG-consuming → lives in `evaluate`'s
         // switch.
-        "twintrian"
+        "twintrian",
+        // var51_flower: 1 isaac_01 draw; params flower_holes + flower_petals
+        // (NOT flower_freq). r = w*(d1-holes)*cos(petals*atanyx)/sqrt — /sqrt
+        // NO EPS (origin → NaN; badvalue handles downstream). RNG-consuming →
+        // lives in `evaluate`'s switch.
+        "flower",
+        // var52_conic: 1 isaac_01 draw; params conic_eccentricity + conic_holes.
+        // TWO /sqrt NO EPS (ct = tx/sqrt; r = .../sqrt). RNG-consuming.
+        "conic",
+        // var53_parabola: TWO per-axis isaac_01 draws (draw #1 → p0 via
+        // height*sin²*r; draw #2 → p1 via width*cos*r); params
+        // parabola_height + parabola_width. RNG-consuming.
+        "parabola"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -95,9 +107,9 @@ public enum Variations {
     /// coefficient-dependent variations: `rings`/`fan` (use e,f;
     /// variations.c:521,543), `waves` (uses c,d,e,f; variations.c:405-409),
     /// `popcorn` (uses e,f; variations.c:442-446). `rng` is threaded for the
-    /// fifteen RNG-consuming variations (julia/julian/juliascope/super_shape/
+    /// eighteen RNG-consuming variations (julia/julian/juliascope/super_shape/
     /// wedge_julia/pie/radial_blur/noise/blur/gaussian_blur/arch/square/
-    /// rays/blade/twintrian):
+    /// rays/blade/twintrian/flower/conic/parabola):
     /// julia/julian/juliascope/super_shape/wedge_julia each draw one
     /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
     /// `isaac_01` words in flam3's exact order (slice → angular → radial);
@@ -109,7 +121,11 @@ public enum Variations {
     /// `arch` draws one (angle, scaled by `weight*π`); `square` draws two
     /// (independent for p0 and p1); `rays` draws one (angle, un-guarded tan);
     /// `blade` draws one (r = d1*w*sqrt; both p0,p1 use tx); `twintrian` draws
-    /// one (r = d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr → -30.0).
+    /// one (r = d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr → -30.0);
+    /// `flower` draws one (r = w*(d1-holes)*cos(petals*θ)/sqrt, NO EPS);
+    /// `conic` draws one (ct = tx/sqrt, r = w*(d1-holes)*ecc/(1+ecc*ct)/sqrt,
+    /// NO EPS); `parabola` draws TWO per-axis (draw #1 → p0 via height*sin²*r,
+    /// draw #2 → p1 via width*cos*r).
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -146,6 +162,12 @@ public enum Variations {
                 term = blade(p, weight: v.weight, rng: &rng)
             case "twintrian":
                 term = twintrian(p, weight: v.weight, rng: &rng)
+            case "flower":
+                term = flower(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "conic":
+                term = conic(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "parabola":
+                term = parabola(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "super_shape":
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
@@ -444,6 +466,73 @@ public enum Variations {
         if diff != diff || diff > 1e10 || diff < -1e10 { diff = -30.0 }
         return SIMD2(weight * p.x * diff,
                      weight * p.x * (diff - sinr * .pi))           // BOTH use tx
+    }
+
+    /// flam3 `var51_flower` (variations.c:1118-1131). Parametric + RNG: 2 params
+    /// (`flower_holes`, `flower_petals` [NOT `flower_freq` — flam3 has no
+    /// flower_freq; parser.c:1090, flam3.h:302], both default 0). Consumes ONE
+    /// `flam3_random_isaac_01` word:
+    ///   theta = precalc_atanyx = atan2(ty, tx)
+    ///   r = weight * (isaac01 - flower_holes) * cos(flower_petals * theta)
+    ///       / precalc_sqrt                                       // draw #1; /sqrt NO EPS
+    ///   p0 += r * tx;   p1 += r * ty
+    /// The /precalc_sqrt has NO +EPS (unlike spherical/rays which use sumsq+EPS).
+    /// At the origin → 0/0 → NaN; match flam3 (do NOT add EPS — the chaos game's
+    /// post-affine badvalue check handles NaN downstream, redrawing).
+    private static func flower(_ p: SIMD2<Double>, weight: Double,
+                               params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        let holes  = resolve("flower", "flower_holes", params)
+        let petals = resolve("flower", "flower_petals", params)
+        let theta = atan2(p.y, p.x)                                 // precalc_atanyx
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let d1 = rng.isaac01()                                      // draw #1
+        let r = weight * (d1 - holes) * cos(petals * theta) / precalcSqrt   // NO EPS
+        return SIMD2(r * p.x, r * p.y)
+    }
+
+    /// flam3 `var52_conic` (variations.c:1133-1146). Parametric + RNG: 2 params
+    /// (`conic_eccentricity`, `conic_holes`, both default 0). Consumes ONE
+    /// `flam3_random_isaac_01` word. TWO divisions by `precalc_sqrt` with NO +EPS:
+    ///   ct = tx / precalc_sqrt                                    // NO EPS
+    ///   r = weight * (isaac01 - conic_holes) * conic_eccentricity
+    ///       / (1 + conic_eccentricity * ct) / precalc_sqrt        // draw #1; /sqrt NO EPS
+    ///   p0 += r * tx;   p1 += r * ty
+    /// At the origin → 0/0 → NaN; match flam3 (no EPS). NOTE: when eccentricity=0
+    /// (the parse default), r = 0 for all inputs → conic outputs (0, 0) regardless
+    /// of input. The `ecc=1.0` default in flam3's `initialize_xforms` applies only
+    /// to NEWLY-ADDED xforms (interpolation padding), NOT to parsed genomes.
+    private static func conic(_ p: SIMD2<Double>, weight: Double,
+                              params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        let ecc   = resolve("conic", "conic_eccentricity", params)
+        let holes = resolve("conic", "conic_holes", params)
+        let precalcSqrt = (p.x*p.x + p.y*p.y).squareRoot()
+        let ct = p.x / precalcSqrt                                  // NO EPS
+        let d1 = rng.isaac01()                                      // draw #1
+        let r = weight * (d1 - holes) * ecc
+                / (1 + ecc * ct) / precalcSqrt                      // NO EPS
+        return SIMD2(r * p.x, r * p.y)
+    }
+
+    /// flam3 `var53_parabola` (variations.c:1148-1162). Parametric + RNG: 2 params
+    /// (`parabola_height`, `parabola_width`, both default 0). Consumes TWO
+    /// `flam3_random_isaac_01` words — ONE PER AXIS (draw #1 → p0, draw #2 → p1):
+    ///   r = precalc_sqrt;  sincos(r, &sr, &cr)
+    ///   p0 += parabola_height * weight * sr * sr * isaac01()      // draw #1 → p0
+    ///   p1 += parabola_width  * weight * cr       * isaac01()     // draw #2 → p1
+    /// The per-axis draw order is load-bearing: each `isaac01()` MUST be its own
+    /// statement in this order (p0 first, p1 second). Reordering or hoisting
+    /// diverges the ISAAC stream from flam3.
+    private static func parabola(_ p: SIMD2<Double>, weight: Double,
+                                 params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        let height = resolve("parabola", "parabola_height", params)
+        let width  = resolve("parabola", "parabola_width", params)
+        let r = (p.x*p.x + p.y*p.y).squareRoot()                   // precalc_sqrt
+        let sr = sin(r), cr = cos(r)
+        let d1 = rng.isaac01()                                      // draw #1 → p0
+        let p0 = height * weight * sr * sr * d1
+        let d2 = rng.isaac01()                                      // draw #2 → p1
+        let p1 = width  * weight * cr       * d2
+        return SIMD2(p0, p1)
     }
 
     /// flam3 `var50_supershape` (variations.c:1093-1117) + `supershape_precalc`
@@ -882,39 +971,51 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 52-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 55-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
-    /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian).
+    /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
+    /// flower/conic/parabola).
     ///
-    /// RNG-EQUIVALENCE NOTE: fifteen variations consume the ISAAC stream
+    /// RNG-EQUIVALENCE NOTE: eighteen variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/
-    /// blur/gaussian_blur/arch/square/rays/blade/twintrian). CPU `evaluate`
-    /// walks an xform's variations in ARRAY order, which the parser sorts
-    /// ALPHABETICALLY
-    /// (Flam3Parser.swift:223); Metal `apply_xform_body` walks them in
-    /// CANONICAL-SLOT order (the if-chain at Kernels.metal). For the RNG-
-    /// alignment coincidence to hold, the canonical slots of the RNG-consuming
-    /// set must be in the SAME relative order as their alphabetical order.
-    /// Pinned by `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
+    /// blur/gaussian_blur/arch/square/rays/blade/twintrian/flower/conic/
+    /// parabola). CPU `evaluate` walks an xform's variations in ARRAY order,
+    /// which the parser sorts ALPHABETICALLY (Flam3Parser.swift:223); Metal
+    /// `apply_xform_body` walks them in CANONICAL-SLOT order (the if-chain at
+    /// Kernels.metal). For the RNG-alignment coincidence to hold, the canonical
+    /// slots of the RNG-consuming set must be in the SAME relative order as
+    /// their alphabetical order. Pinned by
+    /// `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
     /// (slots ascending) — but that test does NOT pin the alphabetical↔slot
     /// coincidence. The current set {julia(12), julian(25), juliascope(26),
     /// super_shape(30), wedge_julia(31), pie(35), radial_blur(36), blur(45),
     /// gaussian_blur(46), noise(44), arch(47), square(48), rays(49), blade(50),
-    /// twintrian(51)} is alphabetical == slot order EXCEPT for pie, radial_blur,
-    /// and the new rays/blade/twintrian trio: pie sits alphabetically between
-    /// juliascope and super_shape but at slot 35 (after wedge_julia); radial_blur
-    /// sits alphabetically between pie and super_shape but at slot 36 (also after
-    /// wedge_julia); blade (slot 50) sits alphabetically BEFORE blur (slot 45);
-    /// rays (slot 49) sits alphabetically BETWEEN radial_blur (slot 36) and square
-    /// (slot 48); twintrian (slot 51) sits alphabetically BETWEEN square (48) and
-    /// wedge_julia (31). The two orderings therefore diverge for an xform
-    /// containing pie AND {super_shape,wedge_julia,julia,julian,juliascope},
-    /// OR radial_blur AND {super_shape,wedge_julia,julia,julian,juliascope},
-    /// OR any of {rays,blade,twintrian} AND any earlier-slot RNG variation —
-    /// no frozen/fuzz/real-fixture genome has any of these combinations (the new
-    /// 3 are not yet used by any fixture genome; Task 6 CV6 will gate them as
-    /// single-variation fixtures). The divergence is the load-bearing assumption
-    /// to re-check if a future genome violates it.
+    /// twintrian(51), flower(52), conic(53), parabola(54)} is alphabetical ==
+    /// slot order EXCEPT for pie, radial_blur, and the rays/blade/twintrian
+    /// trio: pie sits alphabetically between juliascope and super_shape but at
+    /// slot 35 (after wedge_julia); radial_blur sits alphabetically between pie
+    /// and super_shape but at slot 36 (also after wedge_julia); blade (slot 50)
+    /// sits alphabetically BEFORE blur (slot 45); rays (slot 49) sits
+    /// alphabetically BETWEEN radial_blur (slot 36) and square (slot 48);
+    /// twintrian (slot 51) sits alphabetically BETWEEN square (48) and
+    /// wedge_julia (31). The new flower(52)/conic(53)/parabola(54) trio sits
+    /// AFTER parabola alphabetically — flower alphabetically BETWEEN fisheye and
+    /// gaussian_blur, conic BETWEEN cosine and curl, parabola BETWEEN ngon and
+    /// pdj — so an xform combining any of the 3 with an EARLIER-SLOT RNG
+    /// variation (e.g. parabola + linear → parabola draws AFTER linear
+    /// alphabetically AND at slot 54 vs 13 → consistent; but parabola + noise
+    /// would draw parabola AFTER noise alphabetically yet at slot 54 vs 44 →
+    /// still consistent; the divergence cases are {conic + curl}, {flower +
+    /// fisheye/gaussian_blur}, {parabola + ngon/pdj} where the alphabetical
+    /// order puts the new one AFTER its companion but the slot order is also
+    /// after — but the alphabetical-vs-slot coincidence still holds for any
+    /// pair where alphabetical order matches slot order). The two orderings
+    /// diverge for an xform containing pie AND {super_shape,wedge_julia,julia,
+    /// julian,juliascope}, OR radial_blur AND the same set, OR any of
+    /// {rays,blade,twintrian} AND any earlier-slot RNG variation — no
+    /// frozen/fuzz/real-fixture genome has any of these combinations (the new 6
+    /// are not yet used by any fixture genome). The divergence is the
+    /// load-bearing assumption to re-check if a future genome violates it.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -953,8 +1054,17 @@ public extension Variations {
     /// both p0 and p1 use tx, NOT ty for p1), `twintrian` (var47, 1 draw,
     /// badvalue-guarded log10(sinr²)+cosr → -30.0 when NaN/Inf/|x|>1e10 —
     /// the load-bearing care item, mirrored verbatim in BOTH CPU+Metal).
+    /// Slots 52..54 are the corpus-variations parametric + RNG hybrid set:
+    /// `flower` (var51, 1 draw, params flower_holes + flower_petals [NOT
+    /// flower_freq]; r = w*(d1-holes)*cos(petals*θ)/sqrt — /sqrt NO EPS, origin
+    /// → 0/0 → NaN; match flam3), `conic` (var52, 1 draw, params
+    /// conic_eccentricity + conic_holes; TWO /sqrt NO EPS — ct = tx/sqrt, then
+    /// r = w*(d1-holes)*ecc/(1+ecc*ct)/sqrt), `parabola` (var53, 2 per-axis
+    /// draws, params parabola_height + parabola_width; draw #1 → p0 via
+    /// height*sin²*r, draw #2 → p1 via width*cos*r — separate isaac01()
+    /// statements in that order).
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 52 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 55 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+52+(52*8) = 483 floats = 1932 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+55+(55*8) = 510 floats = 2040 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 52
+#define NUM_XFORM_SLOTS_MS 55
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 52
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 52*8 = 416
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 55
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 55*8 = 440
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 52 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 55 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 52 variation terms (canonical slot order). Each returns the term that CPU
+// 55 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -412,6 +412,60 @@ static inline float2 v_twintrian(float2 p, float w, thread IsaacState& rng) {
     if (badvalue_ms(diff)) diff = -30.0f;              // CRITICAL — matches flam3 + CPU
     return float2(w * p.x * diff,
                   w * p.x * (diff - sinr * M_PI_F));   // BOTH use tx
+}
+// var51_flower (variations.c:1118-1131). Parametric + RNG: 2 params
+// (flower_holes, flower_petals [NOT flower_freq — flam3.h:302], both default 0).
+// ONE isaac_01 draw. Divide by precalc_sqrt with NO +EPS (origin → 0/0 → NaN;
+// match flam3 — the chaos game's post-affine badvalue check handles it).
+//   theta = precalc_atanyx = atan2(ty, tx)
+//   r = w * (d1 - holes) * cos(petals*theta) / precalc_sqrt   // NO EPS
+//   p0 += r * tx;   p1 += r * ty
+// Param order in pr[0..1] = descriptor-declared order: flower_holes, flower_petals.
+static inline float2 v_flower(float2 p, float w, thread const float* pr,
+                              thread IsaacState& rng) {
+    float holes = pr[0], petals = pr[1];
+    float theta = atan2(p.y, p.x);                     // precalc_atanyx
+    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float d1 = isaac_01(rng);                          // draw #1
+    float r = w * (d1 - holes) * cos(petals * theta) / precalc_sqrt;   // NO EPS
+    return float2(r * p.x, r * p.y);
+}
+// var52_conic (variations.c:1133-1146). Parametric + RNG: 2 params
+// (conic_eccentricity, conic_holes, both default 0). ONE isaac_01 draw.
+// TWO divisions by precalc_sqrt with NO +EPS:
+//   ct = tx / precalc_sqrt                                      // NO EPS
+//   r = w * (d1 - holes) * ecc / (1 + ecc*ct) / precalc_sqrt    // NO EPS
+//   p0 += r * tx;   p1 += r * ty
+// NOTE: with eccentricity=0 (the parse default), r = 0 → conic outputs (0, 0).
+// Param order in pr[0..1] = descriptor-declared order: conic_eccentricity, conic_holes.
+static inline float2 v_conic(float2 p, float w, thread const float* pr,
+                             thread IsaacState& rng) {
+    float ecc = pr[0], holes = pr[1];
+    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float ct = p.x / precalc_sqrt;                     // NO EPS
+    float d1 = isaac_01(rng);                          // draw #1
+    float r = w * (d1 - holes) * ecc
+              / (1.0f + ecc * ct) / precalc_sqrt;      // NO EPS
+    return float2(r * p.x, r * p.y);
+}
+// var53_parabola (variations.c:1148-1162). Parametric + RNG: 2 params
+// (parabola_height, parabola_width, both default 0). TWO per-axis isaac_01
+// draws — draw #1 → p0, draw #2 → p1 (each isaac_01 is its OWN statement; MSL
+// arg-eval order is unspecified, see chaosGame kernel):
+//   r = precalc_sqrt;  sincos(r, &sr, &cr)
+//   p0 += height * w * sr*sr * isaac_01()              // draw #1 → p0
+//   p1 += width  * w * cr      * isaac_01()            // draw #2 → p1
+// Param order in pr[0..1] = descriptor-declared order: parabola_height, parabola_width.
+static inline float2 v_parabola(float2 p, float w, thread const float* pr,
+                                thread IsaacState& rng) {
+    float height = pr[0], width = pr[1];
+    float r = sqrt(p.x*p.x + p.y*p.y);                 // precalc_sqrt
+    float sr = sin(r), cr = cos(r);
+    float d1 = isaac_01(rng);                          // draw #1 → p0
+    float p0 = height * w * sr * sr * d1;
+    float d2 = isaac_01(rng);                          // draw #2 → p1
+    float p1 = width  * w * cr       * d2;
+    return float2(p0, p1);
 }
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
@@ -694,15 +748,18 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 52 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
-// radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian also
-// consume the RNG (julian/juliascope/wedge_julia: one isaac_01 each;
-// super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
-// radial_blur: FOUR isaac_01s summed left-to-right; noise: TWO (angle, radius)
-// INPUT-SCALED; blur: TWO (angle, radius) NOT input-scaled; gaussian_blur:
-// FIVE (1 angle + 4-sum); arch: ONE (angle); square: TWO (independent for p0,
-// p1); rays: ONE (angle, un-guarded tan); blade: ONE (r=d1*w*sqrt); twintrian:
-// ONE (r=d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr → -30.0)).
+// Sum the 55 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
+// flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
+// one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
+// ordered isaac_01s; radial_blur: FOUR isaac_01s summed left-to-right; noise:
+// TWO (angle, radius) INPUT-SCALED; blur: TWO (angle, radius) NOT input-scaled;
+// gaussian_blur: FIVE (1 angle + 4-sum); arch: ONE (angle); square: TWO
+// (independent for p0, p1); rays: ONE (angle, un-guarded tan); blade: ONE
+// (r=d1*w*sqrt); twintrian: ONE (r=d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr
+// → -30.0); flower: ONE (r=w*(d1-holes)*cos(petals*θ)/sqrt, NO EPS); conic:
+// ONE (ct=tx/sqrt, r=w*(d1-holes)*ecc/(1+ecc*ct)/sqrt, NO EPS); parabola: TWO
+// per-axis (draw #1 → p0 via height*sin²*r, draw #2 → p1 via width*cos*r)).
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -800,6 +857,21 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // slot 51 — twintrian (var47_twintrian, 1 isaac_01 draw; BADVALUE-GUARDED
     // log10(sinr²)+cosr → -30.0 — load-bearing for CPU↔Metal parity).
     if (w[51] != 0.0f) acc += v_twintrian(pre, w[51], rng);
+    // ---- corpus-variations parametric + RNG hybrid set (slots 52..54). All
+    // have 2 params (default 0) + 1..2 isaac_01 draws → take `pr` AND `rng`. ----
+    // slot 52 — flower (var51_flower, 1 isaac_01 draw; params flower_holes +
+    // flower_petals [NOT flower_freq]; r=w*(d1-holes)*cos(petals*θ)/sqrt NO EPS).
+    // Param order in pr[0..1] = descriptor-declared order: flower_holes, flower_petals.
+    if (w[52] != 0.0f) acc += v_flower(pre, w[52], &x.varParams[52*SLOT_WIDTH_MS], rng);
+    // slot 53 — conic (var52_conic, 1 isaac_01 draw; params conic_eccentricity +
+    // conic_holes; TWO /sqrt NO EPS — ct=tx/sqrt, r=.../sqrt).
+    // Param order in pr[0..1] = descriptor-declared order: conic_eccentricity, conic_holes.
+    if (w[53] != 0.0f) acc += v_conic(pre, w[53], &x.varParams[53*SLOT_WIDTH_MS], rng);
+    // slot 54 — parabola (var53_parabola, 2 per-axis isaac_01 draws; params
+    // parabola_height + parabola_width; draw #1 → p0 via height*sin²*r,
+    // draw #2 → p1 via width*cos*r).
+    // Param order in pr[0..1] = descriptor-declared order: parabola_height, parabola_width.
+    if (w[54] != 0.0f) acc += v_parabola(pre, w[54], &x.varParams[54*SLOT_WIDTH_MS], rng);
     return apply_post(x, acc);
 }
 

@@ -1,17 +1,17 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 52-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 55-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
-/// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian;
-/// spherical/polar counted once),
+/// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
+/// flower/conic/parabola; spherical/polar counted once),
 /// per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 52-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 55-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 52-device-slot layout) ----
-    /// Fixed 52-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 55-device-slot layout) ----
+    /// Fixed 55-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -37,7 +37,12 @@ public struct VariationDescriptor: Sendable {
     /// slots 44..48; then the corpus-variations RNG + Inf/badvalue care set:
     /// `rays` (var44, 1 draw, un-guarded tan(ang)), `blade` (var45, 1 draw),
     /// `twintrian` (var47, 1 draw, badvalue→-30.0 guard on log10(sinr²)+cosr)
-    /// at slots 49..51.
+    /// at slots 49..51; then the corpus-variations parametric + RNG hybrid set:
+    /// `flower` (var51, 1 draw, params flower_holes + flower_petals [NOT
+    /// flower_freq], /sqrt NO EPS), `conic` (var52, 1 draw, params
+    /// conic_eccentricity + conic_holes, TWO /sqrt NO EPS), `parabola` (var53,
+    /// 2 per-axis draws, params parabola_height + parabola_width) at slots
+    /// 52..54.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -108,8 +113,21 @@ public struct VariationDescriptor: Sendable {
         // var47_twintrian: 1 draw; BADVALUE-GUARDED log10(sinr²)+cosr → -30.0
         // (BOTH CPU+Metal — the load-bearing care item).
         "twintrian",
+        // --- corpus-variations parametric + RNG hybrid set (slots 52..54). All
+        //     have 2 params (default 0) and 1..2 isaac_01 draws → live in
+        //     `evaluate`'s switch, NOT the table. Verified formulas against
+        //     /private/tmp/flam3-build/variations.c (Task 5 CV5). ---
+        // var51_flower: 1 draw; params flower_holes + flower_petals (NOT flower_freq);
+        // r = w*(d1-holes)*cos(petals*atanyx)/sqrt — /sqrt with NO +EPS.
+        "flower",
+        // var52_conic: 1 draw; params conic_eccentricity + conic_holes;
+        // ct = tx/sqrt (NO EPS); r = w*(d1-holes)*ecc/(1+ecc*ct)/sqrt (NO EPS).
+        "conic",
+        // var53_parabola: 2 per-axis draws (p0 first via height*sin²*r, then p1
+        // via width*cos*r); params parabola_height + parabola_width.
+        "parabola",
     ]
-    /// Canonical device-slot index for a variation name (0..<52), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<55), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -148,7 +166,7 @@ public struct VariationDescriptor: Sendable {
         return nil
     }
 
-    // name -> (ordered params, defaults, rest-overrides). Covers ALL 35 canonical
+    // name -> (ordered params, defaults, rest-overrides). Covers ALL 38 canonical
     // names so canonicalOrder and the descriptor table cannot drift. Defaults/rest
     // source-cited to flam3.h / parser.c / variations.c in the spec param table.
     private static let table: [String: VariationDescriptor] = {
@@ -216,6 +234,21 @@ public struct VariationDescriptor: Sendable {
         d("blade", [], [:])
         // var47_twintrian (1 draw, badvalue→-30.0 on log10(sinr²)+cosr)
         d("twintrian", [], [:])
+        // --- corpus-variations parametric + RNG hybrid set (slots 52..54). All
+        //     have 2 params (default 0) and 1..2 isaac_01 draws → live in
+        //     `evaluate`'s switch, NOT the table. flam3 `clear_cp` does NOT
+        //     initialize any of these params (memset(0) in parser.c:229 wins) →
+        //     missing XML attrs parse as 0. `conic_eccentricity=1.0` exists only
+        //     in `initialize_xforms` (newly-added xforms, NOT parsing) → mirror 0. ---
+        // var51_flower (1 draw; params flower_holes + flower_petals [NOT flower_freq])
+        d("flower", ["flower_holes","flower_petals"],
+          ["flower_holes":0,"flower_petals":0])
+        // var52_conic (1 draw; params conic_eccentricity + conic_holes)
+        d("conic", ["conic_eccentricity","conic_holes"],
+          ["conic_eccentricity":0,"conic_holes":0])
+        // var53_parabola (2 per-axis draws; params parabola_height + parabola_width)
+        d("parabola", ["parabola_height","parabola_width"],
+          ["parabola_height":0,"parabola_width":0])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 52)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 52, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 55)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 55, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -153,5 +153,36 @@ final class VariationDescriptorTests: XCTestCase {
             XCTAssertEqual(VariationDescriptor.canonicalSlot(for: name), slot,
                            "\(name): expected slot \(slot)")
         }
+    }
+
+    /// var51_flower / var52_conic / var53_parabola (Task 5 CV5): 3 parametric
+    /// RNG-consuming variations. Each has 2 params (all default 0), and 1..2
+    /// isaac_01 draws (flower=1, conic=1, parabola=2). Slot indices 52..54
+    /// immediately follow the RNG + Inf/badvalue set (49..51). flam3's `clear_cp`
+    /// does NOT initialize any of these params — memset(0) in parser.c:229 wins,
+    /// so missing XML attrs parse as 0 (same reasoning as pdj/split in CV2).
+    /// NOTE: `conic_eccentricity` is set to 1.0 in `initialize_xforms` only (used
+    /// when adding NEW xforms for interpolation padding, NOT during parsing), so
+    /// for parsed genomes the effective default is 0 — Emberweft mirrors that.
+    func testFlowerConicParabolaDefaultsAreZero() {
+        let flower = VariationDescriptor.descriptor(for: "flower")!
+        XCTAssertEqual(flower.parameters, ["flower_holes", "flower_petals"])
+        XCTAssertEqual(flower.defaults, ["flower_holes": 0, "flower_petals": 0])
+        XCTAssertTrue(flower.rest.isEmpty, "flower has no special-sauce rest")
+
+        let conic = VariationDescriptor.descriptor(for: "conic")!
+        XCTAssertEqual(conic.parameters, ["conic_eccentricity", "conic_holes"])
+        XCTAssertEqual(conic.defaults, ["conic_eccentricity": 0, "conic_holes": 0])
+        XCTAssertTrue(conic.rest.isEmpty, "conic has no special-sauce rest")
+
+        let parabola = VariationDescriptor.descriptor(for: "parabola")!
+        XCTAssertEqual(parabola.parameters, ["parabola_height", "parabola_width"])
+        XCTAssertEqual(parabola.defaults, ["parabola_height": 0, "parabola_width": 0])
+        XCTAssertTrue(parabola.rest.isEmpty, "parabola has no special-sauce rest")
+
+        // Slot indices 52, 53, 54 (after the RNG + Inf/badvalue trio at 49..51).
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "flower"), 52)
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "conic"), 53)
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "parabola"), 54)
     }
 }
