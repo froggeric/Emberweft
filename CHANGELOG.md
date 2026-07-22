@@ -25,6 +25,10 @@ filters via the new `TemporalFilter` helper.
 
 - `emberweft animate --temporal-samples N` — CPU defaults to the genome's value
   (uncapped); Metal caps at 64 to bound dispatch overhead.
+- `emberweft animate` now renders a **single-sheep loop directly** (`--segments 1`);
+  transitions (`--segments > 1`) need ≥2 genomes. See the README and
+  [docs/rendering/animation.md](docs/rendering/animation.md) for sheep-loop and
+  edge/transition video recipes (`animate` PNG sequence + `ffmpeg` mux to MP4).
 - Production clip verified end-to-end: loops rotate, transitions morph, and the
   transition→loop boundary is smooth. The gate uncovered two real-genome bugs
   (see Fixed).
