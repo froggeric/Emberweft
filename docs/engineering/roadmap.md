@@ -6,7 +6,7 @@
 
 ## Current Status
 
-**Current milestone:** M4 — SwiftUI App and Library Browser · **M0, M1, M2, and M3 complete** (see [CHANGELOG.md](../../CHANGELOG.md))
+**Current milestone:** M4 — SwiftUI App and Library Browser · **M0, M1, M2, and M3 complete** (see [CHANGELOG.md](../../CHANGELOG.md)). A post-M3 **v0.1.0** patch landed on `main` after M3: real-genome faithfulness (`highlight_power` / spatial-filter radius wired in), motion blur (faithful `temporal_samples` port), and four more variations (`bubble`, `eyefish`, `pie`, `radial_blur`) — real gen-248 genomes now render at 49–52 dB vs `flam3`. v0.1.0 does not advance the milestone map (no new slices); M4 remains next.
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
 
@@ -99,6 +99,15 @@
 - Adaptive-quality **controller logic** verified against simulated fps/thermal signals (deterministic gate); real thermal-throttle behavior verified manually (deferred to M4 as a hard gate)
 - Transitions are visually smooth (no popping or discontinuities) — objective continuity gate: genome-space `‖Δ‖` bounded + consecutive-frame PSNR ≥ 40 dB
 - Unit tests for interpolation math (both within-genome loops and between-genome transitions); animated-frame parity (vs-flam3 ≥ 30 dB; Metal↔CPU ≥ 38 dB)
+
+#### Post-M3 (v0.1.0) — real-genome parity + motion blur
+A post-M3 patch on `main` (not a new milestone — no new slices): closed the
+real-genome vs-`flam3` density gap by parsing `highlight_power` and the spatial
+filter radius from the genome (real still PSNR ~20 dB → **49–52 dB**), ported
+motion blur as a faithful `temporal_samples` port on both backends
+(`--temporal-samples N`), and added four more variations (`bubble`, `eyefish`,
+`pie`, `radial_blur`). M3's synthetic goldens stay byte-identical and the
+animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGELOG.md).
 
 ### M4 — SwiftUI App and Library Browser
 

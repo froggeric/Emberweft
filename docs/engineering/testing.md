@@ -36,7 +36,7 @@ The correctness backbone for `FlameReference` (and transitively for the algorith
 The M3 animation pipeline extends the still-frame oracle to motion genomes. The same locally-built `flam3` (above) provides two more binaries — `flam3-genome` (generate motion genomes) and `flam3-animate` (render them) — driven entirely by **env vars** (no CLI flags): `sequence`/`rotate`/`inter` + `nframes`/`frame` for `flam3-genome`; `begin`/`end`/`prefix` for `flam3-animate`. The Swift harness `Tests/FlameReferenceTests/Flam3Oracle.swift` spawns them via `Process`.
 
 - **Build-from-source instructions** live in `Tools/flam3_oracle.sh` (pinned `scottdraves/flam3` commit, `brew install` deps, `./configure && make`, the literal env-var invocations). This is a **dev-machine prerequisite, not a CI step** (GitHub is a plain mirror; no CI runs).
-- **Motion blur OFF for clean parity (F6).** `flam3-animate`'s temporal oversampling is on by default (`temporal_samples=1000` → heavy blur on fast-moving frames). For vs-Emberweft parity the harness injects **`passes="1"` and `temporal_samples="1"`** onto every `<flame>` control point before spawning `flam3-animate` — these are **genome attributes, not env vars**. Without this, the ≥30 dB vs-flam3 gate would fail systematically on transition interiors (motion-blur signal, not a port bug).
+- **Motion blur OFF for clean parity (F6).** `flam3-animate`'s temporal oversampling is on by default (`temporal_samples=1000` → heavy blur on fast-moving frames). For vs-Emberweft parity the harness injects **`passes="1"` and `temporal_samples="1"`** onto every `<flame>` control point before spawning `flam3-animate` — these are **genome attributes, not env vars**. Without this, the ≥30 dB vs-flam3 gate would fail systematically on transition interiors (motion-blur signal, not a port bug). *(v0.1.0 note: Emberweft now ports `temporal_samples` motion blur on both backends — `--temporal-samples N` — so this blur-off oracle comparison isolates structural parity rather than measuring an Emberweft capability gap.)*
 - **F10 auto-skip.** `Flam3Oracle.isAvailable` returns true iff both binaries resolve on `$PATH`; every vs-flam3 test calls `try Flam3Oracle.require()`, which `XCTSkip`s with a clear warning when the build is absent. vs-flam3 tests are therefore **no-ops (never failures)** on machines without the build. **Metal↔CPU parity (≥38 dB) remains the hard gate** and is independent of flam3 availability.
 
 ### 3. Parity tests (Metal ↔ CPU)
@@ -183,6 +183,7 @@ The `swift test` gate is correct but heavy (~12 min: the vs-flam3 rows spawn `fl
 | Metric | Threshold |
 |---|---|
 | `FlameReference` vs `flam3` golden | PSNR ≥ 30 dB, SSIM ≥ 0.95 |
+| Real ES genomes vs `flam3` (v0.1.0, `RealGenomeParityTests`) | PSNR ≥ 38 dB (measured 49–52 dB across 7 gen-248 fixtures) |
 | Metal vs CPU parity (end-to-end) | PSNR ≥ 38 dB, SSIM ≥ 0.95 |
 | Metal Stage-3a vs CPU ToneMapping (same histogram) | PSNR ≥ 50 dB (byte-exact, `inf` in practice) |
 | Metal determinism | byte-identical across repeated runs |

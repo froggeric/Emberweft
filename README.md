@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · CPU + Metal renderers and the `emberweft` CLI are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.1.0 — CPU + Metal renderers, animation + realtime playback, and motion-blurred real-genome parity are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,17 +18,21 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M2):**
-- `emberweft` CLI — `render`, `validate`, `info` — parses standard `.flam3` genomes into still PNGs
-- CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity)
+**Works now (M0–M3, v0.1.0):**
+- `emberweft` CLI — `render`, `validate`, `info`, `animate` — parses standard `.flam3` genomes into stills and animation sequences
+- CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
 - `--backend cpu|metal` switch; byte-deterministic within each backend
+- Realtime playback engine — adaptive-quality `PlaybackDispatcher` + `FlameUI` (≥ 58 fps @ 1080p, M2 Max)
+- Animation: seamless sheep **loops** (pure affine rotation) + smooth **transitions** between genomes, alternating endlessly — the Electric Sheep sequence
+- **Motion blur** — faithful `temporal_samples` port (`--temporal-samples N`); box / gaussian / exp temporal filters
+- Wide variation coverage — the classic set plus the 16 special-sauce variations and `bubble` / `eyefish` / `pie` / `radial_blur`
 
-**Planned (M3+):**
-- Realtime playback with smooth [sheep transitions](docs/rendering/transitions.md)
+**Planned (M4+):**
+- SwiftUI app with library browser, search, and playback controls
+- macOS screensaver bundle
 - Long-form export (MP4/MOV) for music videos and installations
 - Music-video mode: offline + realtime audio-reactive
-- macOS screensaver
 - Multi-resolution: 720p / 1080p / 1440p / 4K; landscape & vertical
 - Curated seed library of hand-picked genomes
 
@@ -45,8 +49,9 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | M0 | ✅ Done | Docs + repo scaffold |
 | M1 | ✅ Done | CPU reference renderer + `emberweft` CLI (validated vs `flam3`) |
 | M2 | ✅ Done | Metal compute renderer + Metal↔CPU parity |
-| M3 | **Current** | Animation (transitions) + realtime adaptive pipeline |
-| M4 | Planned | SwiftUI app + player + library browser |
+| M3 | ✅ Done | Animation (loops + transitions) + realtime adaptive pipeline |
+| **v0.1.0** | ✅ Done | Real-genome parity (`highlight_power` / `filter`), motion blur, 4 more variations |
+| M4 | **Current** | SwiftUI app + player + library browser |
 | M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
@@ -62,10 +67,11 @@ Requires macOS 26 on Apple Silicon (M1+) and Swift 6.2.
 swift build                  # build
 swift run emberweft render Tests/Goldens/genomes/sierpinski.flam3 -o out.png
 swift run emberweft render Tests/Goldens/genomes/sierpinski.flam3 -o out.png --backend metal --size 160x100
+swift run emberweft animate --frames 480 --segments 4 --backend metal --out seq/   # PNG sequence + manifest.json
 swift run emberweft --list-backends
 ```
 
-`--backend cpu` is the default. `metal` is used when a Metal device is available (check with `--list-backends`).
+`--backend cpu` is the default. `metal` is used when a Metal device is available (check with `--list-backends`). `animate` honors `--temporal-samples N` for motion blur (defaults to the genome's value on CPU; capped at 64 on Metal).
 
 ## Validation
 
@@ -74,14 +80,17 @@ Emberweft is built test-first against two oracles: the CPU reference matches `fl
 | Gate | Result |
 |------|--------|
 | CPU reference vs `flam3` goldens | 51–72 dB PSNR, SSIM ≈ 1.0 |
+| Real ES genomes vs `flam3` (v0.1.0) | 49–52 dB PSNR across 7 gen-248 fixtures (≥ 38 gate) |
 | Metal vs CPU (end-to-end) | 39–60 dB / SSIM ≥ 0.95 over 6 frozen genomes + fuzz |
 | Metal display vs CPU tone-map (same histogram) | byte-exact (inf dB) |
 | Metal chaos histogram vs CPU | count correlation > 0.999 |
 | MSL ISAAC vs Swift ISAAC | byte-identical stream |
+| Animation vs `flam3-animate` (loops + transitions) | 43–58 dB PSNR |
+| Realtime capability (M3 gate) | ≥ 58 fps sustained @ 1080p (M2 Max) |
 | Within-backend determinism | byte-identical output across runs |
 | Metal speedup vs single-threaded CPU (1080p) | 12–18× |
 
-The local test suite is the source of truth (80 tests, all green). GitHub is a plain git mirror; see [testing.md](docs/engineering/testing.md).
+The local test suite is the source of truth (320+ tests, all green). GitHub is a plain git mirror; see [testing.md](docs/engineering/testing.md).
 
 ## Documentation
 
@@ -166,4 +175,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M2 are complete:** the CPU reference renderer, the Metal compute renderer, and the `emberweft` CLI all work today. M3 (animation + realtime playback) is next — see the [roadmap](docs/engineering/roadmap.md).
+**M0–M3 are complete (v0.1.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, and motion-blurred real-genome parity all work today. M4 (SwiftUI app + library browser) is next — see the [roadmap](docs/engineering/roadmap.md).

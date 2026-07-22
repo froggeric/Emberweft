@@ -7,6 +7,64 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.0] — Real-Genome Parity + Motion Blur
+
+The first versioned release, landing **post-M3** on `main`. Closes the
+real-genome faithfulness gap against `flam3` and ports motion blur, so offline
+renders of real Electric Sheep genomes are production-quality. Synthetic goldens
+remain byte-identical; M3 animation parity (43–58 dB) is unchanged.
+
+### Motion blur — faithful `temporal_samples` port
+`temporal_samples` motion blur on **both** backends
+(`ReferenceRenderer.render(blendAt:…)` / `MetalRenderer.render(blendAt:…)`):
+`N` chaos sub-passes per frame across a ±`temporal_filter_width/2` window, with
+`color_scalar` baked into the dmap, counts unweighted, and `sumfilt` threaded
+into `k2` — a faithful port of `flam3_create_temporal_filter` + `rect.c`'s
+temporal loop. **Cost-neutral** (total samples unchanged). Box / gaussian / exp
+filters via the new `TemporalFilter` helper.
+
+- `emberweft animate --temporal-samples N` — CPU defaults to the genome's value
+  (uncapped); Metal caps at 64 to bound dispatch overhead.
+- Production clip verified end-to-end: loops rotate, transitions morph, and the
+  transition→loop boundary is smooth. The gate uncovered two real-genome bugs
+  (see Fixed).
+
+### Real-genome density-parity gap closed
+`highlight_power` (was hardcoded −1.0; real genomes carry `"1"`) and
+`spatial_filter_radius` / `filter` (was hardcoded 0.5; genomes carry `"1"`) are
+now parsed from the genome and wired into CPU `ToneMapping` and the Metal display
+pipeline (including the saturated-highlight HSV branch added to the Metal
+kernel). Result: real-genome still PSNR vs `flam3` went **~20 dB → 49–52 dB**
+across the fixture corpus.
+
+### Missing variations (Reference-then-Optimize)
+Four variations used by real gen-248 genomes but absent from Emberweft are ported
+to **both** CPU (`Variations.swift`) and Metal (`Kernels.metal`):
+
+- **`bubble`** — paramless, 0 RNG draws.
+- **`eyefish`** — paramless; **not** a `fisheye` alias (output un-swapped).
+- **`pie`** — 3 ordered `isaac_01` draws; params `pie_slices` / `pie_rotation` /
+  `pie_thickness`.
+- **`radial_blur`** — 4 summed `isaac_01` draws; param `radial_blur_angle`.
+
+`VariationDescriptor.canonicalOrder` grew 33 → 37.
+
+### Fixed — gate-uncovered real-genome bugs
+Two bugs that synthetic-golden parity never exercised (real-genome-only):
+
+- **Temporal-filter delta units** — the filter delta was in frame-time but added
+  to per-segment blend, producing ±216° over-blur on static loops. Fixed by
+  scaling by `1/framesPerSegment`.
+- **Padding-xform weight** — `SpecialSauce.makePaddingXform` used weight 1.0, but
+  flam3 padding xforms are `density=0` (invisible); mismatched xform counts broke
+  the real-genome transition→loop seam. Fixed (weight 0).
+
+### Real-genome parity gate
+`RealGenomeParityTests` — all 7 real gen-248 fixtures now `.gate` at **49–52 dB**
+(≥ 38 gate) vs `flam3`; `Tools/density_diff.py` localizes any remaining density
+delta. Synthetic goldens remain byte-identical; M3 animation parity (43–58 dB) is
+unchanged.
+
 ## [M3] — Animation and Realtime Pipeline
 
 Faithful flam3 animation (loops + transitions) rendered through a realtime Metal
