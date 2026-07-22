@@ -1,14 +1,14 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 35-slot
-/// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish; spherical/polar
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 36-slot
+/// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie; spherical/polar
 /// counted once), per-variation params/defaults, special-sauce rest values, and
 /// the name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
 /// `Variations` table, the Metal host packer, and `apply_xform_body` dispatch.
 /// `Variations.canonicalOrder` IS a one-line re-export of this array (landed
-/// in Task 5, which also grew `GPUXform.varWeights` to `[35]` and the MSL
+/// in Task 5, which also grew `GPUXform.varWeights` to `[36]` and the MSL
 /// if-chain, so the widening was atomic). `VariationDescriptor.canonicalOrder`
-/// is the 35-name authority used by all code paths, and
+/// is the 36-name authority used by all code paths, and
 /// `Variations.canonicalOrder` simply re-exports it. Pinned to the spec's
 /// "Param-channel layout" + "Special-sauce padding" tables.
 public struct VariationDescriptor: Sendable {
@@ -17,12 +17,13 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 35-device-slot layout) ----
-    /// Fixed 35-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 36-device-slot layout) ----
+    /// Fixed 36-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
-    /// preserve existing slots 0..32. spherical/polar appear ONCE.
+    /// preserve existing slots 0..32; then `pie` (var37, RNG-consuming, slot 35).
+    /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
         "bent","cosine","cylinder","diamond","disc","ex","exponential","fisheye",
@@ -36,8 +37,12 @@ public struct VariationDescriptor: Sendable {
         // --- var27_eyefish (slot 34): paramless, RNG-free; NOT a fisheye alias
         //     (un-swapped output). Unblocks 00000 (partially; pie/radial_blur still pending). ---
         "eyefish",
+        // --- var37_pie (slot 35): 3 ordered isaac_01 draws (slice, angular,
+        //     radial). RNG-consuming → lives in `evaluate`'s switch, NOT the
+        //     table. Unblocks 00000 (partially; radial_blur still pending). ---
+        "pie",
     ]
-    /// Canonical device-slot index for a variation name (0..<35), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<36), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -95,6 +100,10 @@ public struct VariationDescriptor: Sendable {
         d("spiral", [], [:]); d("swirl", [], [:])
         d("bubble", [], [:])     // var28_bubble: paramless, RNG-free (slot 33)
         d("eyefish", [], [:])    // var27_eyefish: paramless, RNG-free (slot 34; NOT a fisheye alias)
+        // var37_pie (slot 35): 3 ordered isaac_01 draws. RNG-consuming → lives in
+        // `evaluate`'s switch (mirrors julian), NOT the closure table.
+        d("pie", ["pie_slices","pie_rotation","pie_thickness"],
+          ["pie_slices":6,"pie_rotation":0,"pie_thickness":0.5])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

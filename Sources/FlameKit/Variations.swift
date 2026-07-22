@@ -26,7 +26,10 @@ public enum Variations {
         // var28_bubble: paramless, RNG-free
         "bubble",
         // var27_eyefish: paramless, RNG-free (NOT a fisheye alias — un-swapped)
-        "eyefish"
+        "eyefish",
+        // var37_pie: 3 ordered isaac_01 draws (slice, angular, radial).
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "pie"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -46,9 +49,11 @@ public enum Variations {
     ///
     /// `ef` carries the xform's affine translation coefficients `e`=`c[2][0]` and
     /// `f`=`c[2][1]`, needed by the coefficient-dependent variations `rings`/`fan`
-    /// (variations.c:521,543). `rng` is threaded for the five RNG-consuming
-    /// variations (julia/julian/juliascope/super_shape/wedge_julia), each of which
-    /// draws exactly one `flam3_random_isaac_01`/`_bit` word when reached.
+    /// (variations.c:521,543). `rng` is threaded for the six RNG-consuming
+    /// variations (julia/julian/juliascope/super_shape/wedge_julia/pie):
+    /// julia/julian/juliascope/super_shape/wedge_julia each draw one
+    /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
+    /// `isaac_01` words in flam3's exact order (slice → angular → radial).
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -65,6 +70,8 @@ public enum Variations {
                 term = julian(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "juliascope":
                 term = juliascope(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "pie":
+                term = pie(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "super_shape":
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
@@ -146,6 +153,32 @@ public enum Variations {
         }
         let r = weight * pow(sumsq, cn)
         return SIMD2(r * cos(tmpr), r * sin(tmpr))
+    }
+
+    /// flam3 `var37_pie` (variations.c:795-809). Consumes THREE
+    /// `flam3_random_isaac_01` words in this EXACT order:
+    ///   sl = (int)(isaac01 * pie_slices + 0.5)                 // draw #1 (slice index)
+    ///   a  = pie_rotation + 2π*(Double(sl) + isaac01*pie_thickness) / pie_slices
+    ///                                                            // draw #2 (angular offset, inside parens)
+    ///   r  = weight * isaac01                                  // draw #3 (radial)
+    ///   (r*cos(a), r*sin(a))
+    /// A single reordered draw diverges the ISAAC stream and breaks vs-flam3
+    /// parity — keep the calls in this order. `p` is UNUSED (pie's output is
+    /// independent of its input, like flam3); kept in the signature for
+    /// dispatch-shape parity with the other RNG-consuming variations.
+    private static func pie(_ p: SIMD2<Double>, weight: Double,
+                            params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        _ = p   // pie ignores its input (matches flam3 var37_pie)
+        let slices   = resolve("pie", "pie_slices", params)
+        let rotation = resolve("pie", "pie_rotation", params)
+        let thickness = resolve("pie", "pie_thickness", params)
+        let d1 = rng.isaac01()
+        let sl = Int(d1 * slices + 0.5)                                          // draw #1
+        let d2 = rng.isaac01()
+        let a  = rotation + 2 * .pi * (Double(sl) + d2 * thickness) / slices     // draw #2
+        let d3 = rng.isaac01()                                                   // draw #3
+        let r  = weight * d3
+        return SIMD2(r * cos(a), r * sin(a))
     }
 
     /// flam3 `var50_supershape` (variations.c:1093-1117) + `supershape_precalc`
@@ -495,9 +528,25 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 35-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish).
-    /// Only `julia` consumes the RNG; with a single RNG-consuming variation,
-    /// canonical-order iteration is RNG-equivalent to CPU genome-order.
+    /// (the 36-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish + pie).
+    ///
+    /// RNG-EQUIVALENCE NOTE: six variations consume the ISAAC stream
+    /// (julia/julian/juliascope/super_shape/wedge_julia/pie). CPU `evaluate`
+    /// walks an xform's variations in ARRAY order, which the parser sorts
+    /// ALPHABETICALLY (Flam3Parser.swift:223); Metal `apply_xform_body` walks
+    /// them in CANONICAL-SLOT order (the if-chain at Kernels.metal). For the
+    /// RNG-alignment coincidence to hold, the canonical slots of the RNG-
+    /// consuming set must be in the SAME relative order as their alphabetical
+    /// order. Pinned by `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
+    /// (slots ascending) — but that test does NOT pin the alphabetical↔slot
+    /// coincidence. The current set {julia(12), julian(25), juliascope(26),
+    /// super_shape(30), wedge_julia(31), pie(35)} is alphabetical == slot order
+    /// EXCEPT for pie, which sits alphabetically between juliascope and
+    /// super_shape but at slot 35 (after wedge_julia). The two orderings
+    /// therefore diverge only for an xform containing pie AND
+    /// {super_shape,wedge_julia} — no frozen/fuzz/real-fixture genome has
+    /// that combination, but the divergence is the load-bearing assumption
+    /// to re-check if a future genome violates it.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -515,9 +564,10 @@ public extension Variations {
     ///     ULPs — still inside the statistical-parity envelope, not a bug.
     ///
     /// Slots 19..32 are the special-sauce set; slot 33 is `bubble` (var28,
-    /// paramless), slot 34 is `eyefish` (var27, paramless, NOT a fisheye alias).
+    /// paramless), slot 34 is `eyefish` (var27, paramless, NOT a fisheye alias),
+    /// slot 35 is `pie` (var37, RNG-consuming, 3 ordered isaac_01 draws).
     /// `apply_xform_body` reads them positionally and pulls their params from
-    /// `varParams[slot*8 + idx]`. The MSL if-chain is now 35 lines
+    /// `varParams[slot*8 + idx]`. The MSL if-chain is now 36 lines
     /// (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

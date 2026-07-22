@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 35)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 35, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 36)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 36, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)

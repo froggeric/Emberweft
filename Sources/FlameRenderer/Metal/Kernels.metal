@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+35+(35*8) = 330 floats = 1320 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+36+(36*8) = 339 floats = 1356 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 35
+#define NUM_XFORM_SLOTS_MS 36
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 35
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 35*8 = 280
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 36
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 36*8 = 288
 };
 
 struct GPUFrameParams {
@@ -443,9 +443,29 @@ static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
     r = w * (r + hole);
     return float2(r * cos(a), r * sin(a));
 }
+// var37_pie (variations.c:795-809). THREE isaac_01 draws in EXACT order:
+// (1) slice index    sl = (int)(d1*slices + 0.5)
+// (2) angular offset (drawn INSIDE the parens of `a`):
+//     a = rotation + 2π*(sl + d2*thickness) / slices
+// (3) radial          r  = w * d3
+//   (r*cos(a), r*sin(a)) — pie ignores `p` (output is RNG-driven only).
+// Reordering any draw diverges the ISAAC stream and breaks vs-flam3 parity.
+static inline float2 v_pie(float2 p, float w, thread const float* pr,
+                           thread IsaacState& rng) {
+    (void)p;   // pie ignores its input (matches flam3 var37_pie)
+    float slices = pr[0], rotation = pr[1], thickness = pr[2];
+    float d1 = isaac_01(rng);
+    int sl = (int)(d1 * slices + 0.5f);                                 // draw #1
+    float d2 = isaac_01(rng);
+    float a = rotation + 2.0f*M_PI_F*((float)sl + d2*thickness) / slices; // draw #2
+    float d3 = isaac_01(rng);                                           // draw #3
+    float r = w * d3;
+    return float2(r * cos(a), r * sin(a));
+}
 
-// Sum the 35 canonical slots. julian/juliascope/super_shape/wedge_julia also
-// consume the RNG (one isaac_01 each); super_shape draws UNCONDITIONALLY.
+// Sum the 36 canonical slots. julian/juliascope/super_shape/wedge_julia/pie also
+// consume the RNG (julian/juliascope/wedge_julia: one isaac_01 each;
+// super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s).
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -497,6 +517,9 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[33] != 0.0f) acc += v_bubble(pre, w[33]);
     // slot 34 — eyefish (var27_eyefish, paramless, RNG-free; NOT a fisheye alias)
     if (w[34] != 0.0f) acc += v_eyefish(pre, w[34]);
+    // slot 35 — pie (var37_pie, RNG-consuming; 3 ordered isaac_01 draws).
+    // Param order in pr[0..2] = descriptor-declared order: slices, rotation, thickness.
+    if (w[35] != 0.0f) acc += v_pie(pre, w[35], &x.varParams[35*SLOT_WIDTH_MS], rng);
     return apply_post(x, acc);
 }
 

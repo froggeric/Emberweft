@@ -283,6 +283,55 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(rng1.isaac01(), rng2.isaac01())
     }
 
+    // var37_pie (variations.c:795-809): THREE isaac01 draws in this EXACT order:
+    //   (1) slice index    sl = Int(d1 * pie_slices + 0.5)
+    //   (2) angular offset inside the slice (drawn INSIDE the parens of `a`):
+    //       a = pie_rotation + 2π*(Double(sl) + d2*pie_thickness) / pie_slices
+    //   (3) radial          r  = weight * d3
+    //   output = (r*cos(a), r*sin(a)) — INDEPENDENT of p (pie ignores its input).
+    // A single reordered draw diverges the ISAAC stream and breaks vs-flam3
+    // parity, so both the COUNT (3) and the ORDER (slice → angular → radial)
+    // are load-bearing. Template: testJulianDrawsOneAndFinite (adapted to 3).
+    func testPieDrawsThreeAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "pie", weight: 1,
+                       parameters: ["pie_slices":6, "pie_rotation":0.0, "pie_thickness":0.5])],
+            at: p, ef: .zero, rng: &rng1)
+        // pie consumed exactly 3 words (slice, angular, radial) from rng1.
+        _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "pie x not finite")
+        XCTAssertTrue(out.y.isFinite, "pie y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(), "pie must consume exactly 3 ISAAC words")
+    }
+
+    /// Hand-traced closed form: run pie on one ISAAC, then independently draw
+    /// the same 3 words from a fresh-seed twin in the SPEC order (sl → a → r)
+    /// and assert the outputs agree. This pins both the draw count AND the
+    /// exact draw order — any reordering makes `expected` diverge from `out`
+    /// because each draw feeds a different term of the formula.
+    func testPieClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "pie-closed-form")
+        var rng2 = ISAAC(isaacSeed: "pie-closed-form")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let params: [String: Double] = ["pie_slices":6, "pie_rotation":0.0, "pie_thickness":0.5]
+        let out = Variations.evaluate(
+            [Variation(name: "pie", weight: 1, parameters: params)],
+            at: p, ef: .zero, rng: &rng1)
+        // SPEC ORDER (variations.c:799-805): slice draw → angular draw (inside
+        // `a`'s parens) → radial draw. Match the formula term-for-term.
+        let slices = 6.0, rotation = 0.0, thickness = 0.5
+        let d1 = rng2.isaac01()
+        let sl = Int(d1 * slices + 0.5)
+        let d2 = rng2.isaac01()
+        let a = rotation + 2 * .pi * (Double(sl) + d2 * thickness) / slices
+        let d3 = rng2.isaac01()
+        let r = 1.0 * d3
+        let expected = SIMD2<Double>(r * cos(a), r * sin(a))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

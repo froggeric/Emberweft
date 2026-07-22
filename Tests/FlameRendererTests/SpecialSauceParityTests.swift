@@ -82,6 +82,13 @@ final class SpecialSauceParityTests: XCTestCase {
     @MainActor func testBubble() throws        { try assertParity("bubble", [:]) }
     // var27_eyefish: paramless, 0 RNG draws. NOT a fisheye alias (un-swapped).
     @MainActor func testEyefish() throws       { try assertParity("eyefish", [:]) }
+    // var37_pie (variations.c:795-809): 3 ordered isaac_01 draws (slice, angular,
+    // radial). RNG-consuming → goes in `evaluate`'s switch, NOT the table. The
+    // PSNR is the real RNG-parity oracle: if the CPU and Metal draw order or
+    // count diverge, PSNR collapses well below 38 dB.
+    @MainActor func testPie() throws {
+        try assertParity("pie", ["pie_slices": 6, "pie_rotation": 0.0, "pie_thickness": 0.5])
+    }
 
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
