@@ -7,6 +7,24 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.1] — Corpus-Variation Coverage (100% of ES-corpus-used variations)
+
+Ports the 20 flam3 variations the archived Electric Sheep corpus uses that v0.1.0 lacked — **100% coverage of every variation appearing in a 23k-genome corpus survey** (Emberweft now **57 of 99** flam3 variations). Real-genome parity holds (49–52 dB on the original 7 fixtures; 5 new `.gate` fixtures at 38–52 dB). Two pre-existing parse bugs found + fixed.
+
+### Variations ported (CPU + Metal, Reference-then-Optimize)
+- **Paramless non-RNG**: `waves` (the big gap — 12,889 corpus occurrences, a top-8 variation), `popcorn`, `power`, `tangent`, `cross`, `secant2`.
+- **Parametric non-RNG**: `pdj`, `split`, `disc2` (with its `disc2_precalc`).
+- **RNG-consuming**: `noise`, `blur`, `gaussian_blur` (5 draws), `arch`, `square`, `rays`, `blade`, `twintrian` (badvalue guard `→ -30.0`), `flower`, `conic`, `parabola`.
+- The CPU variation table's affine plumbing was widened (`ef` → `affine: SIMD4` c,d,e,f) so `waves`/`popcorn` can read the pre-affine coefficients — behavior-neutral (`rings`/`fan` byte-identical; goldens unchanged).
+- **Corpus survey**: only `secant2` (0.7%) + `disc2` (0.6%) remained beyond the v0.1.0 set — both now ported. The other 42 of the 99 flam3 variations are **unused by any corpus genome** (deferred — see `docs/superpowers/plans/2026-07-22-remaining-work.md`).
+
+### Fixed
+- **Sanitize regex** in `RealGenomeParityTests` clobbered `split_xsize`/`split_ysize` (the `size="…"` pattern matched as a substring) — fixed with a word-boundary lookbehind.
+- **Legacy `symmetry=` attr mapping**: `color_speed = (1-sym)/2` (was `1-sym`, 2× off) + derive `animate = sym>0 ? 0 : 1` (was missing) — cost ~40 dB on affected genomes. Pinned by a regression test.
+
+### Known gap (separate, documented)
+4 edge-genome fixtures render at 28–34 dB (`.knownGap`) — **not variation bugs** (Metal↔CPU parity passes at 45–inf dB); a residual display/parsing gap on default-`highlight_power` genomes (flam3's default hp −1.0 matches Emberweft's; the gap is another mishandled attr of the `symmetry`/`sanitize` class). Investigation/fix plan in the remaining-work doc.
+
 ## [v0.1.0] — Real-Genome Parity + Motion Blur
 
 The first versioned release, landing **post-M3** on `main`. Closes the
