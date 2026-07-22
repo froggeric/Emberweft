@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 44)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 44, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 49)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 49, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -110,5 +110,27 @@ final class VariationDescriptorTests: XCTestCase {
         // Slot indices 42, 43 (after the 5 paramless non-RNG ports at 37..41).
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "pdj"), 42)
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "split"), 43)
+    }
+
+    /// var31_noise / var34_blur / var35_gaussian_blur / var41_arch / var43_square
+    /// (Task 3 CV3): 5 RNG-consuming paramless variations. All paramless (no
+    /// XML params) and 0..5 isaac_01 draws each. The slot indices 44..48 are
+    /// immediately after the parametric non-RNG pair (pdj=42, split=43) and
+    /// before the upcoming RNG+Inf/badvalue set (rays/blade/twintrian).
+    func testRngSimpleSlotsAreParamlessAt44to48() {
+        // noise=2 draws, blur=2 draws, gaussian_blur=5 draws, arch=1 draw, square=2 draws.
+        let expected: [(String, Int)] = [
+            ("noise", 44), ("blur", 45), ("gaussian_blur", 46),
+            ("arch", 47), ("square", 48),
+        ]
+        for (name, slot) in expected {
+            let d = VariationDescriptor.descriptor(for: name)
+            XCTAssertNotNil(d, name)
+            XCTAssertTrue(d!.parameters.isEmpty, "\(name): must be paramless")
+            XCTAssertTrue(d!.defaults.isEmpty, "\(name): no defaults (paramless)")
+            XCTAssertTrue(d!.rest.isEmpty, "\(name): no special-sauce rest")
+            XCTAssertEqual(VariationDescriptor.canonicalSlot(for: name), slot,
+                           "\(name): expected slot \(slot)")
+        }
     }
 }

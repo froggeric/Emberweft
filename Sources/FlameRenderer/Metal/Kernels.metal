@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+44+(44*8) = 411 floats = 1644 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+49+(49*8) = 456 floats = 1824 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 44
+#define NUM_XFORM_SLOTS_MS 49
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 44
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 44*8 = 352
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 49
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 49*8 = 392
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 44 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 49 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 44 variation terms (canonical slot order). Each returns the term that CPU
+// 49 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -283,6 +283,80 @@ static inline float2 v_split(float2 p, float w, thread const float* pr) {
     if (cos(p.y * ysize * M_PI_F) >= 0.0f) { p0 += w * p.x; }
     else                                   { p0 -= w * p.x; }
     return float2(p0, p1);
+}
+// var31_noise (variations.c:696-708). TWO isaac_01 draws in EXACT order:
+// (1) angle   tmpr = d1*2π;  sincos(tmpr, &sinr, &cosr)
+// (2) radius  r = w * d2
+//   (tx*r*cosr, ty*r*sinr) — INPUT-SCALED (multiplies tx, ty). The ONLY
+// difference from v_blur (var34) below, which is NOT input-scaled. Paramless;
+// RNG-consuming → lives in `apply_xform_body`'s w-guarded dispatch chain.
+static inline float2 v_noise(float2 p, float w, thread IsaacState& rng) {
+    float d1 = isaac_01(rng);                          // draw #1 (angle)
+    float tmpr = d1 * 2.0f * M_PI_F;
+    float cosr = cos(tmpr);
+    float sinr = sin(tmpr);
+    float d2 = isaac_01(rng);                          // draw #2 (radius)
+    float r = w * d2;
+    return float2(p.x * r * cosr, p.y * r * sinr);     // INPUT-SCALED
+}
+// var34_blur (variations.c:746-758). TWO isaac_01 draws — IDENTICAL draw
+// structure to v_noise, but NOT input-scaled (no tx, ty factor). Paramless;
+// RNG-consuming.
+//   (r*cosr, r*sinr)
+static inline float2 v_blur(float2 p, float w, thread IsaacState& rng) {
+    (void)p;   // blur ignores its input (matches flam3 var34_blur)
+    float d1 = isaac_01(rng);                          // draw #1 (angle)
+    float tmpr = d1 * 2.0f * M_PI_F;
+    float cosr = cos(tmpr);
+    float sinr = sin(tmpr);
+    float d2 = isaac_01(rng);                          // draw #2 (radius)
+    float r = w * d2;
+    return float2(r * cosr, r * sinr);                 // NOT input-scaled
+}
+// var35_gaussian (variations.c:760-773). FIVE isaac_01 draws: 1 angle + 4-sum.
+// (XML name `gaussian_blur`; C function `var35_gaussian`.)
+// (1) angle   ang = d1*2π;  sincos(ang, &sina, &cosa)
+// (2..5) sum  r = w*(d2 + d3 + d4 + d5 - 2.0)
+//   (r*cosa, r*sina). Paramless; RNG-consuming. 5 draws, NOT 4 (the angle
+// draw is separate from the 4-sum).
+static inline float2 v_gaussian_blur(float2 p, float w, thread IsaacState& rng) {
+    (void)p;   // gaussian_blur ignores its input (matches flam3 var35_gaussian)
+    float d1 = isaac_01(rng);                          // draw #1 (angle)
+    float ang = d1 * 2.0f * M_PI_F;
+    float sina = sin(ang);
+    float cosa = cos(ang);
+    float d2 = isaac_01(rng);                          // draws #2..5 (4-sum)
+    float d3 = isaac_01(rng);
+    float d4 = isaac_01(rng);
+    float d5 = isaac_01(rng);
+    float r = w * (d2 + d3 + d4 + d5 - 2.0f);
+    return float2(r * cosa, r * sina);
+}
+// var41_arch (variations.c:857-883). ONE isaac_01 draw, UN-GUARDED sinr²/cosr:
+//   ang = d1*w*π;  sincos(ang, &sinr, &cosr)
+//   (w*sinr, w*(sinr*sinr)/cosr)
+// NO per-term `if cosr==0` guard — match flam3 (cosr=0 → Inf; the chaos game's
+// post-affine badvalue check handles Inf downstream). Paramless; RNG-consuming.
+static inline float2 v_arch(float2 p, float w, thread IsaacState& rng) {
+    (void)p;   // arch ignores its input (matches flam3 var41_arch)
+    float d1 = isaac_01(rng);                          // draw #1 (angle)
+    float ang = d1 * w * M_PI_F;
+    float sinr = sin(ang);
+    float cosr = cos(ang);
+    return float2(w * sinr,
+                  w * (sinr * sinr) / cosr);           // UN-GUARDED
+}
+// var43_square (variations.c:900-913). TWO isaac_01 draws, INDEPENDENT for
+// p0 and p1:
+//   p0 += w*(d1 - 0.5);   p1 += w*(d2 - 0.5);
+// Output bounded in [-w/2, w/2]² (indep of input p). Despite the name, an
+// RNG-consuming variation (the "square" shape comes from the uniform RNG
+// distribution), NOT paramless. Paramless in the descriptor sense; RNG-consuming.
+static inline float2 v_square(float2 p, float w, thread IsaacState& rng) {
+    (void)p;   // square ignores its input (matches flam3 var43_square)
+    float d1 = isaac_01(rng);                          // draw #1 (p0)
+    float d2 = isaac_01(rng);                          // draw #2 (p1)
+    return float2(w * (d1 - 0.5f), w * (d2 - 0.5f));
 }
 static inline float2 v_diamond(float2 p, float w) {
     float r = sqrt(p.x*p.x + p.y*p.y); float a = atan2(p.x, p.y);
@@ -565,10 +639,13 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 44 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
-// radial_blur also consume the RNG (julian/juliascope/wedge_julia: one isaac_01
-// each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
-// radial_blur: FOUR isaac_01s summed left-to-right).
+// Sum the 49 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// radial_blur/noise/blur/gaussian_blur/arch/square also consume the RNG
+// (julian/juliascope/wedge_julia: one isaac_01 each; super_shape: one
+// UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s; radial_blur: FOUR
+// isaac_01s summed left-to-right; noise: TWO (angle, radius) INPUT-SCALED;
+// blur: TWO (angle, radius) NOT input-scaled; gaussian_blur: FIVE (1 angle +
+// 4-sum); arch: ONE (angle); square: TWO (independent for p0, p1)).
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -645,6 +722,18 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // slot 43 — split (var74_split, parametric: 2 params default 0; 0 RNG draws).
     // Param order in pr[0..1] = descriptor-declared order: split_xsize, split_ysize.
     if (w[43] != 0.0f) acc += v_split(pre, w[43], &x.varParams[43*SLOT_WIDTH_MS]);
+    // ---- corpus-variations RNG simple set (slots 44..48). All paramless but
+    // RNG-consuming → take `rng`. ----
+    // slot 44 — noise (var31_noise, 2 isaac_01 draws, INPUT-SCALED: tx*r*cosr).
+    if (w[44] != 0.0f) acc += v_noise(pre, w[44], rng);
+    // slot 45 — blur (var34_blur, 2 isaac_01 draws, NOT input-scaled: r*cosr).
+    if (w[45] != 0.0f) acc += v_blur(pre, w[45], rng);
+    // slot 46 — gaussian_blur (var35_gaussian, 5 isaac_01 draws: 1 angle + 4-sum).
+    if (w[46] != 0.0f) acc += v_gaussian_blur(pre, w[46], rng);
+    // slot 47 — arch (var41_arch, 1 isaac_01 draw, UN-GUARDED sinr²/cosr).
+    if (w[47] != 0.0f) acc += v_arch(pre, w[47], rng);
+    // slot 48 — square (var43_square, 2 isaac_01 draws, bounded in [-w/2, w/2]²).
+    if (w[48] != 0.0f) acc += v_square(pre, w[48], rng);
     return apply_post(x, acc);
 }
 

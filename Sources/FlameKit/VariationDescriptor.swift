@@ -1,15 +1,16 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 44-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 49-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
-/// radial_blur + waves/popcorn/power/tangent/cross + pdj/split; spherical/polar
-/// counted once), per-variation params/defaults,
+/// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
+/// noise/blur/gaussian_blur/arch/square; spherical/polar counted once),
+/// per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 44-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 49-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -19,8 +20,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 44-device-slot layout) ----
-    /// Fixed 44-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 49-device-slot layout) ----
+    /// Fixed 49-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -28,7 +29,11 @@ public struct VariationDescriptor: Sendable {
     /// and `radial_blur` (var36, RNG-consuming, slot 36); then the corpus-
     /// variations paramless non-RNG set: `waves` (var15, needs affine c,d,e,f),
     /// `popcorn` (var17, e,f), `power` (var19, precalc sina/cosa), `tangent`
-    /// (var42), `cross` (var48) at slots 37..41.
+    /// (var42), `cross` (var48) at slots 37..41; then the corpus-variations
+    /// RNG simple set: `noise` (var31, 2 draws, INPUT-SCALED), `blur` (var34,
+    /// 2 draws, NOT input-scaled), `gaussian_blur` (var35, 5 draws), `arch`
+    /// (var41, 1 draw, un-guarded sinr²/cosr), `square` (var43, 2 draws) at
+    /// slots 44..48.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -75,8 +80,22 @@ public struct VariationDescriptor: Sendable {
         // var74_split: 2 params (split_xsize/ysize), default 0. p1 branch FIRST
         // in C source (observationally equivalent — p0/p1 accumulate separately).
         "split",
+        // --- corpus-variations RNG simple set (slots 44..48). All paramless but
+        //     RNG-consuming (1..5 isaac_01 draws each) → live in `evaluate`'s
+        //     switch, NOT the closure table. Verified formulas against
+        //     /private/tmp/flam3-build/variations.c (Task 3 CV3). ---
+        // var31_noise: 2 draws; INPUT-SCALED output (multiplies tx, ty).
+        "noise",
+        // var34_blur: 2 draws; NOT input-scaled (no tx, ty factor).
+        "blur",
+        // var35_gaussian_blur: 5 draws (1 angle + 4-sum into w*(Σ-2)).
+        "gaussian_blur",
+        // var41_arch: 1 draw; UN-GUARDED sinr²/cosr (no per-term guard; matches flam3).
+        "arch",
+        // var43_square: 2 draws; output bounded in [-w/2, w/2]² (indep of input).
+        "square",
     ]
-    /// Canonical device-slot index for a variation name (0..<44), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<49), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -162,6 +181,18 @@ public struct VariationDescriptor: Sendable {
         // var74_split (2 params, default 0; p1 branch FIRST in C source).
         d("split", ["split_xsize","split_ysize"],
           ["split_xsize":0,"split_ysize":0])
+        // --- corpus-variations RNG simple set (slots 44..48). All paramless;
+        //     RNG-consuming → live in `evaluate`'s switch, NOT the table. ---
+        // var31_noise (2 draws, INPUT-SCALED)
+        d("noise", [], [:])
+        // var34_blur (2 draws, NOT input-scaled)
+        d("blur", [], [:])
+        // var35_gaussian_blur (5 draws: 1 angle + 4-sum)
+        d("gaussian_blur", [], [:])
+        // var41_arch (1 draw, un-guarded sinr²/cosr)
+        d("arch", [], [:])
+        // var43_square (2 draws, bounded in [-w/2, w/2]²)
+        d("square", [], [:])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

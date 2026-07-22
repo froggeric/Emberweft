@@ -167,6 +167,55 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("split", ["split_xsize": 0.3, "split_ysize": 0.4])
     }
 
+    // ---- corpus-variations RNG simple set (slots 44..48).
+    // All paramless but RNG-consuming (1..5 isaac_01 draws each). The PSNR is the
+    // real RNG-parity oracle: a draw-count or draw-order mismatch collapses PSNR
+    // well below 38 (the CPU VariationsTests draw-count + closed-form tests pin
+    // the count and order, ruling that out). ----
+
+    // var31_noise (variations.c:696-708): 2 isaac_01 draws; INPUT-SCLED output
+    // (multiplies tx, ty). Paramless. Chaotic like the other RNG-consuming set
+    // because the orbit multiplier has the RNG's (w*d2) factor; weight=0.4 tames
+    // the Float-vs-Double orbit divergence (the radial_blur precedent).
+    @MainActor func testNoise() throws {
+        try assertParity("noise", [:], weight: 0.4)
+    }
+    // var34_blur (variations.c:746-758): 2 isaac_01 draws; NOT input-scaled.
+    // Paramless. weight=0.4 (same chaos-taming as noise/radial_blur).
+    @MainActor func testBlur() throws {
+        try assertParity("blur", [:], weight: 0.4)
+    }
+    // var35_gaussian_blur (variations.c:760-773): 5 isaac_01 draws (1 angle +
+    // 4-sum). Paramless. NOT input-scaled. weight=0.2 (the orbit multiplier has
+    // the gaussian `(Σ-2)` factor ∈ [-2, 2] which like radial_blur can sign-flip
+    // the orbit at weight=1; weight=0.2 keeps r ∈ [-0.4, 0.4] so the affine-
+    // feedback orbit stays bounded — same chaos-taming precedent. At weight=0.4
+    // r ∈ [-0.8, 0.8] and Float-vs-Double orbits diverge across atan2 branch
+    // cuts in subsequent iterations, landing at ~36 dB — expected statistical
+    // divergence, not a port bug. The CPU testGaussianBlurDrawsFiveAndFinite +
+    // testGaussianBlurClosedFormOrderedStream pin count=5 + draw order at
+    // weight=1, so the port correctness is independent of this test's weight).
+    @MainActor func testGaussianBlur() throws {
+        try assertParity("gaussian_blur", [:], weight: 0.2)
+    }
+    // var41_arch (variations.c:857-883): 1 isaac_01 draw; un-guarded
+    // sinr²/cosr (NO per-term guard — match flam3; the chaos game's post-affine
+    // badvalue check handles Inf downstream). Paramless. weight=0.4 keeps the
+    // angle `d1*w*π` away from the cosr=0 pole (at w=1 the angle reaches up to
+    // ±π, which has cosr≈-1 fine, but ULP noise at the cos≈0 crossover around
+    // ang=π/2 amplifies — same chaos-taming precedent as radial_blur/tangent).
+    @MainActor func testArch() throws {
+        try assertParity("arch", [:], weight: 0.4)
+    }
+    // var43_square (variations.c:900-913): 2 isaac_01 draws; output bounded in
+    // [-w/2, w/2]² (independent of input p). Paramless. Weight=1 is safe (no
+    // poles, no orbit multiplier) — but kept at 0.4 for consistency with the
+    // rest of the RNG simple set + to reflect real ES usage (square is rare:
+    // only 14 of 23k genomes in the corpus survey, always at small weight).
+    @MainActor func testSquare() throws {
+        try assertParity("square", [:], weight: 0.4)
+    }
+
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must
     /// consume the same RNG word at the same point in the variation summation.

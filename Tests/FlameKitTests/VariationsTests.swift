@@ -538,6 +538,223 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, expected, accuracy: 1e-12)
     }
 
+    // MARK: - corpus-variations RNG simple set (slots 44..48).
+    // Hand-traced closed forms + draw-count invariants for the 5 RNG-consuming
+    // variations noise/blur/gaussian_blur/arch/square. Each pins BOTH the draw
+    // COUNT and the exact draw ORDER — any reorder diverges the ISAAC stream.
+
+    // var31_noise (variations.c:696-708): TWO isaac_01 draws in this order:
+    //   (1) angle    tmpr = d1 * 2π;  sincos(tmpr, &sinr, &cosr)
+    //   (2) radius   r = weight * d2
+    //   output = (tx * r * cosr, ty * r * sinr)  — INPUT-SCALED (multiplies tx,ty).
+    // The INPUT-SCALING is the only difference from `blur` (var34), whose output
+    // is (r*cosr, r*sinr) — NOT input-scaled. The two are easy to confuse.
+    func testNoiseDrawsTwoAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "noise", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        // noise consumed exactly 2 words (angle, radius) from rng1.
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "noise x not finite")
+        XCTAssertTrue(out.y.isFinite, "noise y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "noise must consume exactly 2 ISAAC words")
+    }
+    /// Closed form for noise (INPUT-SCALED): run on one ISAAC, then independently
+    /// draw the same 2 words from a fresh-seed twin in the SPEC order (angle →
+    /// radius) and assert outputs agree. Pins both count (2) AND order.
+    func testNoiseClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "noise-closed-form")
+        var rng2 = ISAAC(isaacSeed: "noise-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "noise", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                  // draw #1 (angle)
+        let tmpr = d1 * 2 * .pi
+        let cosr = cos(tmpr), sinr = sin(tmpr)
+        let d2 = rng2.isaac01()                                  // draw #2 (radius)
+        let r = 1.0 * d2
+        let expected = SIMD2<Double>(p.x * r * cosr, p.y * r * sinr)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var34_blur (variations.c:746-758): TWO isaac_01 draws in this order:
+    //   (1) angle    tmpr = d1 * 2π;  sincos(tmpr, &sinr, &cosr)
+    //   (2) radius   r = weight * d2
+    //   output = (r * cosr, r * sinr)  — NOT INPUT-SCALED (no tx, ty multiply).
+    // Identical draw structure to noise; differs ONLY in the input-scaling.
+    func testBlurDrawsTwoAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "blur", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "blur x not finite")
+        XCTAssertTrue(out.y.isFinite, "blur y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "blur must consume exactly 2 ISAAC words")
+    }
+    /// Closed form for blur (NOT input-scaled): same 2-draw structure as noise
+    /// but without the tx,ty factor. Pins count (2) AND order.
+    func testBlurClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "blur-closed-form")
+        var rng2 = ISAAC(isaacSeed: "blur-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "blur", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                  // draw #1 (angle)
+        let tmpr = d1 * 2 * .pi
+        let cosr = cos(tmpr), sinr = sin(tmpr)
+        let d2 = rng2.isaac01()                                  // draw #2 (radius)
+        let r = 1.0 * d2
+        let expected = SIMD2<Double>(r * cosr, r * sinr)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    /// noise vs blur distinction: the two differ ONLY in input-scaling (noise
+    /// multiplies tx,ty; blur does not). For the SAME non-unit input p, the two
+    /// must produce different outputs — guards against an accidental copy/paste
+    /// port that blurs the input-scaling distinction.
+    func testNoiseDiffersFromBlurDueToInputScaling() {
+        var rngN1 = ISAAC(isaacSeed: "noise-vs-blur")
+        var rngN2 = ISAAC(isaacSeed: "noise-vs-blur")
+        // p with |x| and |y| ≠ 1 so input-scaling is observable.
+        let p = SIMD2<Double>(0.3, 0.7)
+        let n = Variations.evaluate([Variation(name: "noise", weight: 1)],
+                                    at: p, affine: .zero, rng: &rngN1)
+        let b = Variations.evaluate([Variation(name: "blur",  weight: 1)],
+                                    at: p, affine: .zero, rng: &rngN2)
+        let Linf = max(abs(n.x - b.x), abs(n.y - b.y))
+        XCTAssertGreaterThan(Linf, 1e-6,
+                             "noise (input-scaled) must differ from blur (not) for non-unit |x|,|y|")
+        // Cross-check against hand-traced formulae: the magnitude (r·cosr, r·sinr)
+        // is shared; noise additionally multiplies by (tx, ty).
+        var rngRef = ISAAC(isaacSeed: "noise-vs-blur")
+        let d1 = rngRef.isaac01(), d2 = rngRef.isaac01()
+        let tmpr = d1 * 2 * .pi
+        let cosr = cos(tmpr), sinr = sin(tmpr)
+        let r = d2
+        XCTAssertEqual(n, SIMD2<Double>(p.x * r * cosr, p.y * r * sinr), accuracy: 1e-12)
+        XCTAssertEqual(b, SIMD2<Double>(r * cosr, r * sinr), accuracy: 1e-12)
+    }
+
+    // var35_gaussian_blur (variations.c:760-773): FIVE isaac_01 draws in order:
+    //   (1) angle    ang = d1 * 2π;  sincos(ang, &sina, &cosa)
+    //   (2..5) sum   r = weight * (d2 + d3 + d4 + d5 - 2.0)
+    //   output = (r * cosa, r * sina)  — NOT input-scaled.
+    // 5 draws, NOT 4 (the angle draw is separate from the 4-sum).
+    func testGaussianBlurDrawsFiveAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "gaussian_blur", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        // gaussian_blur consumed exactly 5 words (1 angle + 4-sum) from rng1.
+        _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "gaussian_blur x not finite")
+        XCTAssertTrue(out.y.isFinite, "gaussian_blur y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "gaussian_blur must consume exactly 5 ISAAC words")
+    }
+    /// Closed form for gaussian_blur: angle draw then 4-sum draws, in SPEC order.
+    /// Pins count (5) AND order — any reorder diverges the expected output.
+    func testGaussianBlurClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "gaussian-closed-form")
+        var rng2 = ISAAC(isaacSeed: "gaussian-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "gaussian_blur", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                  // draw #1 (angle)
+        let ang = d1 * 2 * .pi
+        let sina = sin(ang), cosa = cos(ang)
+        let d2 = rng2.isaac01()                                  // draws #2..5 summed
+        let d3 = rng2.isaac01()
+        let d4 = rng2.isaac01()
+        let d5 = rng2.isaac01()
+        let r = 1.0 * (d2 + d3 + d4 + d5 - 2.0)
+        let expected = SIMD2<Double>(r * cosa, r * sina)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var41_arch (variations.c:857-883): ONE isaac_01 draw, UN-GUARDED sinr²/cosr:
+    //   ang = d1 * weight * π;  sincos(ang, &sinr, &cosr)
+    //   p0 += weight * sinr;   p1 += weight * (sinr*sinr)/cosr;
+    // No `if cosr==0` guard — match flam3 (the chaos game's post-affine badvalue
+    // check handles Inf downstream). At the draw-weight=1 default this can be
+    // Inf/NaN for rare angles near ±π/2 where cosr≈0; the finiteness test below
+    // seeds a fixed "t" ISAAC and asserts finite at that seed (if it goes Inf on
+    // some other seed, that's the un-guarded flam3 behavior, not a bug).
+    func testArchDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "arch", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        // arch consumed exactly 1 word (angle, with weight*π scale).
+        _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "arch x not finite")
+        XCTAssertTrue(out.y.isFinite, "arch y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "arch must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for arch (un-guarded sinr²/cosr): run on one ISAAC, draw 1
+    /// word from a fresh-seed twin, compute the formula and assert agreement.
+    /// Pins count (1) AND the un-guarded formula structure (no per-term guard).
+    func testArchClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "arch-closed-form")
+        var rng2 = ISAAC(isaacSeed: "arch-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let out = Variations.evaluate(
+            [Variation(name: "arch", weight: weight, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                  // draw #1 (angle)
+        let ang = d1 * weight * .pi
+        let sinr = sin(ang), cosr = cos(ang)
+        let expected = SIMD2<Double>(weight * sinr,
+                                     weight * (sinr * sinr) / cosr)   // UN-GUARDED
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var43_square (variations.c:900-913): TWO isaac_01 draws (NOT paramless
+    // despite the name — the "square" shape comes from the RNG distribution):
+    //   p0 += weight * (d1 - 0.5);   p1 += weight * (d2 - 0.5);
+    // Output is bounded in [-w/2, w/2]² (independent of input p).
+    func testSquareDrawsTwoAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "square", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "square x not finite")
+        XCTAssertTrue(out.y.isFinite, "square y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "square must consume exactly 2 ISAAC words")
+    }
+    /// Closed form for square (2 independent draws, no shared terms):
+    ///   p0 += w*(d1-0.5); p1 += w*(d2-0.5).
+    func testSquareClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "square-closed-form")
+        var rng2 = ISAAC(isaacSeed: "square-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "square", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        let d1 = rng2.isaac01()                                  // draw #1 → p0
+        let d2 = rng2.isaac01()                                  // draw #2 → p1
+        let expected = SIMD2<Double>(1.0 * (d1 - 0.5),
+                                     1.0 * (d2 - 0.5))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

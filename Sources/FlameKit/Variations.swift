@@ -47,7 +47,22 @@ public enum Variations {
         // var24_pdj: parametric (4 params, all default 0), RNG-free.
         "pdj",
         // var74_split: parametric (2 params, default 0), RNG-free.
-        "split"
+        "split",
+        // var31_noise: 2 isaac_01 draws (angle, radius); INPUT-SCALED (tx, ty).
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "noise",
+        // var34_blur: 2 isaac_01 draws; NOT input-scaled.
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "blur",
+        // var35_gaussian_blur: 5 isaac_01 draws (1 angle + 4-sum).
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "gaussian_blur",
+        // var41_arch: 1 isaac_01 draw; un-guarded sinr²/cosr.
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "arch",
+        // var43_square: 2 isaac_01 draws; output bounded in [-w/2, w/2]².
+        // RNG-consuming → lives in `evaluate`'s switch.
+        "square"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -70,12 +85,18 @@ public enum Variations {
     /// coefficient-dependent variations: `rings`/`fan` (use e,f;
     /// variations.c:521,543), `waves` (uses c,d,e,f; variations.c:405-409),
     /// `popcorn` (uses e,f; variations.c:442-446). `rng` is threaded for the
-    /// seven RNG-consuming variations (julia/julian/juliascope/super_shape/
-    /// wedge_julia/pie/radial_blur): julia/julian/juliascope/super_shape/
-    /// wedge_julia each draw one `flam3_random_isaac_01`/`_bit` word when
-    /// reached; `pie` draws three `isaac_01` words in flam3's exact order
-    /// (slice → angular → radial); `radial_blur` draws four `isaac_01` words
-    /// summed left-to-right into `weight*(d1+d2+d3+d4-2.0)`.
+    /// twelve RNG-consuming variations (julia/julian/juliascope/super_shape/
+    /// wedge_julia/pie/radial_blur/noise/blur/gaussian_blur/arch/square):
+    /// julia/julian/juliascope/super_shape/wedge_julia each draw one
+    /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
+    /// `isaac_01` words in flam3's exact order (slice → angular → radial);
+    /// `radial_blur` draws four `isaac_01` words summed left-to-right into
+    /// `weight*(d1+d2+d3+d4-2.0)`; `noise` draws two (angle, radius) and
+    /// multiplies the result by tx,ty (INPUT-SCALED — the only difference from
+    /// `blur`, which is NOT input-scaled); `blur` draws two (angle, radius);
+    /// `gaussian_blur` draws five (1 angle + 4-sum into `weight*(Σ-2)`);
+    /// `arch` draws one (angle, scaled by `weight*π`); `square` draws two
+    /// (independent for p0 and p1).
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -96,6 +117,16 @@ public enum Variations {
                 term = pie(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "radial_blur":
                 term = radialBlur(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "noise":
+                term = noise(p, weight: v.weight, rng: &rng)
+            case "blur":
+                term = blur(p, weight: v.weight, rng: &rng)
+            case "gaussian_blur":
+                term = gaussianBlur(p, weight: v.weight, rng: &rng)
+            case "arch":
+                term = arch(p, weight: v.weight, rng: &rng)
+            case "square":
+                term = square(p, weight: v.weight, rng: &rng)
             case "super_shape":
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
@@ -228,6 +259,100 @@ public enum Variations {
         let tmpa = atan2(p.y, p.x) + spinvar * rndG
         let rz   = zoomvar * rndG - 1.0
         return SIMD2(ra * cos(tmpa) + rz * p.x, ra * sin(tmpa) + rz * p.y)
+    }
+
+    /// flam3 `var31_noise` (variations.c:696-708). Consumes TWO
+    /// `flam3_random_isaac_01` words in this EXACT order:
+    ///   tmpr = d1 * 2π;  sincos(tmpr, &sinr, &cosr)         // draw #1 (angle)
+    ///   r    = weight * d2                                   // draw #2 (radius)
+    ///   p0 += tx * r * cosr;  p1 += ty * r * sinr           // INPUT-SCALED (tx, ty)
+    /// The INPUT-SCALING is the ONLY difference from `blur` (var34), whose
+    /// output is `(r*cosr, r*sinr)` — NOT input-scaled. Easy to mix up;
+    /// `testNoiseDiffersFromBlurDueToInputScaling` pins the distinction.
+    private static func noise(_ p: SIMD2<Double>, weight: Double,
+                              rng: inout ISAAC) -> SIMD2<Double> {
+        let d1 = rng.isaac01()                                     // draw #1 (angle)
+        let tmpr = d1 * 2 * .pi
+        let cosr = cos(tmpr)
+        let sinr = sin(tmpr)
+        let d2 = rng.isaac01()                                     // draw #2 (radius)
+        let r = weight * d2
+        return SIMD2(p.x * r * cosr, p.y * r * sinr)
+    }
+
+    /// flam3 `var34_blur` (variations.c:746-758). Consumes TWO
+    /// `flam3_random_isaac_01` words — IDENTICAL draw structure to `noise`:
+    ///   tmpr = d1 * 2π;  sincos(tmpr, &sinr, &cosr)         // draw #1 (angle)
+    ///   r    = weight * d2                                   // draw #2 (radius)
+    ///   p0 += r * cosr;  p1 += r * sinr                     // NOT INPUT-SCALED
+    /// Differs from `noise` ONLY in the absence of the tx,ty factor.
+    private static func blur(_ p: SIMD2<Double>, weight: Double,
+                             rng: inout ISAAC) -> SIMD2<Double> {
+        _ = p   // blur ignores its input (matches flam3 var34_blur)
+        let d1 = rng.isaac01()                                     // draw #1 (angle)
+        let tmpr = d1 * 2 * .pi
+        let cosr = cos(tmpr)
+        let sinr = sin(tmpr)
+        let d2 = rng.isaac01()                                     // draw #2 (radius)
+        let r = weight * d2
+        return SIMD2(r * cosr, r * sinr)
+    }
+
+    /// flam3 `var35_gaussian` (variations.c:760-773). Consumes FIVE
+    /// `flam3_random_isaac_01` words — 1 angle draw, THEN 4 summed draws:
+    ///   ang  = d1 * 2π;  sincos(ang, &sina, &cosa)          // draw #1 (angle)
+    ///   r    = weight * (d2 + d3 + d4 + d5 - 2.0)            // draws #2..5 (4-sum)
+    ///   p0 += r * cosa;  p1 += r * sina                     // NOT INPUT-SCALED
+    /// 5 draws, NOT 4 (the angle draw is separate from the 4-sum). The XML name
+    /// is `gaussian_blur`; the C function is `var35_gaussian` (the README/column
+    /// list uses `gaussian_blur`).
+    private static func gaussianBlur(_ p: SIMD2<Double>, weight: Double,
+                                     rng: inout ISAAC) -> SIMD2<Double> {
+        _ = p   // gaussian_blur ignores its input (matches flam3 var35_gaussian)
+        let d1 = rng.isaac01()                                     // draw #1 (angle)
+        let ang = d1 * 2 * .pi
+        let sina = sin(ang)
+        let cosa = cos(ang)
+        let d2 = rng.isaac01()                                     // draws #2..5 (4-sum)
+        let d3 = rng.isaac01()
+        let d4 = rng.isaac01()
+        let d5 = rng.isaac01()
+        let r = weight * (d2 + d3 + d4 + d5 - 2.0)
+        return SIMD2(r * cosa, r * sina)
+    }
+
+    /// flam3 `var41_arch` (variations.c:857-883). Consumes ONE
+    /// `flam3_random_isaac_01` word, with UN-GUARDED `sinr²/cosr`:
+    ///   ang  = d1 * weight * π;  sincos(ang, &sinr, &cosr)   // draw #1 (angle)
+    ///   p0 += weight * sinr
+    ///   p1 += weight * (sinr * sinr) / cosr                  // UN-GUARDED
+    /// NO per-term `if cosr==0` guard — match flam3 (cosr=0 → Inf; the chaos
+    /// game's post-affine badvalue check handles Inf downstream, redrawing).
+    /// `p` is UNUSED (arch's output is RNG-driven only, like flam3).
+    private static func arch(_ p: SIMD2<Double>, weight: Double,
+                             rng: inout ISAAC) -> SIMD2<Double> {
+        _ = p   // arch ignores its input (matches flam3 var41_arch)
+        let d1 = rng.isaac01()                                     // draw #1 (angle)
+        let ang = d1 * weight * .pi
+        let sinr = sin(ang)
+        let cosr = cos(ang)
+        return SIMD2(weight * sinr,
+                     weight * (sinr * sinr) / cosr)               // UN-GUARDED
+    }
+
+    /// flam3 `var43_square` (variations.c:900-913). Consumes TWO
+    /// `flam3_random_isaac_01` words — INDEPENDENT for p0 and p1:
+    ///   p0 += weight * (d1 - 0.5)                            // draw #1
+    ///   p1 += weight * (d2 - 0.5)                            // draw #2
+    /// Output is bounded in [-weight/2, weight/2]² (independent of input p).
+    /// Despite the name, this is an RNG-consuming variation (the "square" shape
+    /// comes from the uniform RNG distribution), NOT paramless.
+    private static func square(_ p: SIMD2<Double>, weight: Double,
+                               rng: inout ISAAC) -> SIMD2<Double> {
+        _ = p   // square ignores its input (matches flam3 var43_square)
+        let d1 = rng.isaac01()                                     // draw #1 (p0)
+        let d2 = rng.isaac01()                                     // draw #2 (p1)
+        return SIMD2(weight * (d1 - 0.5), weight * (d2 - 0.5))
     }
 
     /// flam3 `var50_supershape` (variations.c:1093-1117) + `supershape_precalc`
@@ -666,20 +791,23 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 44-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
-    /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split).
+    /// (the 49-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
+    /// noise/blur/gaussian_blur/arch/square).
     ///
-    /// RNG-EQUIVALENCE NOTE: seven variations consume the ISAAC stream
-    /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur). CPU
-    /// `evaluate` walks an xform's variations in ARRAY order, which the parser
-    /// sorts ALPHABETICALLY (Flam3Parser.swift:223); Metal `apply_xform_body`
-    /// walks them in CANONICAL-SLOT order (the if-chain at Kernels.metal). For
-    /// the RNG-alignment coincidence to hold, the canonical slots of the RNG-
-    /// consuming set must be in the SAME relative order as their alphabetical
-    /// order. Pinned by `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
+    /// RNG-EQUIVALENCE NOTE: twelve variations consume the ISAAC stream
+    /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/
+    /// blur/gaussian_blur/arch/square). CPU `evaluate` walks an xform's
+    /// variations in ARRAY order, which the parser sorts ALPHABETICALLY
+    /// (Flam3Parser.swift:223); Metal `apply_xform_body` walks them in
+    /// CANONICAL-SLOT order (the if-chain at Kernels.metal). For the RNG-
+    /// alignment coincidence to hold, the canonical slots of the RNG-consuming
+    /// set must be in the SAME relative order as their alphabetical order.
+    /// Pinned by `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
     /// (slots ascending) — but that test does NOT pin the alphabetical↔slot
     /// coincidence. The current set {julia(12), julian(25), juliascope(26),
-    /// super_shape(30), wedge_julia(31), pie(35), radial_blur(36)} is alphabetical
+    /// super_shape(30), wedge_julia(31), pie(35), radial_blur(36), blur(45),
+    /// gaussian_blur(46), noise(44), arch(47), square(48)} is alphabetical
     /// == slot order EXCEPT for pie and radial_blur: pie sits alphabetically
     /// between juliascope and super_shape but at slot 35 (after wedge_julia);
     /// radial_blur sits alphabetically between pie and super_shape but at slot
@@ -717,8 +845,14 @@ public extension Variations {
     /// Slots 42..43 are the corpus-variations parametric non-RNG set:
     /// `pdj` (var24, 4 params all default 0), `split` (var74, 2 params default 0;
     /// p1 branch first in C source, tx controls p1 / ty controls p0).
+    /// Slots 44..48 are the corpus-variations RNG simple set: `noise` (var31,
+    /// 2 draws, INPUT-SCALED — multiplies tx,ty), `blur` (var34, 2 draws, NOT
+    /// input-scaled — the only difference from noise), `gaussian_blur` (var35,
+    /// 5 draws: 1 angle + 4-sum into w*(Σ-2)), `arch` (var41, 1 draw, un-guarded
+    /// sinr²/cosr — NO per-term guard, matches flam3), `square` (var43, 2 draws,
+    /// bounded in [-w/2, w/2]²; RNG not paramless despite the name).
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 44 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 49 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }
