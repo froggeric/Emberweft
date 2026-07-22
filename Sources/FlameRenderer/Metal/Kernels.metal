@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+36+(36*8) = 339 floats = 1356 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+37+(37*8) = 348 floats = 1392 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 36
+#define NUM_XFORM_SLOTS_MS 37
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 36
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 36*8 = 288
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 37
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 37*8 = 296
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 35 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 37 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 35 variation terms (canonical slot order). Each returns the term that CPU
+// 37 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -462,10 +462,40 @@ static inline float2 v_pie(float2 p, float w, thread const float* pr,
     float r = w * d3;
     return float2(r * cos(a), r * sin(a));
 }
+// var36_radial_blur (variations.c:775-793) + radial_blur_precalc (L1964-1967).
+// FOUR isaac_01 draws summed LEFT-TO-RIGHT into a pseudo-gaussian:
+//   rndG = w * (d1 + d2 + d3 + d4 - 2.0)
+// The `w * (...)` outer factor means the 4 draws MUST be consumed before the
+// multiply — reordering or hoisting any draw diverges the ISAAC stream. The
+// 4 draws are issued as explicit ordered statements (one per line, matching
+// v_pie/v_julian's convention in this file), NOT as comma-separated init-
+// declarators — C++ function-argument / init-declarator evaluation order is
+// fragile across MSL revisions, and any reorder would diverge the stream.
+// spinvar/zoomvar are the precalc sincos of `angle*π/2` (inlined here).
+//   ra   = sqrt(tx² + ty²)
+//   tmpa = atan2(ty,tx) + spinvar*rndG
+//   rz   = zoomvar*rndG - 1.0
+//   (ra*cos(tmpa) + rz*tx, ra*sin(tmpa) + rz*ty)
+static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
+                                   thread IsaacState& rng) {
+    float angle = pr[0];
+    float spinvar = sin(angle * M_PI_F / 2.0f);
+    float zoomvar = cos(angle * M_PI_F / 2.0f);
+    float d1 = isaac_01(rng);                   // 4 draws, strict left-to-right
+    float d2 = isaac_01(rng);
+    float d3 = isaac_01(rng);
+    float d4 = isaac_01(rng);
+    float rndG = w * (d1 + d2 + d3 + d4 - 2.0f);
+    float ra = sqrt(p.x*p.x + p.y*p.y);
+    float tmpa = atan2(p.y, p.x) + spinvar * rndG;
+    float rz = zoomvar * rndG - 1.0f;
+    return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
+}
 
-// Sum the 36 canonical slots. julian/juliascope/super_shape/wedge_julia/pie also
-// consume the RNG (julian/juliascope/wedge_julia: one isaac_01 each;
-// super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s).
+// Sum the 37 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// radial_blur also consume the RNG (julian/juliascope/wedge_julia: one isaac_01
+// each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE ordered isaac_01s;
+// radial_blur: FOUR isaac_01s summed left-to-right).
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -520,6 +550,10 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // slot 35 — pie (var37_pie, RNG-consuming; 3 ordered isaac_01 draws).
     // Param order in pr[0..2] = descriptor-declared order: slices, rotation, thickness.
     if (w[35] != 0.0f) acc += v_pie(pre, w[35], &x.varParams[35*SLOT_WIDTH_MS], rng);
+    // slot 36 — radial_blur (var36_radial_blur, RNG-consuming; 4 isaac_01 draws
+    // summed left-to-right into rndG = w*(d1+d2+d3+d4-2)).
+    // Param order in pr[0] = descriptor-declared order: radial_blur_angle.
+    if (w[36] != 0.0f) acc += v_radial_blur(pre, w[36], &x.varParams[36*SLOT_WIDTH_MS], rng);
     return apply_post(x, acc);
 }
 

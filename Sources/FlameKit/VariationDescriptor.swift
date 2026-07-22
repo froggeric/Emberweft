@@ -1,28 +1,30 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 36-slot
-/// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie; spherical/polar
-/// counted once), per-variation params/defaults, special-sauce rest values, and
-/// the name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
-/// `Variations` table, the Metal host packer, and `apply_xform_body` dispatch.
-/// `Variations.canonicalOrder` IS a one-line re-export of this array (landed
-/// in Task 5, which also grew `GPUXform.varWeights` to `[36]` and the MSL
-/// if-chain, so the widening was atomic). `VariationDescriptor.canonicalOrder`
-/// is the 36-name authority used by all code paths, and
-/// `Variations.canonicalOrder` simply re-exports it. Pinned to the spec's
-/// "Param-channel layout" + "Special-sauce padding" tables.
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 37-slot
+/// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
+/// radial_blur; spherical/polar counted once), per-variation params/defaults,
+/// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
+/// Shared by the parser, serializer, CPU `Variations` table, the Metal host
+/// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
+/// one-line re-export of this array (landed in Task 5, which also grew
+/// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
+/// atomic). `VariationDescriptor.canonicalOrder` is the 37-name authority
+/// used by all code paths, and `Variations.canonicalOrder` simply re-exports
+/// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
+/// tables.
 public struct VariationDescriptor: Sendable {
     public let name: String
     public let parameters: [String]                 // ordered (intra-slot order)
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 36-device-slot layout) ----
-    /// Fixed 36-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 37-device-slot layout) ----
+    /// Fixed 37-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
-    /// preserve existing slots 0..32; then `pie` (var37, RNG-consuming, slot 35).
+    /// preserve existing slots 0..32; then `pie` (var37, RNG-consuming, slot 35)
+    /// and `radial_blur` (var36, RNG-consuming, slot 36).
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -41,8 +43,13 @@ public struct VariationDescriptor: Sendable {
         //     radial). RNG-consuming → lives in `evaluate`'s switch, NOT the
         //     table. Unblocks 00000 (partially; radial_blur still pending). ---
         "pie",
+        // --- var36_radial_blur (slot 36): 4 isaac_01 draws summed left-to-right
+        //     into rndG = weight*(d1+d2+d3+d4-2.0). RNG-consuming → lives in
+        //     `evaluate`'s switch, NOT the table. Unblocks 00000 (the last
+        //     `.knownGap` fixture). ---
+        "radial_blur",
     ]
-    /// Canonical device-slot index for a variation name (0..<36), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<37), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -104,6 +111,10 @@ public struct VariationDescriptor: Sendable {
         // `evaluate`'s switch (mirrors julian), NOT the closure table.
         d("pie", ["pie_slices","pie_rotation","pie_thickness"],
           ["pie_slices":6,"pie_rotation":0,"pie_thickness":0.5])
+        // var36_radial_blur (slot 36): 4 isaac_01 draws summed left-to-right
+        // into rndG = weight*(d1+d2+d3+d4-2). RNG-consuming → lives in
+        // `evaluate`'s switch, NOT the closure table.
+        d("radial_blur", ["radial_blur_angle"], ["radial_blur_angle":0])
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

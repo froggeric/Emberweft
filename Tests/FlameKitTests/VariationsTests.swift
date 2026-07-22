@@ -332,6 +332,65 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, expected, accuracy: 1e-12)
     }
 
+    // var36_radial_blur (variations.c:775-793): FOUR isaac_01 draws summed
+    // LEFT-TO-RIGHT into a pseudo-gaussian:
+    //   rndG = weight * (d1 + d2 + d3 + d4 - 2.0)
+    //   ra   = sqrt(tx² + ty²)
+    //   spinvar = sin(radial_blur_angle * π/2)   (radial_blur_precalc L1964-1967)
+    //   zoomvar = cos(radial_blur_angle * π/2)
+    //   tmpa = atan2(ty, tx) + spinvar * rndG
+    //   rz   = zoomvar * rndG - 1.0
+    //   (ra*cos(tmpa) + rz*tx, ra*sin(tmpa) + rz*ty)
+    // The `weight * (...)` outer factor means the 4 draws MUST be consumed
+    // BEFORE the multiply — reordering or hoisting diverges the ISAAC stream.
+    // Template: testPieDrawsThreeAndFinite (adapted to 4 draws).
+    func testRadialBlurDrawsFourAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let out = Variations.evaluate(
+            [Variation(name: "radial_blur", weight: 1,
+                       parameters: ["radial_blur_angle": 0.0])],
+            at: p, ef: .zero, rng: &rng1)
+        // radial_blur consumed exactly 4 words from rng1.
+        _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertTrue(out.x.isFinite, "radial_blur x not finite")
+        XCTAssertTrue(out.y.isFinite, "radial_blur y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "radial_blur must consume exactly 4 ISAAC words")
+    }
+
+    /// Hand-traced closed form for radial_blur: run on one ISAAC, then
+    /// independently draw the same 4 words from a fresh-seed twin in the SPEC
+    /// order (d1 → d2 → d3 → d4, summed left-to-right inside `weight*(...-2)`)
+    /// and assert the outputs agree. Pins both the draw count (4) AND the
+    /// exact draw+sum order — any reorder makes `expected` diverge from `out`
+    /// because the 4 draws feed a single summed `rndG` term.
+    func testRadialBlurClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "radial-blur-closed-form")
+        var rng2 = ISAAC(isaacSeed: "radial-blur-closed-form")
+        let p = SIMD2<Double>(0.3, 0.2)
+        let params: [String: Double] = ["radial_blur_angle": -0.583296]
+        let out = Variations.evaluate(
+            [Variation(name: "radial_blur", weight: 1, parameters: params)],
+            at: p, ef: .zero, rng: &rng1)
+        // SPEC ORDER (variations.c:775-793): four isaac_01 draws summed
+        // left-to-right into rndG = weight*(d1+d2+d3+d4 - 2.0). Match term-for-term.
+        let angle = -0.583296
+        let spinvar = sin(angle * .pi / 2.0)
+        let zoomvar = cos(angle * .pi / 2.0)
+        let d1 = rng2.isaac01()
+        let d2 = rng2.isaac01()
+        let d3 = rng2.isaac01()
+        let d4 = rng2.isaac01()
+        let rndG = 1.0 * (d1 + d2 + d3 + d4 - 2.0)
+        let ra   = (p.x*p.x + p.y*p.y).squareRoot()
+        let tmpa = atan2(p.y, p.x) + spinvar * rndG
+        let rz   = zoomvar * rndG - 1.0
+        let expected = SIMD2<Double>(ra * cos(tmpa) + rz * p.x,
+                                     ra * sin(tmpa) + rz * p.y)
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
     // MARK: - Multi-RNG-variation word count: julia + julian on one xform.
     // Verifies that when two RNG-consuming variations are present on a single
     // xform, `evaluate` consumes exactly 2 ISAAC words total — i.e. each draws

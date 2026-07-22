@@ -15,8 +15,17 @@ final class SpecialSauceParityTests: XCTestCase {
     /// affine carries a non-zero translation (e=0.5, f=0.3) so coefficient-
     /// dependent variations (rings/fan) get a meaningful `dx` and orbits avoid
     /// the origin singularity (spherical/super_shape divide by r).
+    ///
+    /// `weight` defaults to 1 (the historical behavior). The chaotic RNG-
+    /// consuming variations may need a smaller weight to stay off Float/Double
+    /// orbit chaos: e.g. radial_blur at weight=1 has rndG ∈ [-2, 2] so the
+    /// orbit multiplier (1+rndG) can sign-flip, and Float-vs-Double orbits
+    /// diverge — expected statistical divergence, not a port bug (the MSL port
+    /// is byte-faithful). weight=0.4 keeps (1+rndG) ∈ [0.2, 1.8], always
+    /// positive, taming the chaos. Same idea as ngon/perspective/wedge_sph
+    /// softening their params.
     @MainActor
-    private func assertParity(_ name: String, _ params: [String: Double],
+    private func assertParity(_ name: String, _ params: [String: Double], weight: Double = 1,
                               file: StaticString = #filePath, line: UInt = #line) throws {
         guard MetalRenderer.isAvailable else { throw XCTSkip("Metal unavailable") }
         let flame = Flame(
@@ -26,7 +35,7 @@ final class SpecialSauceParityTests: XCTestCase {
                 Xform(
                     affine: AffineTransform(a: 0.6, b: 0.2, c: -0.3, d: 0.5, e: 0.5, f: 0.3),
                     color: 0, colorSpeed: 0.5,
-                    variations: [Variation(name: name, weight: 1, parameters: params)]
+                    variations: [Variation(name: name, weight: weight, parameters: params)]
                 ),
             ],
             palette: Palette(colors: (0..<256).map {
@@ -39,7 +48,7 @@ final class SpecialSauceParityTests: XCTestCase {
         let psnr = ImageComparison.psnr(cpu, gpu)
         let ssim = ImageComparison.ssim(cpu, gpu)
         let psnrStr = psnr.isInfinite ? "inf" : String(format: "%.2f", psnr)
-        print("[Parity] \(name) @1000spp: PSNR=\(psnrStr) dB, SSIM=\(String(format: "%.4f", ssim))")
+        print("[Parity] \(name) (w=\(weight)) @1000spp: PSNR=\(psnrStr) dB, SSIM=\(String(format: "%.4f", ssim))")
         XCTAssertGreaterThanOrEqual(psnr, 38.0, "\(name): \(psnr) dB < 38", file: file, line: line)
         XCTAssertGreaterThanOrEqual(ssim, 0.95, "\(name): SSIM \(ssim) < 0.95", file: file, line: line)
         // No NaN/Inf: complete properly-sized buffer.
@@ -88,6 +97,27 @@ final class SpecialSauceParityTests: XCTestCase {
     // count diverge, PSNR collapses well below 38 dB.
     @MainActor func testPie() throws {
         try assertParity("pie", ["pie_slices": 6, "pie_rotation": 0.0, "pie_thickness": 0.5])
+    }
+    // var36_radial_blur (variations.c:775-793): 4 isaac_01 draws summed
+    // left-to-right into rndG = weight*(d1+d2+d3+d4-2). RNG-consuming → goes in
+    // `evaluate`'s switch, NOT the table. The PSNR is the real RNG-parity
+    // oracle: a draw-count or sum-order mismatch collapses PSNR well below 38
+    // (the CPU testRadialBlurDrawsFourAndFinite + testRadialBlurClosedFormOrderedStream
+    // pin the count=4 and order=d1→d2→d3→d4 left-to-right sum, ruling that out).
+    //
+    // radial_blur is uniquely chaotic AMONG the RNG-consuming set: at weight=1
+    // its orbit multiplier is (1+rndG) where rndG ∈ [-2, 2] (4 isaac_01s summed
+    // minus 2), so when rndG < -1 the orbit SIGN-FLIPS — pie/julia/julian/
+    // juliascope/super_shape/wedge_julia all have strictly-positive orbit
+    // multipliers, so their ULP noise doesn't compound the same way. Weight=0.4
+    // keeps rndG ∈ [-0.8, 0.8] so (1+rndG) ∈ [0.2, 1.8] never sign-flips, taming
+    // the chaos (same idea as ngon/perspective/wedge_sph softening their params).
+    // The real ES genome 00000 uses radial_blur with weight=0.00283 alongside
+    // 3 other variations (linear=0.965, eyefish=0.0094, bubble=0.014), so the
+    // chaos is naturally bounded there — a single-variation parity test at
+    // weight=1 does not reflect real usage and would flap the gate.
+    @MainActor func testRadialBlur() throws {
+        try assertParity("radial_blur", ["radial_blur_angle": 0.0], weight: 0.4)
     }
 
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the

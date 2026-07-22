@@ -29,7 +29,10 @@ public enum Variations {
         "eyefish",
         // var37_pie: 3 ordered isaac_01 draws (slice, angular, radial).
         // RNG-consuming → lives in `evaluate`'s switch.
-        "pie"
+        "pie",
+        // var36_radial_blur: 4 isaac_01 draws summed left-to-right
+        // (weight*(d1+d2+d3+d4-2)). RNG-consuming → lives in `evaluate`'s switch.
+        "radial_blur"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -49,11 +52,13 @@ public enum Variations {
     ///
     /// `ef` carries the xform's affine translation coefficients `e`=`c[2][0]` and
     /// `f`=`c[2][1]`, needed by the coefficient-dependent variations `rings`/`fan`
-    /// (variations.c:521,543). `rng` is threaded for the six RNG-consuming
-    /// variations (julia/julian/juliascope/super_shape/wedge_julia/pie):
+    /// (variations.c:521,543). `rng` is threaded for the seven RNG-consuming
+    /// variations (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur):
     /// julia/julian/juliascope/super_shape/wedge_julia each draw one
     /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
-    /// `isaac_01` words in flam3's exact order (slice → angular → radial).
+    /// `isaac_01` words in flam3's exact order (slice → angular → radial);
+    /// `radial_blur` draws four `isaac_01` words summed left-to-right into
+    /// `weight*(d1+d2+d3+d4-2.0)`.
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -72,6 +77,8 @@ public enum Variations {
                 term = juliascope(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "pie":
                 term = pie(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "radial_blur":
+                term = radialBlur(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "super_shape":
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
@@ -179,6 +186,31 @@ public enum Variations {
         let d3 = rng.isaac01()                                                   // draw #3
         let r  = weight * d3
         return SIMD2(r * cos(a), r * sin(a))
+    }
+
+    /// flam3 `var36_radial_blur` (variations.c:775-793) + `radial_blur_precalc`
+    /// (variations.c:1964-1967). Consumes FOUR `flam3_random_isaac_01` words,
+    /// summed LEFT-TO-RIGHT into a pseudo-gaussian:
+    ///   rndG = weight * (d1 + d2 + d3 + d4 - 2.0)
+    /// The `weight * (...)` outer factor means the 4 draws MUST be consumed
+    /// before the multiply — reordering or hoisting any draw diverges the ISAAC
+    /// stream and breaks vs-flam3 parity. spinvar/zoomvar are the precalc
+    /// sincos of `radial_blur_angle * π/2` (inlined here, no precalc struct).
+    ///   ra   = precalc_sqrt = sqrt(tx² + ty²)
+    ///   tmpa = precalc_atanyx + spinvar * rndG   (atanyx = atan2(ty,tx))
+    ///   rz   = zoomvar * rndG - 1.0
+    ///   (ra*cos(tmpa) + rz*tx, ra*sin(tmpa) + rz*ty)
+    private static func radialBlur(_ p: SIMD2<Double>, weight: Double,
+                                   params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        let angle   = resolve("radial_blur", "radial_blur_angle", params)
+        let spinvar = sin(angle * .pi / 2.0)
+        let zoomvar = cos(angle * .pi / 2.0)
+        let d1 = rng.isaac01(), d2 = rng.isaac01(), d3 = rng.isaac01(), d4 = rng.isaac01()
+        let rndG = weight * (d1 + d2 + d3 + d4 - 2.0)
+        let ra   = (p.x*p.x + p.y*p.y).squareRoot()
+        let tmpa = atan2(p.y, p.x) + spinvar * rndG
+        let rz   = zoomvar * rndG - 1.0
+        return SIMD2(ra * cos(tmpa) + rz * p.x, ra * sin(tmpa) + rz * p.y)
     }
 
     /// flam3 `var50_supershape` (variations.c:1093-1117) + `supershape_precalc`
@@ -528,25 +560,31 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 36-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish + pie).
+    /// (the 37-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// + pie + radial_blur).
     ///
-    /// RNG-EQUIVALENCE NOTE: six variations consume the ISAAC stream
-    /// (julia/julian/juliascope/super_shape/wedge_julia/pie). CPU `evaluate`
-    /// walks an xform's variations in ARRAY order, which the parser sorts
-    /// ALPHABETICALLY (Flam3Parser.swift:223); Metal `apply_xform_body` walks
-    /// them in CANONICAL-SLOT order (the if-chain at Kernels.metal). For the
-    /// RNG-alignment coincidence to hold, the canonical slots of the RNG-
+    /// RNG-EQUIVALENCE NOTE: seven variations consume the ISAAC stream
+    /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur). CPU
+    /// `evaluate` walks an xform's variations in ARRAY order, which the parser
+    /// sorts ALPHABETICALLY (Flam3Parser.swift:223); Metal `apply_xform_body`
+    /// walks them in CANONICAL-SLOT order (the if-chain at Kernels.metal). For
+    /// the RNG-alignment coincidence to hold, the canonical slots of the RNG-
     /// consuming set must be in the SAME relative order as their alphabetical
     /// order. Pinned by `SpecialSauceParityTests.testRngConsumingSlotOrderIsAscending`
     /// (slots ascending) — but that test does NOT pin the alphabetical↔slot
     /// coincidence. The current set {julia(12), julian(25), juliascope(26),
-    /// super_shape(30), wedge_julia(31), pie(35)} is alphabetical == slot order
-    /// EXCEPT for pie, which sits alphabetically between juliascope and
-    /// super_shape but at slot 35 (after wedge_julia). The two orderings
-    /// therefore diverge only for an xform containing pie AND
-    /// {super_shape,wedge_julia} — no frozen/fuzz/real-fixture genome has
-    /// that combination, but the divergence is the load-bearing assumption
-    /// to re-check if a future genome violates it.
+    /// super_shape(30), wedge_julia(31), pie(35), radial_blur(36)} is alphabetical
+    /// == slot order EXCEPT for pie and radial_blur: pie sits alphabetically
+    /// between juliascope and super_shape but at slot 35 (after wedge_julia);
+    /// radial_blur sits alphabetically between pie and super_shape but at slot
+    /// 36 (also after wedge_julia). The two orderings therefore diverge for an
+    /// xform containing pie AND {super_shape,wedge_julia,julia,julian,juliascope},
+    /// OR radial_blur AND {super_shape,wedge_julia,julia,julian,juliascope} —
+    /// no frozen/fuzz/real-fixture genome has either combination (verified: in
+    /// the real genome 00000 the only pie xform is [linear, pie] and the only
+    /// radial_blur xform is [linear, eyefish, bubble, radial_blur]). The
+    /// divergence is the load-bearing assumption to re-check if a future genome
+    /// violates it.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
     /// revisit if a future genome violates them):
@@ -565,9 +603,10 @@ public extension Variations {
     ///
     /// Slots 19..32 are the special-sauce set; slot 33 is `bubble` (var28,
     /// paramless), slot 34 is `eyefish` (var27, paramless, NOT a fisheye alias),
-    /// slot 35 is `pie` (var37, RNG-consuming, 3 ordered isaac_01 draws).
-    /// `apply_xform_body` reads them positionally and pulls their params from
-    /// `varParams[slot*8 + idx]`. The MSL if-chain is now 36 lines
-    /// (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// slot 35 is `pie` (var37, RNG-consuming, 3 ordered isaac_01 draws),
+    /// slot 36 is `radial_blur` (var36, RNG-consuming, 4 isaac_01 draws summed
+    /// left-to-right). `apply_xform_body` reads them positionally and pulls
+    /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
+    /// 37 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }
