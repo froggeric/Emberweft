@@ -80,6 +80,8 @@ final class SpecialSauceParityTests: XCTestCase {
     @MainActor func testPolar() throws         { try assertParity("polar", [:]) }
     // var28_bubble: paramless, 0 RNG draws. Simplest Metal↔CPU parity case.
     @MainActor func testBubble() throws        { try assertParity("bubble", [:]) }
+    // var27_eyefish: paramless, 0 RNG draws. NOT a fisheye alias (un-swapped).
+    @MainActor func testEyefish() throws       { try assertParity("eyefish", [:]) }
 
     /// RNG-alignment gate: one xform with [linear, julia, julian] exercises the
     /// RNG draw ORDER across julia (bit) + julian (isaac01). Both backends must

@@ -73,9 +73,10 @@ final class RealGenomeParityTests: XCTestCase {
         // variation, NOT a ToneMapping / spatial-filter regression. Closing
         // this gap is a separate M3/M4 task (variations backlog), NOT in
         // Task-6 scope. (05739 + 31943 were flipped to `.gate` once `bubble`
-        // landed; 00000 stays gap until eyefish/pie/radial_blur land.)
+        // landed; 00000 stays gap until pie/radial_blur land — eyefish is now
+        // implemented but 00000 also uses those two.)
         ("electricsheep.248.00000",
-         .knownGap(reason: "uses unimplemented variations: eyefish, pie, radial_blur")),
+         .knownGap(reason: "uses unimplemented variations: pie, radial_blur")),
         ("electricsheep.248.05739", .gate),
         ("electricsheep.248.31943", .gate),
     ]

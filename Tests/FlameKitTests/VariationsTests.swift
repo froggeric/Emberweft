@@ -50,6 +50,43 @@ final class VariationsTests: XCTestCase {
         let r = 2.0 / (0.25 * (p.x*p.x + p.y*p.y) + 1.0)
         XCTAssertEqual(eval("bubble", p, 2.0), SIMD2<Double>(r*p.x, r*p.y), accuracy: 1e-9)
     }
+    // var27_eyefish (variations.c:659-669): r = (weight*2)/(sqrt(sumsq) + 1);
+    //   (r*tx, r*ty). Paramless; 0 RNG draws. NOT a fisheye alias — UN-swapped.
+    func testEyefish() {
+        // Hand-traced: sumsq = 0.6² + 0.8² = 1.0 → sqrt = 1.0 →
+        //   r = (1.0*2)/(1.0+1.0) = 1.0 → (0.6, 0.8) [UN-swapped; note fisheye
+        //   would give (0.8, 0.6)].
+        XCTAssertEqual(eval("eyefish", SIMD2(0.6, 0.8), 1.0), SIMD2<Double>(0.6, 0.8), accuracy: 1e-9)
+        // Origin: sqrt=0 → r = 2w/(0+1) = 2w → output = (2w*0, 2w*0) = (0,0).
+        XCTAssertEqual(eval("eyefish", SIMD2(0, 0), 1.0), SIMD2<Double>.zero, accuracy: 1e-9)
+        // Weight folds into r: at (0.3, 0.4) w=2.0: sqrt(0.25)=0.5 →
+        //   r = (2.0*2.0)/(0.5+1.0) = 4/1.5; out = (r*0.3, r*0.4).
+        let p = SIMD2<Double>(0.3, 0.4)
+        let r = (2.0 * 2.0) / ((p.x*p.x + p.y*p.y).squareRoot() + 1.0)
+        XCTAssertEqual(eval("eyefish", p, 2.0), SIMD2<Double>(r*p.x, r*p.y), accuracy: 1e-9)
+    }
+    /// eyefish is its own variation (var27), NOT an alias of fisheye (var16).
+    /// Both share the magnitude r = 2w/(|p|+1), but fisheye SWAPS the output
+    /// axes `(r*ty, r*tx)` while eyefish does NOT `(r*tx, r*ty)`. The two are
+    /// equal only on the diagonals y=x and y=-x (axis-symmetric input); any
+    /// other input must differ. This guards against a future "eyefish = fisheye"
+    /// shortcut (which would silently corrupt every genome using eyefish).
+    func testEyefishDiffersFromFisheye() {
+        let p = SIMD2<Double>(0.3, 0.7)   // non-axis-symmetric (|x| ≠ |y|)
+        let eye = eval("eyefish", p, 1.0, [:], .zero)
+        let fish = eval("fisheye", p, 1.0, [:], .zero)
+        // XCTAssertNotEqual has no accuracy overload — compare via L∞ distance.
+        // For (0.3,0.7): r≈1.135 → eye≈(0.34,0.79), fish≈(0.79,0.34); the
+        // |dx| ≈ 0.45 gap is far above any FP noise.
+        let Linf = max(abs(eye.x - fish.x), abs(eye.y - fish.y))
+        XCTAssertGreaterThan(Linf, 1e-6,
+                             "eyefish must NOT equal fisheye for non-axis-symmetric input — it is un-swapped, not an alias")
+        // Cross-check against the hand-traced formulae to make sure the
+        // inequality is from the axis swap (not from a different magnitude).
+        let r = 2.0 / ((p.x*p.x + p.y*p.y).squareRoot() + 1.0)
+        XCTAssertEqual(eye,  SIMD2<Double>(r*p.x, r*p.y), accuracy: 1e-9)   // un-swapped
+        XCTAssertEqual(fish, SIMD2<Double>(r*p.y, r*p.x), accuracy: 1e-9)   // swapped
+    }
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")

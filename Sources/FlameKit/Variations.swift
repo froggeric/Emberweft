@@ -24,7 +24,9 @@ public enum Variations {
         "juliascope", "ngon", "curl", "rectangles", "super_shape",
         "wedge_julia", "wedge_sph",
         // var28_bubble: paramless, RNG-free
-        "bubble"
+        "bubble",
+        // var27_eyefish: paramless, RNG-free (NOT a fisheye alias — un-swapped)
+        "eyefish"
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -339,6 +341,14 @@ public enum Variations {
             let r = w / (0.25 * (p.x*p.x + p.y*p.y) + 1)
             return SIMD2(r * p.x, r * p.y)
         }
+        // var27_eyefish (variations.c:659-669): r = (weight*2)/(precalc_sqrt + 1);
+        //   (r*tx, r*ty). Paramless; 0 RNG draws. NOT an alias of fisheye
+        //   (var16) — output is UN-swapped, vs fisheye's (r*ty, r*tx). Both
+        //   share the magnitude r = 2w/(|p|+1); only the axis assignment differs.
+        t["eyefish"]     = { p, w, _, _ in
+            let r = (w * 2.0) / ((p.x*p.x + p.y*p.y).squareRoot() + 1.0)
+            return SIMD2(r * p.x, r * p.y)
+        }
 
         // ---- 14 special-sauce (M3): line-for-line ports of variations.c ----
 
@@ -485,8 +495,8 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 34-name authority: M1's 19 + the 14 special-sauce + bubble). Only
-    /// `julia` consumes the RNG; with a single RNG-consuming variation,
+    /// (the 35-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish).
+    /// Only `julia` consumes the RNG; with a single RNG-consuming variation,
     /// canonical-order iteration is RNG-equivalent to CPU genome-order.
     ///
     /// ASSUMPTIONS (verified against the 6 frozen genomes + the M2 fuzz genome;
@@ -505,8 +515,9 @@ public extension Variations {
     ///     ULPs — still inside the statistical-parity envelope, not a bug.
     ///
     /// Slots 19..32 are the special-sauce set; slot 33 is `bubble` (var28,
-    /// paramless). `apply_xform_body` reads them positionally and pulls their
-    /// params from `varParams[slot*8 + idx]`. The MSL if-chain is now 34 lines
+    /// paramless), slot 34 is `eyefish` (var27, paramless, NOT a fisheye alias).
+    /// `apply_xform_body` reads them positionally and pulls their params from
+    /// `varParams[slot*8 + idx]`. The MSL if-chain is now 35 lines
     /// (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
     public static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

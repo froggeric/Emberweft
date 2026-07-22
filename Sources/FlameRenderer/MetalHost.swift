@@ -12,10 +12,10 @@ import FlameKit
 /// `Array<Float>` field would be heap-allocated and not inlined into the struct,
 /// corrupting the `withUnsafeBytes` copy. This struct therefore carries only
 /// the 15 inline header floats (a..f, pa..pf, color/colorSpeed/opacity) used by
-/// host-side extraction; the full device layout (321 floats = header + 34
-/// varWeights + 272 varParams) is described by `floatsPerXform`/`bytesPerXform`
-/// and built by the packer. The MSL `struct GPUXform` mirrors the full 321-float
-/// layout field-for-field (15 scalars + `varWeights[34]` + `varParams[272]`).
+/// host-side extraction; the full device layout (330 floats = header + 35
+/// varWeights + 280 varParams) is described by `floatsPerXform`/`bytesPerXform`
+/// and built by the packer. The MSL `struct GPUXform` mirrors the full 330-float
+/// layout field-for-field (15 scalars + `varWeights[35]` + `varParams[280]`).
 public struct GPUXform {
     public var a: Float = 0, b: Float = 0, c: Float = 0, d: Float = 0, e: Float = 0, f: Float = 0
     public var pa: Float = 0, pb: Float = 0, pc: Float = 0, pd: Float = 0, pe: Float = 0, pf: Float = 0
@@ -27,12 +27,12 @@ public struct GPUXform {
     // ---- Device layout constants (both sides must agree) ----
     // DERIVED from the authority (VariationDescriptor.canonicalOrder) so numSlots
     // and floatsPerXform can't internally drift. 6 (pre) + 6 (post) + 3
-    // (color/cs/opacity) + 34 (varWeights) + 34*8 (varParams) = 321 floats.
+    // (color/cs/opacity) + 35 (varWeights) + 35*8 (varParams) = 330 floats.
     public static let headerFloats = 15
     public static let numSlots = VariationDescriptor.canonicalOrder.count   // authority
     public static let slotWidth = 8                                         // MAX_PARAMS_PER_SLOT=6, device slot width 8
-    public static let floatsPerXform = headerFloats + numSlots + numSlots * slotWidth   // 15+34+272 = 321
-    public static let bytesPerXform = floatsPerXform * 4                    // 1284
+    public static let floatsPerXform = headerFloats + numSlots + numSlots * slotWidth   // 15+35+280 = 330
+    public static let bytesPerXform = floatsPerXform * 4                    // 1320
 }
 
 /// Per-frame constants passed to the chaos kernel.
@@ -70,10 +70,10 @@ enum MetalHost {
     }
 
     /// Build the flat-packed device xform buffer for a Flame. Each xform emits
-    /// `GPUXform.floatsPerXform` (321) floats: 15 header (a..f, pa..pf,
-    /// color/colorSpeed/opacity), then 34 `varWeights` (canonical slot order,
+    /// `GPUXform.floatsPerXform` (330) floats: 15 header (a..f, pa..pf,
+    /// color/colorSpeed/opacity), then 35 `varWeights` (canonical slot order,
     /// summing weights of repeated names — algebraically identical to CPU's
-    /// array-order sum because variation terms commute), then 272 `varParams`
+    /// array-order sum because variation terms commute), then 280 `varParams`
     /// (`varParams[slot*8 + intraIdx]`; `super_shape_rnd` clamped to [0,1];
     /// parameterless variations + unused tail slots zeroed).
     ///
@@ -82,7 +82,7 @@ enum MetalHost {
     /// so the `withUnsafeBytes` device-buffer copy would send garbage. This
     /// returns a contiguous `[Float]` that crosses the boundary intact.
     static func packXforms(_ flame: Flame) -> [Float] {
-        let order = Variations.canonicalOrder          // 34-name authority
+        let order = Variations.canonicalOrder          // 35-name authority
         var idxMap = [String: Int]()
         for (i, n) in order.enumerated() { idxMap[n] = i }
         let nXforms = flame.xforms.count

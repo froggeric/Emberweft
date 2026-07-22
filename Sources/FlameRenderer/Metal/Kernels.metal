@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+34+(34*8) = 321 floats = 1284 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+35+(35*8) = 330 floats = 1320 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 34
+#define NUM_XFORM_SLOTS_MS 35
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 34
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 34*8 = 272
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 35
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 35*8 = 280
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 34 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 35 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 34 variation terms (canonical slot order). Each returns the term that CPU
+// 35 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -202,6 +202,13 @@ static inline float2 v_cylinder(float2 p, float w) { return float2(w * sin(p.x),
 // Paramless; 0 RNG draws.
 static inline float2 v_bubble(float2 p, float w) {
     float r = w / (0.25f * (p.x*p.x + p.y*p.y) + 1.0f);
+    return float2(r * p.x, r * p.y);
+}
+// var27_eyefish (variations.c:659-669): r = (w*2)/(sqrt(sumsq) + 1); (r*p.x, r*p.y).
+// Paramless; 0 RNG draws. NOT a fisheye (var16) alias — output is UN-swapped,
+// vs fisheye's (r*p.y, r*p.x). Both share the magnitude r = 2w/(|p|+1).
+static inline float2 v_eyefish(float2 p, float w) {
+    float r = (w * 2.0f) / (sqrt(p.x*p.x + p.y*p.y) + 1.0f);
     return float2(r * p.x, r * p.y);
 }
 static inline float2 v_diamond(float2 p, float w) {
@@ -437,7 +444,7 @@ static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
     return float2(r * cos(a), r * sin(a));
 }
 
-// Sum the 34 canonical slots. julian/juliascope/super_shape/wedge_julia also
+// Sum the 35 canonical slots. julian/juliascope/super_shape/wedge_julia also
 // consume the RNG (one isaac_01 each); super_shape draws UNCONDITIONALLY.
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
@@ -488,6 +495,8 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[32] != 0.0f) acc += v_wedge_sph(pre, w[32], &x.varParams[32*SLOT_WIDTH_MS]);
     // slot 33 — bubble (var28_bubble, paramless, RNG-free)
     if (w[33] != 0.0f) acc += v_bubble(pre, w[33]);
+    // slot 34 — eyefish (var27_eyefish, paramless, RNG-free; NOT a fisheye alias)
+    if (w[34] != 0.0f) acc += v_eyefish(pre, w[34]);
     return apply_post(x, acc);
 }
 

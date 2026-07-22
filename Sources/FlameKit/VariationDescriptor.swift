@@ -1,14 +1,14 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 34-slot
-/// order (M1's 19 + the 14 NEW special-sauce + bubble; spherical/polar counted
-/// once), per-variation params/defaults, special-sauce rest values, and the
-/// name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 35-slot
+/// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish; spherical/polar
+/// counted once), per-variation params/defaults, special-sauce rest values, and
+/// the name→(slot, intra-slot-index) maps. Shared by the parser, serializer, CPU
 /// `Variations` table, the Metal host packer, and `apply_xform_body` dispatch.
 /// `Variations.canonicalOrder` IS a one-line re-export of this array (landed
-/// in Task 5, which also grew `GPUXform.varWeights` to `[34]` and the MSL
+/// in Task 5, which also grew `GPUXform.varWeights` to `[35]` and the MSL
 /// if-chain, so the widening was atomic). `VariationDescriptor.canonicalOrder`
-/// is the 34-name authority used by all code paths, and
+/// is the 35-name authority used by all code paths, and
 /// `Variations.canonicalOrder` simply re-exports it. Pinned to the spec's
 /// "Param-channel layout" + "Special-sauce padding" tables.
 public struct VariationDescriptor: Sendable {
@@ -17,12 +17,12 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 34-device-slot layout) ----
-    /// Fixed 34-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 35-device-slot layout) ----
+    /// Fixed 35-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
-    /// special-sauce names in documented order; then `bubble` (var28, paramless,
-    /// appended at slot 33 to preserve existing slots 0..32). spherical/polar
-    /// appear ONCE.
+    /// special-sauce names in documented order; then `bubble` (var28) and
+    /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
+    /// preserve existing slots 0..32. spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
         "bent","cosine","cylinder","diamond","disc","ex","exponential","fisheye",
@@ -33,8 +33,11 @@ public struct VariationDescriptor: Sendable {
         "ngon","curl","rectangles","super_shape","wedge_julia","wedge_sph",
         // --- var28_bubble (slot 33): paramless, RNG-free; unblocks 05739/31943 ---
         "bubble",
+        // --- var27_eyefish (slot 34): paramless, RNG-free; NOT a fisheye alias
+        //     (un-swapped output). Unblocks 00000 (partially; pie/radial_blur still pending). ---
+        "eyefish",
     ]
-    /// Canonical device-slot index for a variation name (0..<34), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<35), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -73,7 +76,7 @@ public struct VariationDescriptor: Sendable {
         return nil
     }
 
-    // name -> (ordered params, defaults, rest-overrides). Covers ALL 34 canonical
+    // name -> (ordered params, defaults, rest-overrides). Covers ALL 35 canonical
     // names so canonicalOrder and the descriptor table cannot drift. Defaults/rest
     // source-cited to flam3.h / parser.c / variations.c in the spec param table.
     private static let table: [String: VariationDescriptor] = {
@@ -91,6 +94,7 @@ public struct VariationDescriptor: Sendable {
         d("sinusoidal", [], [:]); d("spherical", [], [:])                     // Group A
         d("spiral", [], [:]); d("swirl", [], [:])
         d("bubble", [], [:])     // var28_bubble: paramless, RNG-free (slot 33)
+        d("eyefish", [], [:])    // var27_eyefish: paramless, RNG-free (slot 34; NOT a fisheye alias)
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C
