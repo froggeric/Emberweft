@@ -2,6 +2,23 @@
 
 > **Purpose:** survive context compaction. After CV7 (secant2+disc2) lands, this doc captures the two remaining work-streams so a fresh session/subagent can resume. Self-contained — read the referenced files for detail.
 
+## STATUS / RESUME (updated 2026-07-23 — POST PALETTE_MODE FIX, post-compaction entry point)
+
+**Emberweft:** `main` @ `f907f150d` (synced to origin). Still **57/99** variations. Build green, `make test-fast` 271/271, goldens byte-identical. Oracle (`~/.local/bin/flam3-*`) symlinks repoint at `~/flam3-oracle-src/flam3/` (the `/tmp` build evicted; symlinks MUST be re-created if they dangle). flam3 source survives at `~/flam3-oracle-src/flam3/` (note: `flam3.c` + `rect.c` carry gated `FLAM3_TRACE` debug prints — harmless w/o the env var).
+
+**Work B (knownGap) — ROOT CAUSE FOUND + FIXED + MERGED (commit `171083515`).** The 4 knownGap were NOT a display-pipeline/hp/camera/iteration gap (all ruled out via a two-sided point trace that PROVED the chaos game is bit-faithful). The cause was **palette_mode**: Emberweft used LINEAR dmap interpolation; flam3's DEFAULT is STEP (nearest). Fix: `PaletteMode` enum (default `.step`) in FlameKit, parse `palette_mode`, branch in `ChaosGame`. **Result: 2/4 knownGap CLOSED → `.gate`** — `242.00099` (waves) 28.7→53.9, `242.00261` (split/cross) 30.7→52.4; gate fixtures improved. The per-variation vs-flam3 harness (`Tests/FlameReferenceTests/VariationFlam3ParityTests.swift`, commit `c5fb0389b`) now passes ALL single variations at 52-69 dB and is the validation tool for Work A. See memory `workb-knowngap-iteration-divergence`.
+
+**Work B REMAINING (small, NOT real faithfulness bugs):**
+1. `244.00788` (cross/noise, 12-xform) — PASSES at the stress op-point (`python3 Tools/density_diff.py --genome Tests/Goldens/genomes_real/electricsheep.244.00788.flam3` → 39.85 dB, centroids identical). Fails only at the test's fast 500spp op-point = **sampling noise**. Close by bumping `RealGenomeParityTests.quality` 500→1000 (costs ~2× gate runtime) → flip to `.gate`.
+2. `244.28122` (flower, rotate=-178) — genuine MARGINAL residual (37.65 dB at stress; centroids/light match → subtle density diff; all pipeline proven correct). Hard to close the last 0.35 dB. Keep `.knownGap` or accept.
+3. **Metal renderer still uses LINEAR palette** — the Metal step-port regressed to 32 dB vs CPU's 54 on spiky palettes (likely Float-precision or `GPUFrameParams` struct-packing: I added `paletteMode` to the Swift+MSL structs but Metal still diverged — needs debugging). SpecialSauce stays green (smooth palettes). The CPU (`ChaosGame.swift`) is correct; mirror the step branch into `Kernels.metal:932-940` + `MetalHost.buildFrameParams` + `GPUFrameParams` once the 32 dB is debugged.
+
+**Work A (42 variations → 99/99) — NOT STARTED, now DE-RISKED.** Same plan as below (4 batches). Each port is validated by the harness (`VariationFlam3ParityTests`) vs-flam3, AND by `SpecialSauceParityTests` (Metal↔CPU). Use subagent-driven-development, sequential (shared files).
+
+---
+
+## ORIGINAL PLAN (pre-palette_mode; background still accurate)
+
 **Branch:** `feat/corpus-variations` (will merge to `main` as v0.1.1 after CV7). **flam3 source:** `/private/tmp/flam3-build/variations.c` (also `/Users/frederic/flam3-oracle-src/flam3/variations.c`). **Emberweft state after CV7:** implements **57 of 99** flam3 variations; all 20 corpus-used variations ported (100% corpus coverage).
 
 ---
