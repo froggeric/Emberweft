@@ -142,16 +142,19 @@ final class RealGenomeParityTests: XCTestCase {
         // split + cross (gen-242 sheep). Was 30.67 dB (.knownGap) → 52.41 dB
         // after the palette_mode (step) fix.
         ("electricsheep.242.00261", .gate),
-        // cross + noise + gaussian_blur (gen-244 sheep, 1920×1080). 32.76 dB —
-        // palette_mode fix did NOT help (smooth palette); a DIFFERENT residual
-        // gap (likely a 12-xform / post-affine / config interaction, NOT
-        // palette or variation math — SpecialSauce passes for these in
-        // isolation). Follow-on.
-        ("electricsheep.244.00788", .knownGap(reason: "cross/noise/gaussian_blur — palette_mode fix did not help (smooth palette); residual config-specific gap (12-xform/post-affine), NOT variation math")),
+        // cross + noise + gaussian_blur (gen-244 sheep, 1920×1080, 12 xforms).
+        // 32.76 dB at the test's fast op-point (400×296×500) but PASSES at the
+        // stress op-point (800×592×1000 = density_diff.py): 39.85 dB, centroids
+        // identical, total light +0.8%. So this is SAMPLING NOISE at the low
+        // op-point, NOT a faithfulness bug (palette_mode closed the real gaps).
+        // Closing at the fast op-point needs a quality bump (slows the gate).
+        ("electricsheep.244.00788", .knownGap(reason: "sampling-noise at the fast 500spp op-point (32.76 dB); PASSES at stress 39.85 dB with matching centroids — not a faithfulness bug")),
         // flower + disc + linear + spherical + rings2 (gen-244 sheep, rotate=-178).
-        // 34.23 dB — palette_mode fix did NOT help; a DIFFERENT residual gap
-        // (rotate≈-178 or 2-xform config). Follow-on.
-        ("electricsheep.244.28122", .knownGap(reason: "flower — palette_mode fix did not help; residual config-specific gap (rotate=-178 / 2-xform), NOT variation math")),
+        // 34.23 dB (fast op-point) / 37.65 dB (stress) — a genuine MARGINAL
+        // residual (~0.35 dB under gate at max quality); centroids + total light
+        // match → subtle density-distribution difference, not camera/palette/
+        // variation (all proven correct). The last real Work-B residual.
+        ("electricsheep.244.28122", .knownGap(reason: "marginal residual — 37.65 dB at stress (0.35 dB under gate); centroids/light match; subtle density difference, all variation/pipeline proven correct")),
     ]
 
     private func repoRoot() -> URL {
