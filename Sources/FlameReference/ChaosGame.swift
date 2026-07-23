@@ -228,25 +228,32 @@ public enum ChaosGame {
                                 // unused. Palette mode = linear (default).
                                 let idx = hist.binIndex(u, v)
                                 // dbl_index0 = p[2] * cmap_size  (rect.c:468)
+                                // flam3 palette_mode (rect.c:471-498): DEFAULT step (nearest,
+                                // no interp; clear_cp flam3.c:1326); `palette_mode="linear"`
+                                // interpolates between entries. Linear interp across palette
+                                // jumps (channel wraparounds / spiky ES palettes) diverges
+                                // badly from flam3, so branch on the genome's paletteMode.
                                 let dblIndex0 = binColor * Double(cmapSize)
                                 var colorIndex0 = Int(dblIndex0)
-                                var dblFrac: Double
-                                if colorIndex0 >= cmapSizeM1 {           // rect.c:475-477
-                                    colorIndex0 = cmapSizeM1 - 1
-                                    dblFrac = 1.0
-                                } else {
-                                    dblFrac = dblIndex0 - Double(colorIndex0) // rect.c:480
+                                let interpR: Double, interpG: Double, interpB: Double, interpA: Double
+                                if flame.paletteMode == .linear {
+                                    var dblFrac: Double
+                                    if colorIndex0 < 0 { colorIndex0 = 0; dblFrac = 0 }
+                                    else if colorIndex0 >= cmapSizeM1 { colorIndex0 = cmapSizeM1 - 1; dblFrac = 1.0 }
+                                    else { dblFrac = dblIndex0 - Double(colorIndex0) }
+                                    let i0 = dmap[colorIndex0], i1 = dmap[colorIndex0 + 1]
+                                    let m0 = 1.0 - dblFrac
+                                    interpR = i0.x * m0 + i1.x * dblFrac
+                                    interpG = i0.y * m0 + i1.y * dblFrac
+                                    interpB = i0.z * m0 + i1.z * dblFrac
+                                    interpA = dmapAlpha[colorIndex0] * m0 + dmapAlpha[colorIndex0 + 1] * dblFrac
+                                } else {   // .step — flam3 default
+                                    if colorIndex0 < 0 { colorIndex0 = 0 }
+                                    else if colorIndex0 >= cmapSizeM1 { colorIndex0 = cmapSizeM1 }
+                                    let c = dmap[colorIndex0]
+                                    interpR = c.x; interpG = c.y; interpB = c.z
+                                    interpA = dmapAlpha[colorIndex0]
                                 }
-                                let i0 = dmap[colorIndex0], i1 = dmap[colorIndex0 + 1]
-                                let m0 = 1.0 - dblFrac
-                                // interpcolor[k] = dmap[i0]*(1-frac) + dmap[i1]*frac (rect.c:484-485)
-                                let interpR = i0.x * m0 + i1.x * dblFrac
-                                let interpG = i0.y * m0 + i1.y * dblFrac
-                                let interpB = i0.z * m0 + i1.z * dblFrac
-                                // dmap alpha is uniformly 255 (opaque palette); interpolate
-                                // it exactly as flam3 does (rect.c:484, ci=3) so bucket[3]
-                                // carries the identical ULP structure.
-                                let interpA = dmapAlpha[colorIndex0] * m0 + dmapAlpha[colorIndex0 + 1] * dblFrac
                                 // bump_no_overflow (rect.c:501-505): b[0][0..3] += interpcolor
                                 hist.colors[idx] += SIMD3<Double>(interpR, interpG, interpB)
                                 hist.alpha[idx] += interpA

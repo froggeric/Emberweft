@@ -155,6 +155,10 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
         f.interpolation = attr["interpolation"].flatMap { TempInterpolation(rawValue: $0) } ?? .linear
         f.interpolationType = attr["interpolation_type"].flatMap { MatrixInterpolationType(rawValue: $0) } ?? .log
         f.paletteInterpolation = attr["palette_interpolation"].flatMap { PaletteInterpolation(rawValue: $0) } ?? .hsvCircular
+        // flam3 `palette_mode` (flam3.c parser.c:452-457; default step via
+        // clear_cp). "step" → nearest dmap entry (no interp); "linear" → linear
+        // interp. Unrecognized → step (flam3 warns + uses step).
+        f.paletteMode = (attr["palette_mode"].flatMap { PaletteMode(rawValue: $0) }) ?? .step
         f.hueRotation = attr["hue_rotation"].flatMap { Double($0) } ?? 0
         f.hsvRgbPaletteBlend = attr["hsv_rgb_palette_blend"].flatMap { Double($0) } ?? 0
         return f
@@ -213,6 +217,7 @@ private final class Flam3Builder: NSObject, XMLParserDelegate {
             "weight", "color", "color_speed", "symmetry", "coefs", "post",
             "chaos", "opacity", "animate", "name",
             "interpolation", "interpolation_type", "palette_interpolation",
+            "palette_mode",
             "hue_rotation", "hue",
         ]
         var weights: [(String, Double)] = []

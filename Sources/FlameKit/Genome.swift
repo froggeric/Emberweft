@@ -188,6 +188,10 @@ public struct Flame: Sendable, Equatable {
     public var interpolation: TempInterpolation
     public var interpolationType: MatrixInterpolationType
     public var paletteInterpolation: PaletteInterpolation
+    /// flam3 `palette_mode` (step|linear). Default `.step` matches flam3's
+    /// clear_cp default (flam3.c:1326) — the chaos-game dmap sampler uses
+    /// nearest entry, NOT linear interp. See PaletteMode.
+    public var paletteMode: PaletteMode
     /// flam3 `hue_rotation` attr — per-frame hue rotation; wired into parser/serializer in Task 3, palette blend in Task 9.
     public var hueRotation: Double
     public var hsvRgbPaletteBlend: Double   // flam3 hsv_rgb_palette_blend (LIVE palette mix fraction)
@@ -206,7 +210,8 @@ public struct Flame: Sendable, Equatable {
         interpolationType: MatrixInterpolationType = .log,
         paletteInterpolation: PaletteInterpolation = .hsvCircular,
         hueRotation: Double = 0,
-        hsvRgbPaletteBlend: Double = 0
+        hsvRgbPaletteBlend: Double = 0,
+        paletteMode: PaletteMode = .step
     ) {
         self.name = name
         self.size = size
@@ -222,6 +227,7 @@ public struct Flame: Sendable, Equatable {
         self.paletteInterpolation = paletteInterpolation
         self.hueRotation = hueRotation
         self.hsvRgbPaletteBlend = hsvRgbPaletteBlend
+        self.paletteMode = paletteMode
     }
 }
 

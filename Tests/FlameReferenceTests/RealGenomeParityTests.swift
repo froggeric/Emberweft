@@ -135,17 +135,23 @@ final class RealGenomeParityTests: XCTestCase {
         // histogram divergence), NOT in the variation math (SpecialSauce
         // parity passes Metal↔CPU for all 5). Flip to .gate when the
         // display-pipeline gap closes (M4 follow-on). ----
-        // waves + popcorn (gen-242 sheep). 28.76 dB / 0.9172.
-        ("electricsheep.242.00099", .knownGap(reason: "waves/popcorn — residual hp/filter display-pipeline gap (no highlight_power attr; Emberweft peakier than flam3); variation math OK (SpecialSauce parity passes)")),
-        // split + cross (gen-242 sheep; `split_shift` attr unknown to both
-        // flam3 and Emberweft, parsed-then-ignored symmetrically).
-        // 30.67 dB / 0.8715.
-        ("electricsheep.242.00261", .knownGap(reason: "split/cross — residual hp/filter display-pipeline gap; variation math OK (SpecialSauce parity passes)")),
-        // cross + noise + gaussian_blur (gen-244 sheep). 32.76 dB / 0.8438.
-        ("electricsheep.244.00788", .knownGap(reason: "cross/noise — residual hp/filter display-pipeline gap; variation math OK (SpecialSauce parity passes)")),
-        // flower + disc + linear + spherical + rings2 (gen-244 sheep).
-        // 34.27 dB / 0.9526.
-        ("electricsheep.244.28122", .knownGap(reason: "flower — residual hp/filter display-pipeline gap; variation math OK (SpecialSauce parity passes)")),
+        // waves + popcorn (gen-242 sheep). Was 28.76 dB (.knownGap) → 53.94 dB
+        // after the palette_mode fix (flam3 defaults to STEP dmap sampling, not
+        // linear — linear interp across this genome's spiky palette diverged).
+        ("electricsheep.242.00099", .gate),
+        // split + cross (gen-242 sheep). Was 30.67 dB (.knownGap) → 52.41 dB
+        // after the palette_mode (step) fix.
+        ("electricsheep.242.00261", .gate),
+        // cross + noise + gaussian_blur (gen-244 sheep, 1920×1080). 32.76 dB —
+        // palette_mode fix did NOT help (smooth palette); a DIFFERENT residual
+        // gap (likely a 12-xform / post-affine / config interaction, NOT
+        // palette or variation math — SpecialSauce passes for these in
+        // isolation). Follow-on.
+        ("electricsheep.244.00788", .knownGap(reason: "cross/noise/gaussian_blur — palette_mode fix did not help (smooth palette); residual config-specific gap (12-xform/post-affine), NOT variation math")),
+        // flower + disc + linear + spherical + rings2 (gen-244 sheep, rotate=-178).
+        // 34.23 dB — palette_mode fix did NOT help; a DIFFERENT residual gap
+        // (rotate≈-178 or 2-xform config). Follow-on.
+        ("electricsheep.244.28122", .knownGap(reason: "flower — palette_mode fix did not help; residual config-specific gap (rotate=-178 / 2-xform), NOT variation math")),
     ]
 
     private func repoRoot() -> URL {
