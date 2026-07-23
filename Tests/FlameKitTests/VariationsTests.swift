@@ -322,6 +322,105 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, SIMD2<Double>(cothden * cothsinh, cothden * cothsin), accuracy: 1e-9)
     }
 
+    // MARK: - Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77).
+    // All paramless; 0 RNG draws. Formulas ported verbatim from
+    // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+    // EPS = 1e-10 (private.h:47). Input (0.3, 0.4) is non-singular for all 7.
+
+    // var57_butterfly: wx=w*1.3029400317411197908970256609023; y2=ty*2;
+    //   r=wx*sqrt(|ty*tx|/(EPS+tx²+y2²)); (r*tx, r*y2)
+    func testButterfly() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("butterfly", p, 1.0)
+        let wx = 1.0 * 1.3029400317411197908970256609023
+        let y2 = p.y * 2.0
+        let r = wx * (abs(p.y * p.x) / (1e-10 + p.x*p.x + y2*y2)).squareRoot()
+        XCTAssertEqual(out, SIMD2<Double>(r * p.x, r * y2), accuracy: 1e-9)
+    }
+    // var61_edisc: tmp=sumsq+1; tmp2=2tx; r1=sqrt(tmp+tmp2); r2=sqrt(tmp-tmp2);
+    //   xmax=(r1+r2)/2; a1=log(xmax+sqrt(xmax-1)); a2=-acos(tx/xmax);
+    //   w=w/11.57034632; if ty>0 snv=-snv; (w*cshu*csv, w*snhu*snv)
+    func testEdisc() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("edisc", p, 1.0)
+        let sumsq = p.x*p.x + p.y*p.y
+        let tmp = sumsq + 1.0
+        let tmp2 = 2.0 * p.x
+        let r1 = (tmp + tmp2).squareRoot()
+        let r2 = (tmp - tmp2).squareRoot()
+        let xmax = (r1 + r2) * 0.5
+        let a1 = log(xmax + (xmax - 1.0).squareRoot())
+        let a2 = -acos(p.x / xmax)
+        let ww = 1.0 / 11.57034632
+        var snv = sin(a1)
+        if p.y > 0.0 { snv = -snv }
+        let csv = cos(a1)
+        let snhu = sinh(a2)
+        let cshu = cosh(a2)
+        XCTAssertEqual(out, SIMD2<Double>(ww * cshu * csv, ww * snhu * snv), accuracy: 1e-9)
+    }
+    // var62_elliptic: tmp=sumsq+1; x2=2tx; xmax=0.5*(sqrt(tmp+x2)+sqrt(tmp-x2));
+    //   a=tx/xmax; b=max(0,1-a²); ssx=max(0,xmax-1); w=w/M_PI_2;
+    //   (w*atan2(a,b), ±w*log(xmax+ssx))  [sign from ty]
+    func testElliptic() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("elliptic", p, 1.0)
+        let sumsq = p.x*p.x + p.y*p.y
+        let tmp = sumsq + 1.0
+        let x2 = 2.0 * p.x
+        let xmax = 0.5 * ((tmp + x2).squareRoot() + (tmp - x2).squareRoot())
+        let a = p.x / xmax
+        var b = 1.0 - a*a
+        var ssx = xmax - 1.0
+        let ww = 1.0 / (Double.pi / 2.0)
+        if b < 0 { b = 0 } else { b = b.squareRoot() }
+        if ssx < 0 { ssx = 0 } else { ssx = ssx.squareRoot() }
+        let p1mag = ww * log(xmax + ssx)
+        let p1 = p.y > 0 ? p1mag : -p1mag
+        XCTAssertEqual(out, SIMD2<Double>(ww * atan2(a, b), p1), accuracy: 1e-9)
+    }
+    // var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; sincos(ty,&sn,&cn);
+    //   tmp=w/(expx+expnx-cn); (tmp*(expx-expnx), tmp*sn)
+    func testFoci() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("foci", p, 1.0)
+        let expx = exp(p.x) * 0.5
+        let expnx = 0.25 / expx
+        let sn = sin(p.y)
+        let cn = cos(p.y)
+        let tmp = 1.0 / (expx + expnx - cn)
+        XCTAssertEqual(out, SIMD2<Double>(tmp * (expx - expnx), tmp * sn), accuracy: 1e-9)
+    }
+    // var66_loonie: r2=sumsq; w2=w²; if r2<w2: r=w*sqrt(w2/r2-1) else r=w.
+    //   For (0.3,0.4) w=1: r2=0.25 < w2=1.0 → sqrt branch.
+    func testLoonie() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("loonie", p, 1.0)
+        let r2 = p.x*p.x + p.y*p.y
+        let w2 = 1.0
+        let r = 1.0 * (w2 / r2 - 1.0).squareRoot()   // r2<w2 branch
+        XCTAssertEqual(out, SIMD2<Double>(r * p.x, r * p.y), accuracy: 1e-9)
+    }
+    // var70_polar2: p2v=w/M_PI; (p2v*atan2(tx,ty), p2v/2*log(sumsq)).
+    //   precalc_atan = atan2(tx,ty) = atan2(x,y) (SWAPPED).
+    func testPolar2() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("polar2", p, 1.0)
+        let p2v = 1.0 / Double.pi
+        let sumsq = p.x*p.x + p.y*p.y
+        XCTAssertEqual(out, SIMD2<Double>(p2v * atan2(p.x, p.y), p2v / 2.0 * log(sumsq)), accuracy: 1e-9)
+    }
+    // var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS))); (tx*r, ty*r).
+    //   weight folded only inside 1/(w+EPS).
+    func testScry() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = eval("scry", p, 1.0)
+        let sumsq = p.x*p.x + p.y*p.y
+        let precalcSqrt = sumsq.squareRoot()
+        let r = 1.0 / (precalcSqrt * (sumsq + 1.0 / (1.0 + 1e-10)))
+        XCTAssertEqual(out, SIMD2<Double>(p.x * r, p.y * r), accuracy: 1e-9)
+    }
+
     // MARK: - corpus-variations parametric non-RNG set (slots 42..43).
     // Hand-traced closed forms against flam3 variations.c.
 

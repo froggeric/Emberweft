@@ -122,6 +122,27 @@ public enum Variations {
         "csch",
         // var95_coth: cothden = 1/(cothcosh - cothcos)
         "coth",
+        // ---- Batch 2: paramless non-trig (var57/61/62/64/66/70/72) ----
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+        // var57_butterfly: r=wx*sqrt(|ty*tx|/(EPS+tx²+(2ty)²)); wx=w*1.30294...
+        "butterfly",
+        // var61_edisc: r1/r2 from sumsq±2tx; a1=log(...); a2=-acos(tx/xmax);
+        //   if ty>0 snv=-snv; w=w/11.57034632
+        "edisc",
+        // var62_elliptic: xmax=0.5*(sqrt(tmp+x2)+sqrt(tmp-x2)); w=w/M_PI_2;
+        //   b=max(0,1-a²); ssx=max(0,xmax-1)
+        "elliptic",
+        // var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; tmp=w/(expx+expnx-cn)
+        "foci",
+        // var66_loonie: r2=sumsq; w2=w²; if r2<w2 r=w*sqrt(w2/r2-1) else r=w.
+        //   NO EPS.
+        "loonie",
+        // var70_polar2: p2v=w/M_PI; (p2v*atan2(tx,ty), p2v/2*log(sumsq))
+        //   uses precalc_atan = atan2(tx,ty) (SWAPPED).
+        "polar2",
+        // var72_scry: t=sumsq; r=1/(sqrt*(t+1/(w+EPS))); (tx*r, ty*r)
+        "scry",
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -968,6 +989,98 @@ public enum Variations {
             return SIMD2(w * cothden * cothsinh, w * cothden * cothsin)
         }
         // ---- End trig family (14 variations, slots 57..70) ----
+        // ---- Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77) ----
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+        // EPS = 1e-10 (private.h:47). precalc_sumsq = tx²+ty²;
+        // precalc_sqrt = sqrt(sumsq); precalc_atan = atan2(tx,ty) (SWAPPED).
+        // var57_butterfly: wx=w*1.3029400317411197908970256609023; y2=ty*2;
+        //   r=wx*sqrt(|ty*tx|/(EPS+tx²+y2²)); (r*tx, r*y2)
+        t["butterfly"]    = { p, w, _, _ in
+            let wx = w * 1.3029400317411197908970256609023
+            let y2 = p.y * 2.0
+            let r = wx * (abs(p.y * p.x) / (1e-10 + p.x*p.x + y2*y2)).squareRoot()
+            return SIMD2(r * p.x, r * y2)
+        }
+        // var61_edisc: tmp=sumsq+1; tmp2=2tx; r1=sqrt(tmp+tmp2); r2=sqrt(tmp-tmp2);
+        //   xmax=(r1+r2)/2; a1=log(xmax+sqrt(xmax-1)); a2=-acos(tx/xmax);
+        //   w=w/11.57034632; sincos(a1,&snv,&csv); snhu=sinh(a2); cshu=cosh(a2);
+        //   if ty>0 snv=-snv; (w*cshu*csv, w*snhu*snv)
+        t["edisc"]        = { p, w, _, _ in
+            let sumsq = p.x*p.x + p.y*p.y
+            let tmp = sumsq + 1.0
+            let tmp2 = 2.0 * p.x
+            let r1 = (tmp + tmp2).squareRoot()
+            let r2 = (tmp - tmp2).squareRoot()
+            let xmax = (r1 + r2) * 0.5
+            let a1 = log(xmax + (xmax - 1.0).squareRoot())
+            let a2 = -acos(p.x / xmax)
+            let ww = w / 11.57034632
+            var snv = sin(a1)
+            let csv = cos(a1)
+            let snhu = sinh(a2)
+            let cshu = cosh(a2)
+            if p.y > 0.0 { snv = -snv }
+            return SIMD2(ww * cshu * csv, ww * snhu * snv)
+        }
+        // var62_elliptic: tmp=sumsq+1; x2=2tx; xmax=0.5*(sqrt(tmp+x2)+sqrt(tmp-x2));
+        //   a=tx/xmax; b=1-a²; ssx=xmax-1; w=w/M_PI_2;
+        //   if b<0 b=0 else b=sqrt(b); if ssx<0 ssx=0 else ssx=sqrt(ssx);
+        //   (w*atan2(a,b), ±w*log(xmax+ssx))  [sign from ty]
+        t["elliptic"]     = { p, w, _, _ in
+            let sumsq = p.x*p.x + p.y*p.y
+            let tmp = sumsq + 1.0
+            let x2 = 2.0 * p.x
+            let xmax = 0.5 * ((tmp + x2).squareRoot() + (tmp - x2).squareRoot())
+            let a = p.x / xmax
+            var b = 1.0 - a*a
+            var ssx = xmax - 1.0
+            let ww = w / (Double.pi / 2.0)
+            if b < 0 { b = 0 } else { b = b.squareRoot() }
+            if ssx < 0 { ssx = 0 } else { ssx = ssx.squareRoot() }
+            let p1mag = ww * log(xmax + ssx)
+            let p1 = p.y > 0 ? p1mag : -p1mag
+            return SIMD2(ww * atan2(a, b), p1)
+        }
+        // var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; sincos(ty,&sn,&cn);
+        //   tmp=w/(expx+expnx-cn); (tmp*(expx-expnx), tmp*sn)
+        t["foci"]         = { p, w, _, _ in
+            let expx = exp(p.x) * 0.5
+            let expnx = 0.25 / expx
+            let sn = sin(p.y)
+            let cn = cos(p.y)
+            let tmp = w / (expx + expnx - cn)
+            return SIMD2(tmp * (expx - expnx), tmp * sn)
+        }
+        // var66_loonie: r2=sumsq; w2=w²; if r2<w2: r=w*sqrt(w2/r2-1) else r=w.
+        //   (r*tx, r*ty). NO EPS (origin → div-by-zero → badvalue downstream).
+        t["loonie"]       = { p, w, _, _ in
+            let r2 = p.x*p.x + p.y*p.y
+            let w2 = w * w
+            if r2 < w2 {
+                let r = w * (w2 / r2 - 1.0).squareRoot()
+                return SIMD2(r * p.x, r * p.y)
+            } else {
+                return SIMD2(w * p.x, w * p.y)
+            }
+        }
+        // var70_polar2: p2v=w/M_PI; (p2v*precalc_atan, p2v/2*log(sumsq)).
+        //   precalc_atan = atan2(tx,ty) = atan2(p.x,p.y) (SWAPPED — see var5_polar).
+        t["polar2"]       = { p, w, _, _ in
+            let p2v = w / Double.pi
+            let sumsq = p.x*p.x + p.y*p.y
+            return SIMD2(p2v * atan2(p.x, p.y), p2v / 2.0 * log(sumsq))
+        }
+        // var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS))); (tx*r, ty*r).
+        //   NOTE: weight folded ONLY inside 1/(w+EPS) — the (tx*r,ty*r) outer
+        //   multiply has NO explicit weight (flam3 comment confirms intentional).
+        t["scry"]         = { p, w, _, _ in
+            let sumsq = p.x*p.x + p.y*p.y
+            let precalcSqrt = sumsq.squareRoot()
+            let r = 1.0 / (precalcSqrt * (sumsq + 1.0 / (w + 1e-10)))
+            return SIMD2(p.x * r, p.y * r)
+        }
+        // ---- End batch 2 (7 variations, slots 71..77) ----
         // var24_pdj (variations.c:579-596). 4 params, all default 0. Parametric;
         // 0 RNG draws. Bounded trig of params·tx/ty (no poles).
         //   nx1 = cos(pdj_b * tx); nx2 = sin(pdj_c * tx);
@@ -1192,7 +1305,7 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 71-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 78-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
     /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
     /// flower/conic/parabola + secant2/disc2).
@@ -1295,6 +1408,8 @@ public extension Variations {
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
     /// 57 lines (`Kernels.metal`); the trig family var82–95 (slots 57..70) grew
-    /// it to 71 lines + 14 more `v_<name>` functions (Work A batch 1).
+    /// it to 71 lines + 14 more `v_<name>` functions (Work A batch 1); the
+    /// paramless non-trig family var57/61/62/64/66/70/72 (slots 71..77) grew
+    /// it to 78 lines + 7 more `v_<name>` functions (Work A batch 2).
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

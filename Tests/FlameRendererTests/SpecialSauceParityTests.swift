@@ -369,6 +369,21 @@ final class SpecialSauceParityTests: XCTestCase {
     @MainActor func testCsch() throws { try assertParity("csch", [:], weight: 0.4) }
     @MainActor func testCoth() throws { try assertParity("coth", [:], weight: 0.4) }
 
+    // MARK: - Batch 2: paramless non-trig (var57/61/62/64/66/70/72; Work A batch 2).
+    // Paramless, 0 RNG draws. Several carry poles / sqrt-chaos / fast-growth
+    // paths (loonie divides by r2 with NO EPS; scry divides by precalc_sqrt;
+    // edisc/elliptic grow through log/sqrt of xmax; butterfly has |ty*tx|/r²).
+    // All gated at weight 0.4 — the established pole-chaos precedent. CPU
+    // correctness is pinned by VariationFlam3ParityTests (vs-flam3 ≥38 dB);
+    // these confirm Metal tracks CPU within the statistical gate.
+    @MainActor func testButterfly() throws { try assertParity("butterfly", [:], weight: 0.4) }
+    @MainActor func testEdisc()     throws { try assertParity("edisc",     [:], weight: 0.4) }
+    @MainActor func testElliptic()  throws { try assertParity("elliptic",  [:], weight: 0.4) }
+    @MainActor func testFoci()      throws { try assertParity("foci",      [:], weight: 0.4) }
+    @MainActor func testLoonie()    throws { try assertParity("loonie",    [:], weight: 0.4) }
+    @MainActor func testPolar2()    throws { try assertParity("polar2",    [:], weight: 0.4) }
+    @MainActor func testScry()      throws { try assertParity("scry",      [:], weight: 0.4) }
+
     /// RNG-ORDER INVARIANT (pinned): the canonical-slot indices of the RNG-
     /// consuming set {julia, julian, juliascope, super_shape, wedge_julia} are
     /// strictly ascending. This ascending order is what makes the RNG-alignment

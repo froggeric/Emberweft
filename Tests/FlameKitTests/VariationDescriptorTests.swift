@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 71)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 71, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 78)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 78, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -211,7 +211,7 @@ final class VariationDescriptorTests: XCTestCase {
         // Slot indices 55, 56 (immediately after the parametric+RNG trio at 52..54).
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "secant2"), 55)
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "disc2"), 56)
-        // Canonical-order authority for the full 71.
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 71)
+        // Canonical-order authority for the full 78.
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 78)
     }
 }

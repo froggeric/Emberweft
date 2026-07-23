@@ -145,6 +145,15 @@ final class VariationFlam3ParityTests: XCTestCase {
             ("sech", "linear=\"0.6\" sech=\"0.5\" \(aff)"),
             ("csch", "linear=\"0.6\" csch=\"0.5\" \(aff)"),
             ("coth", "linear=\"0.6\" coth=\"0.5\" \(aff)"),
+            // --- Work A batch 2: paramless non-trig (var57/61/62/64/66/70/72).
+            // Each MUST clear the ≥38 dB gate (enforced below), not diagnostic. ---
+            ("butterfly", "linear=\"0.6\" butterfly=\"0.5\" \(aff)"),
+            ("edisc",     "linear=\"0.6\" edisc=\"0.5\" \(aff)"),
+            ("elliptic",  "linear=\"0.6\" elliptic=\"0.5\" \(aff)"),
+            ("foci",      "linear=\"0.6\" foci=\"0.5\" \(aff)"),
+            ("loonie",    "linear=\"0.6\" loonie=\"0.5\" \(aff)"),
+            ("polar2",    "linear=\"0.6\" polar2=\"0.5\" \(aff)"),
+            ("scry",      "linear=\"0.6\" scry=\"0.5\" \(aff)"),
             // --- large/non-contracting affine probe (242.00099's waves-xform
             // coefs). If linear_LRG diverges but small-affine linear passed,
             // the trigger is large-affine iteration handling (badvalue
@@ -184,6 +193,8 @@ final class VariationFlam3ParityTests: XCTestCase {
         let workA: Set<String> = [
             "exp", "log", "sin", "cos", "tan", "sec", "csc", "cot",
             "sinh", "cosh", "tanh", "sech", "csch", "coth",
+            // Work A batch 2: paramless non-trig.
+            "butterfly", "edisc", "elliptic", "foci", "loonie", "polar2", "scry",
         ]
         var gateFailures: [String] = []
         for label in cases.map({ $0.0 }) where workA.contains(label) {

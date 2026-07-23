@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+71+(71*8) = 654 floats = 2616 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+78+(78*8) = 717 floats = 2868 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 71
+#define NUM_XFORM_SLOTS_MS 78
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 71
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 71*8 = 568
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 78
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 78*8 = 624
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 71 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 78 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 71 variation terms (canonical slot order). Each returns the term that CPU
+// 78 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -394,6 +394,98 @@ static inline float2 v_coth(float2 p, float w) {
     return float2(w * cothden * cothsinh, w * cothden * cothsin);
 }
 // ---- End trig family (14 variations, slots 57..70) ----
+// ---- Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77) ----
+// All paramless; 0 RNG draws. Formulas ported verbatim from
+// /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+// EPS_MS = 1e-10 (matches flam3 private.h:47). precalc_sumsq = tx²+ty²;
+// precalc_sqrt = sqrt(sumsq); precalc_atan = atan2(tx,ty) (SWAPPED).
+// var57_butterfly: wx=w*1.3029400317411197908970256609023; y2=ty*2;
+//   r=wx*sqrt(|ty*tx|/(EPS+tx²+y2²)); (r*tx, r*y2)
+static inline float2 v_butterfly(float2 p, float w) {
+    float wx = w * 1.3029400317411197908970256609023f;
+    float y2 = p.y * 2.0f;
+    float r = wx * sqrt(fabs(p.y * p.x) / (EPS_MS + p.x*p.x + y2*y2));
+    return float2(r * p.x, r * y2);
+}
+// var61_edisc: tmp=sumsq+1; tmp2=2tx; r1=sqrt(tmp+tmp2); r2=sqrt(tmp-tmp2);
+//   xmax=(r1+r2)/2; a1=log(xmax+sqrt(xmax-1)); a2=-acos(tx/xmax);
+//   w=w/11.57034632; sincos(a1,&snv,&csv); snhu=sinh(a2); cshu=cosh(a2);
+//   if ty>0 snv=-snv; (w*cshu*csv, w*snhu*snv)
+static inline float2 v_edisc(float2 p, float w) {
+    float sumsq = p.x*p.x + p.y*p.y;
+    float tmp = sumsq + 1.0f;
+    float tmp2 = 2.0f * p.x;
+    float r1 = sqrt(tmp + tmp2);
+    float r2 = sqrt(tmp - tmp2);
+    float xmax = (r1 + r2) * 0.5f;
+    float a1 = log(xmax + sqrt(xmax - 1.0f));
+    float a2 = -acos(p.x / xmax);
+    float ww = w / 11.57034632f;
+    float snv = sin(a1);
+    float csv = cos(a1);
+    float snhu = sinh(a2);
+    float cshu = cosh(a2);
+    if (p.y > 0.0f) snv = -snv;
+    return float2(ww * cshu * csv, ww * snhu * snv);
+}
+// var62_elliptic: tmp=sumsq+1; x2=2tx; xmax=0.5*(sqrt(tmp+x2)+sqrt(tmp-x2));
+//   a=tx/xmax; b=1-a²; ssx=xmax-1; w=w/M_PI_2;
+//   if b<0 b=0 else b=sqrt(b); if ssx<0 ssx=0 else ssx=sqrt(ssx);
+//   (w*atan2(a,b), ±w*log(xmax+ssx))  [sign from ty]
+static inline float2 v_elliptic(float2 p, float w) {
+    float sumsq = p.x*p.x + p.y*p.y;
+    float tmp = sumsq + 1.0f;
+    float x2 = 2.0f * p.x;
+    float xmax = 0.5f * (sqrt(tmp + x2) + sqrt(tmp - x2));
+    float a = p.x / xmax;
+    float b = 1.0f - a*a;
+    float ssx = xmax - 1.0f;
+    float ww = w / (M_PI_F * 0.5f);
+    if (b < 0.0f) b = 0.0f; else b = sqrt(b);
+    if (ssx < 0.0f) ssx = 0.0f; else ssx = sqrt(ssx);
+    float p1mag = ww * log(xmax + ssx);
+    float p1 = (p.y > 0.0f) ? p1mag : -p1mag;
+    return float2(ww * atan2(a, b), p1);
+}
+// var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; sincos(ty,&sn,&cn);
+//   tmp=w/(expx+expnx-cn); (tmp*(expx-expnx), tmp*sn)
+static inline float2 v_foci(float2 p, float w) {
+    float expx = exp(p.x) * 0.5f;
+    float expnx = 0.25f / expx;
+    float sn = sin(p.y);
+    float cn = cos(p.y);
+    float tmp = w / (expx + expnx - cn);
+    return float2(tmp * (expx - expnx), tmp * sn);
+}
+// var66_loonie: r2=sumsq; w2=w²; if r2<w2: r=w*sqrt(w2/r2-1) else r=w.
+//   (r*tx, r*ty). NO EPS (origin → div-by-zero → badvalue downstream).
+static inline float2 v_loonie(float2 p, float w) {
+    float r2 = p.x*p.x + p.y*p.y;
+    float w2 = w * w;
+    if (r2 < w2) {
+        float r = w * sqrt(w2 / r2 - 1.0f);
+        return float2(r * p.x, r * p.y);
+    } else {
+        return float2(w * p.x, w * p.y);
+    }
+}
+// var70_polar2: p2v=w/M_PI; (p2v*precalc_atan, p2v/2*log(sumsq)).
+//   precalc_atan = atan2(tx,ty) = atan2(p.x,p.y) (SWAPPED — see var5_polar).
+static inline float2 v_polar2(float2 p, float w) {
+    float p2v = w / M_PI_F;
+    float sumsq = p.x*p.x + p.y*p.y;
+    return float2(p2v * atan2(p.x, p.y), p2v * 0.5f * log(sumsq));
+}
+// var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS))); (tx*r, ty*r).
+//   NOTE: weight folded ONLY inside 1/(w+EPS) — the (tx*r,ty*r) outer
+//   multiply has NO explicit weight (flam3 comment confirms intentional).
+static inline float2 v_scry(float2 p, float w) {
+    float sumsq = p.x*p.x + p.y*p.y;
+    float precalc_sqrt = sqrt(sumsq);
+    float r = 1.0f / (precalc_sqrt * (sumsq + 1.0f / (w + EPS_MS)));
+    return float2(p.x * r, p.y * r);
+}
+// ---- End batch 2 (7 variations, slots 71..77) ----
 // var24_pdj (variations.c:579-596). 4 params (pdj_a/b/c/d), all default 0.
 //   nx1 = cos(pdj_b*tx); nx2 = sin(pdj_c*tx);
 //   ny1 = sin(pdj_a*ty); ny2 = cos(pdj_d*ty);
@@ -929,7 +1021,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 71 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 78 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
 // flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
 // one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
@@ -1042,6 +1134,24 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // slot 70 — coth (var95_coth, paramless).
     if (w[70] != 0.0f) acc += v_coth(pre, w[70]);
     // ---- End trig family (14 variations) ----
+    // ---- Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77). ----
+    // All paramless; 0 RNG draws. Formulas ported verbatim from
+    // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+    // slot 71 — butterfly (var57_butterfly, paramless; EPS-guarded |ty*tx|).
+    if (w[71] != 0.0f) acc += v_butterfly(pre, w[71]);
+    // slot 72 — edisc (var61_edisc, paramless; -acos + sinh/cosh).
+    if (w[72] != 0.0f) acc += v_edisc(pre, w[72]);
+    // slot 73 — elliptic (var62_elliptic, paramless; b/ssx clamped ≥0).
+    if (w[73] != 0.0f) acc += v_elliptic(pre, w[73]);
+    // slot 74 — foci (var64_foci, paramless; exp + sincos(ty)).
+    if (w[74] != 0.0f) acc += v_foci(pre, w[74]);
+    // slot 75 — loonie (var66_loonie, paramless; r2<w2 branch, NO EPS).
+    if (w[75] != 0.0f) acc += v_loonie(pre, w[75]);
+    // slot 76 — polar2 (var70_polar2, paramless; precalc_atan = atan2(x,y)).
+    if (w[76] != 0.0f) acc += v_polar2(pre, w[76]);
+    // slot 77 — scry (var72_scry, paramless; weight only in 1/(w+EPS)).
+    if (w[77] != 0.0f) acc += v_scry(pre, w[77]);
+    // ---- End batch 2 (7 variations) ----
     // ---- corpus-variations parametric non-RNG set (slots 42..43). ----
     // slot 42 — pdj (var24_pdj, parametric: 4 params all default 0; 0 RNG draws).
     // Param order in pr[0..3] = descriptor-declared order: pdj_a, pdj_b, pdj_c, pdj_d.

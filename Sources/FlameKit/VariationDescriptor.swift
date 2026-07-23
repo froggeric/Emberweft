@@ -1,6 +1,6 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 71-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 78-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
@@ -11,7 +11,7 @@ import Foundation
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 71-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 78-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 71-device-slot layout) ----
-    /// Fixed 71-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 78-device-slot layout) ----
+    /// Fixed 78-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -47,7 +47,8 @@ public struct VariationDescriptor: Sendable {
     /// disc2_twist default 0, precalc inlined) at slots 55..56. The 2 final
     /// slots brought Emberweft to 57/99 (100% of the variations that appear
     /// in the 23k-genome corpus survey); the trig family var82–95 (slots
-    /// 57..70) extends Emberweft to 71/99 for full flam3 coverage.
+    /// 57..70) extends Emberweft to 71/99, and the paramless non-trig family
+    /// (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to 78/99.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -173,8 +174,35 @@ public struct VariationDescriptor: Sendable {
         "csch",
         // var95_coth: cothden = 1/(cothcosh - cothcos)
         "coth",
+        // ---- Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77) ----
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590. Brings
+        // Emberweft to 78/99 variations.
+        // var57_butterfly: wx=w*1.3029400317411197908970256609023; y2=ty*2;
+        //   r=wx*sqrt(|ty*tx|/(EPS+tx²+y2²))
+        "butterfly",
+        // var61_edisc: r1=sqrt(sumsq+1+2tx); r2=sqrt(sumsq+1-2tx); xmax=(r1+r2)/2;
+        //   a1=log(xmax+sqrt(xmax-1)); a2=-acos(tx/xmax); w=w/11.57034632;
+        //   if(ty>0) snv=-snv; (w*cshu*csv, w*snhu*snv)
+        "edisc",
+        // var62_elliptic: tmp=sumsq+1; x2=2tx; xmax=(sqrt(tmp+x2)+sqrt(tmp-x2))/2;
+        //   a=tx/xmax; b=max(0,1-a²); ssx=max(0,xmax-1); w=w/M_PI_2;
+        //   (w*atan2(a,b), ±w*log(xmax+ssx))
+        "elliptic",
+        // var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; sincos(ty,&sn,&cn);
+        //   tmp=w/(expx+expnx-cn); (tmp*(expx-expnx), tmp*sn)
+        "foci",
+        // var66_loonie: r2=sumsq; w2=w²; if r2<w2: r=w*sqrt(w2/r2-1);
+        //   (r*tx, r*ty) else (w*tx, w*ty). NO EPS (origin → div-by-zero).
+        "loonie",
+        // var70_polar2: p2v=w/M_PI; (p2v*precalc_atan, p2v/2*log(sumsq))
+        //   precalc_atan = atan2(tx,ty) (SWAPPED — flam3's polar angle).
+        "polar2",
+        // var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS)));
+        //   (tx*r, ty*r). Note: weight folded only inside 1/(w+EPS).
+        "scry",
     ]
-    /// Canonical device-slot index for a variation name (0..<71), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<78), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -339,6 +367,17 @@ public struct VariationDescriptor: Sendable {
         // var95_coth: cothden = 1/(cothcosh - cothcos)
         d("coth", [], [:])
         // --- End trig family (14 variations) ---
+        // --- Batch 2: paramless non-trig (var57/61/62/64/66/70/72; slots 71..77) ---
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /Users/frederic/flam3-oracle-src/flam3/variations.c L1238-1590.
+        d("butterfly", [], [:])
+        d("edisc", [], [:])
+        d("elliptic", [], [:])
+        d("foci", [], [:])
+        d("loonie", [], [:])
+        d("polar2", [], [:])
+        d("scry", [], [:])
+        // --- End batch 2 (7 variations) ---
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C
