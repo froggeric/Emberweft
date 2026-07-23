@@ -216,6 +216,85 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("whorl", ["whorl_inside": 0.3, "whorl_outside": 0.5], weight: 0.4)
     }
 
+    // ---- Batch 3b: parametric 3+-params non-RNG (var96/60/65/98/71/73/81/77/69,
+    // slots 87..95). All parametric; 0 RNG draws. NONZERO params (defaults are
+    // 0; degenerate for mobius — all-zero params make v=0 → rad_v=w/0=inf).
+    // weight=0.4 tames any Float-vs-Double orbit divergence (the radial_blur/
+    // noise precedent) — the MSL ports are byte-faithful to the CPU closures;
+    // this test only verifies Metal↔CPU agreement. The closed-form CPU
+    // behavior is pinned by VariationsTests. ----
+
+    // var96_auger: 4 params auger_freq/scale/sym/weight; sinusoidal dx/dy
+    // perturbation with auger_sym mixing dx back into tx.
+    @MainActor func testAuger() throws {
+        try assertParity("auger",
+            ["auger_freq": 1.0, "auger_scale": 0.5, "auger_sym": 2.0, "auger_weight": 0.5],
+            weight: 0.4)
+    }
+    // var60_curve: 4 params curve_xamp/xlength/yamp/ylength; Gaussian bump per
+    // axis. pc_xlen/ylen clamped to 1E-20 (NOT EPS — match source).
+    @MainActor func testCurve() throws {
+        try assertParity("curve",
+            ["curve_xamp": 0.5, "curve_xlength": 1.0, "curve_yamp": 0.5, "curve_ylength": 1.0],
+            weight: 0.4)
+    }
+    // var65_lazysusan: 5 params space/spin/twist/x/y. ⚠️ ASYMMETRIC SIGNS
+    // (y=ty+lazysusan_y; p1 -= lazysusan_y) — the MSL port mirrors this.
+    @MainActor func testLazysusan() throws {
+        try assertParity("lazysusan",
+            ["lazysusan_space": 0.5, "lazysusan_spin": 0.3, "lazysusan_twist": 0.3,
+             "lazysusan_x": 0.2, "lazysusan_y": 0.2],
+            weight: 0.4)
+    }
+    // var98_mobius: 8 params re_a/b/c/d + im_a/b/c/d. Complex Möbius. Uses all
+    // 8 slot params — this test ALSO pins the param-channel round-trip for the
+    // 8th param (the param-channel test only checks count, not value delivery
+    // to the kernel).
+    @MainActor func testMobius() throws {
+        try assertParity("mobius",
+            ["mobius_re_a": 1.0, "mobius_re_b": 0.3, "mobius_re_c": 0.1, "mobius_re_d": 1.0,
+             "mobius_im_a": 0.0, "mobius_im_b": 0.0, "mobius_im_c": 0.0, "mobius_im_d": 0.0],
+            weight: 0.4)
+    }
+    // var71_popcorn2: 3 params c/x/y; sin(tan(c·ty)). tan has poles, but at
+    // c=0.5, ty·c stays well clear of π/2+kπ so Float/Double orbits agree.
+    @MainActor func testPopcorn2() throws {
+        try assertParity("popcorn2",
+            ["popcorn2_c": 0.5, "popcorn2_x": 0.3, "popcorn2_y": 0.3],
+            weight: 0.4)
+    }
+    // var73_separation: 4 params x/xinside/y/yinside; branchy per-axis sqrt fold.
+    @MainActor func testSeparation() throws {
+        try assertParity("separation",
+            ["separation_x": 0.5, "separation_xinside": 0.2,
+             "separation_y": 0.5, "separation_yinside": 0.2],
+            weight: 0.4)
+    }
+    // var81_waves2: 4 params freqx/freqy/scalex/scaley. ⚠️ DIFFERENT from
+    // var15 waves (paramless, affine-driven) — this is the parametric sinusoid.
+    @MainActor func testWaves2() throws {
+        try assertParity("waves2",
+            ["waves2_freqx": 1.0, "waves2_freqy": 1.0,
+             "waves2_scalex": 0.5, "waves2_scaley": 0.5],
+            weight: 0.4)
+    }
+    // var77_wedge: 4 params angle/count/hole/swirl. ⚠️ DIFFERENT from
+    // wedge_julia (RNG) and wedge_sph (1/r+EPS) — uses precalc_sqrt directly.
+    @MainActor func testWedge() throws {
+        try assertParity("wedge",
+            ["wedge_angle": 0.5, "wedge_count": 2.0,
+             "wedge_hole": 0.3, "wedge_swirl": 0.3],
+            weight: 0.4)
+    }
+    // var69_oscope: 3 params separation/frequency/amplitude. XML name
+    // `oscilloscope`; C field `oscope_*`. damping=0 branch only.
+    @MainActor func testOscilloscope() throws {
+        try assertParity("oscilloscope",
+            ["oscilloscope_separation": 0.5, "oscilloscope_frequency": 1.0,
+             "oscilloscope_amplitude": 1.0],
+            weight: 0.4)
+    }
+
     // ---- corpus-variations RNG simple set (slots 44..48).
     // All paramless but RNG-consuming (1..5 isaac_01 draws each). The PSNR is the
     // real RNG-parity oracle: a draw-count or draw-order mismatch collapses PSNR

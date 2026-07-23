@@ -168,6 +168,36 @@ public enum Variations {
         "stripes",
         // var80_whorl: 2 params whorl_inside/outside; weight in denominator.
         "whorl",
+        // ---- Batch 3b: parametric 3+-params non-RNG (var96/60/65/98/71/73/81/
+        // 77/69) ----
+        // All parametric (3..8 params, all default 0); 0 RNG draws → live in
+        // the table closures, NOT `evaluate`'s switch. Formulas ported verbatim
+        // from /Users/frederic/flam3-oracle-src/flam3/variations.c.
+        // var96_auger: 4 params auger_freq/scale/sym/weight; sinusoidal dx/dy
+        //   perturbation; p1 = w*dy (dy already weight-folded), p0 = sym-mixed.
+        "auger",
+        // var60_curve: 4 params curve_xamp/xlength/yamp/ylength; Gaussian bump;
+        //   pc_xlen/pc_ylen clamped to 1E-20 (NOT EPS).
+        "curve",
+        // var65_lazysusan: 5 params lazysusan_space/spin/twist/x/y; ⚠️ asymmetric
+        //   signs (y=ty+y, p1 -= y); inside/outside split at r==weight.
+        "lazysusan",
+        // var98_mobius: 8 params mobius_re_a/b/c/d + im_a/b/c/d; complex Möbius.
+        //   Uses all 8 slot params.
+        "mobius",
+        // var71_popcorn2: 3 params popcorn2_c/x/y; p0 += w*(tx+x·sin(tan(c·ty))).
+        "popcorn2",
+        // var73_separation: 4 params separation_x/xinside/y/yinside; branchy sqrt.
+        "separation",
+        // var81_waves2: 4 params waves2_freqx/freqy/scalex/scaley; ⚠️ DIFFERENT
+        //   from var15 waves (paramless, uses affine c,d,e,f).
+        "waves2",
+        // var77_wedge: 4 params wedge_angle/count/hole/swirl; ⚠️ DIFFERENT from
+        //   wedge_julia (RNG) and wedge_sph (1/r+EPS) — uses precalc_sqrt directly.
+        "wedge",
+        // var69_oscope: 3 params oscilloscope_separation/frequency/amplitude
+        //   (XML name `oscilloscope`, C field `oscope_*`); damping=0 branch only.
+        "oscilloscope",
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -1499,6 +1529,234 @@ public enum Variations {
             return SIMD2(w * r * cos(a), w * r * sin(a))
         }
         // ---- End batch 3a (9 variations, slots 78..86) ----
+
+        // ---- Batch 3b: parametric 3+-params non-RNG (var96/60/65/98/71/73/81/
+        // 77/69). All parametric (3..8 params, default 0); 0 RNG draws → live
+        // in the table closures, NOT `evaluate`'s switch. Formulas ported
+        // verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c
+        // (line numbers cited per closure). ----
+
+        // var96_auger (variations.c:1899-1910). 4 params auger_freq/auger_scale/
+        // auger_sym/auger_weight, default 0. Parametric; 0 RNG draws.
+        //   s = sin(freq·tx); t = sin(freq·ty);
+        //   dy = ty + auger_weight*(auger_scale·s/2 + |ty|·s);
+        //   dx = tx + auger_weight*(auger_scale·t/2 + |tx|·t);
+        //   p0 += weight*(tx + auger_sym*(dx-tx));
+        //   p1 += weight*dy.
+        // NOTE: p1 uses dy (which already incorporates tx/ty via t/s), and p0
+        // uses auger_sym to mix dx back into tx — both are weight-folded in
+        // the OUTER multiplier, NOT inside dy/dx (which use auger_weight).
+        // Param order in par = descriptor-declared order: auger_freq, auger_scale,
+        // auger_sym, auger_weight.
+        t["auger"]        = { p, w, par, _ in
+            let freq   = resolve("auger", "auger_freq", par)
+            let scale  = resolve("auger", "auger_scale", par)
+            let sym    = resolve("auger", "auger_sym", par)
+            let augW   = resolve("auger", "auger_weight", par)
+            let s = sin(freq * p.x)
+            let t = sin(freq * p.y)
+            let dy = p.y + augW * (scale * s / 2.0 + abs(p.y) * s)
+            let dx = p.x + augW * (scale * t / 2.0 + abs(p.x) * t)
+            return SIMD2(w * (p.x + sym * (dx - p.x)),
+                         w * dy)
+        }
+        // var60_curve (variations.c:1312-1324). 4 params curve_xamp/curve_xlength/
+        // curve_yamp/curve_ylength, default 0. Parametric; 0 RNG draws. NOTE the
+        // clamp is 1E-20 (NOT EPS — match source exactly; this is the only place
+        // in flam3 variations.c that uses 1E-20 instead of EPS=1e-10).
+        //   pc_xlen = curve_xlength²; if (pc_xlen<1E-20) pc_xlen = 1E-20;
+        //   pc_ylen = curve_ylength²; if (pc_ylen<1E-20) pc_ylen = 1E-20;
+        //   p0 += weight*(tx + curve_xamp·exp(-ty²/pc_xlen));
+        //   p1 += weight*(ty + curve_yamp·exp(-tx²/pc_ylen)).
+        // Param order in par = descriptor-declared order: curve_xamp, curve_xlength,
+        // curve_yamp, curve_ylength.
+        t["curve"]        = { p, w, par, _ in
+            let xamp   = resolve("curve", "curve_xamp", par)
+            let xlen   = resolve("curve", "curve_xlength", par)
+            let yamp   = resolve("curve", "curve_yamp", par)
+            let ylen   = resolve("curve", "curve_ylength", par)
+            var pc_xlen = xlen * xlen
+            var pc_ylen = ylen * ylen
+            if pc_xlen < 1e-20 { pc_xlen = 1e-20 }
+            if pc_ylen < 1e-20 { pc_ylen = 1e-20 }
+            return SIMD2(w * (p.x + xamp * exp(-p.y * p.y / pc_xlen)),
+                         w * (p.y + yamp * exp(-p.x * p.x / pc_ylen)))
+        }
+        // var65_lazysusan (variations.c:1428-1461). 5 params lazysusan_space/
+        // lazysusan_spin/lazysusan_twist/lazysusan_x/lazysusan_y, default 0.
+        // Parametric; 0 RNG draws. ⚠️ ASYMMETRIC SIGNS (match source verbatim):
+        // the input shift is `y = ty + lazysusan_y` (PLUS), and the output
+        // shift is `p1 = ... - lazysusan_y` (MINUS). The p0 shift is `+
+        // lazysusan_x` (PLUS, symmetric). This asymmetry is in flam3's source
+        // and is load-bearing for parity — do NOT "fix" it.
+        //   x = tx - lazysusan_x; y = ty + lazysusan_y; r = sqrt(x²+y²);
+        //   if (r<weight) {
+        //     a = atan2(y,x) + lazysusan_spin + lazysusan_twist*(weight-r);
+        //     sincos(a,&sina,&cosa); r = weight*r;
+        //     p0 += r*cosa + lazysusan_x; p1 += r*sina - lazysusan_y;
+        //   } else {
+        //     r = weight*(1.0 + lazysusan_space/r);
+        //     p0 += r*x + lazysusan_x; p1 += r*y - lazysusan_y;
+        //   }.
+        // Param order in par = descriptor-declared order: lazysusan_space,
+        // lazysusan_spin, lazysusan_twist, lazysusan_x, lazysusan_y.
+        t["lazysusan"]    = { p, w, par, _ in
+            let space = resolve("lazysusan", "lazysusan_space", par)
+            let spin  = resolve("lazysusan", "lazysusan_spin", par)
+            let twist = resolve("lazysusan", "lazysusan_twist", par)
+            let lsx   = resolve("lazysusan", "lazysusan_x", par)
+            let lsy   = resolve("lazysusan", "lazysusan_y", par)
+            let x = p.x - lsx
+            let y = p.y + lsy
+            let r = (x * x + y * y).squareRoot()
+            if r < w {
+                let a = atan2(y, x) + spin + twist * (w - r)
+                let rr = w * r
+                return SIMD2(rr * cos(a) + lsx,
+                             rr * sin(a) - lsy)
+            } else {
+                let rr = w * (1.0 + space / r)
+                return SIMD2(rr * x + lsx,
+                             rr * y - lsy)
+            }
+        }
+        // var98_mobius (variations.c:1923-1940). 8 params mobius_re_a/b/c/d +
+        // mobius_im_a/b/c/d, default 0. Parametric; 0 RNG draws. Complex
+        // Möbius transform (u/v in C); weight / |v|² prefactor. Uses ALL 8
+        // slot params — slotWidth=8 holds them exactly.
+        //   re_u = re_a·tx - im_a·ty + re_b;
+        //   im_u = re_a·ty + im_a·tx + im_b;
+        //   re_v = re_c·tx - im_c·ty + re_d;
+        //   im_v = re_c·ty + im_c·tx + im_d;
+        //   rad_v = weight / (re_v² + im_v²);
+        //   p0 += rad_v·(re_u·re_v + im_u·im_v);
+        //   p1 += rad_v·(im_u·re_v - re_u·im_v).
+        // Param order in par = descriptor-declared order: mobius_re_a, mobius_re_b,
+        // mobius_re_c, mobius_re_d, mobius_im_a, mobius_im_b, mobius_im_c, mobius_im_d.
+        t["mobius"]       = { p, w, par, _ in
+            let reA = resolve("mobius", "mobius_re_a", par)
+            let reB = resolve("mobius", "mobius_re_b", par)
+            let reC = resolve("mobius", "mobius_re_c", par)
+            let reD = resolve("mobius", "mobius_re_d", par)
+            let imA = resolve("mobius", "mobius_im_a", par)
+            let imB = resolve("mobius", "mobius_im_b", par)
+            let imC = resolve("mobius", "mobius_im_c", par)
+            let imD = resolve("mobius", "mobius_im_d", par)
+            let reU = reA * p.x - imA * p.y + reB
+            let imU = reA * p.y + imA * p.x + imB
+            let reV = reC * p.x - imC * p.y + reD
+            let imV = reC * p.y + imC * p.x + imD
+            let radV = w / (reV * reV + imV * imV)
+            return SIMD2(radV * (reU * reV + imU * imV),
+                         radV * (imU * reV - reU * imV))
+        }
+        // var71_popcorn2 (variations.c:1554-1562). 3 params popcorn2_c/popcorn2_x/
+        // popcorn2_y, default 0. Parametric; 0 RNG draws.
+        //   p0 += weight*(tx + popcorn2_x·sin(tan(popcorn2_c·ty)));
+        //   p1 += weight*(ty + popcorn2_y·sin(tan(popcorn2_c·tx))).
+        // NOTE: sin(tan(...)) has poles where tan's argument → π/2+kπ; match
+        // flam3 (no per-term guard; chaos-game badvalue handles Inf downstream).
+        // Param order in par = descriptor-declared order: popcorn2_c, popcorn2_x,
+        // popcorn2_y.
+        t["popcorn2"]     = { p, w, par, _ in
+            let c = resolve("popcorn2", "popcorn2_c", par)
+            let x = resolve("popcorn2", "popcorn2_x", par)
+            let y = resolve("popcorn2", "popcorn2_y", par)
+            return SIMD2(w * (p.x + x * sin(tan(c * p.y))),
+                         w * (p.y + y * sin(tan(c * p.x))))
+        }
+        // var73_separation (variations.c:1584-1601). 4 params separation_x/
+        // separation_xinside/separation_y/separation_yinside, default 0.
+        // Parametric; 0 RNG draws. Branchy per-axis sqrt fold.
+        //   sx2 = separation_x²; sy2 = separation_y²;
+        //   if (tx>0) p0 += weight*(sqrt(tx²+sx2) - tx·separation_xinside);
+        //   else      p0 -= weight*(sqrt(tx²+sx2) + tx·separation_xinside);
+        //   (same for ty → p1).
+        // Param order in par = descriptor-declared order: separation_x,
+        // separation_xinside, separation_y, separation_yinside.
+        t["separation"]   = { p, w, par, _ in
+            let sx  = resolve("separation", "separation_x", par)
+            let sxi = resolve("separation", "separation_xinside", par)
+            let sy  = resolve("separation", "separation_y", par)
+            let syi = resolve("separation", "separation_yinside", par)
+            let sx2 = sx * sx
+            let sy2 = sy * sy
+            let p0: Double = p.x > 0
+                ? w * ((p.x * p.x + sx2).squareRoot() - p.x * sxi)
+                : -w * ((p.x * p.x + sx2).squareRoot() + p.x * sxi)
+            let p1: Double = p.y > 0
+                ? w * ((p.y * p.y + sy2).squareRoot() - p.y * syi)
+                : -w * ((p.y * p.y + sy2).squareRoot() + p.y * syi)
+            return SIMD2(p0, p1)
+        }
+        // var81_waves2 (variations.c:1735-1741). 4 params waves2_freqx/freqy/
+        // scalex/scaley, default 0. Parametric; 0 RNG draws. ⚠️ DIFFERENT from
+        // var15 waves (paramless, uses affine c,d,e,f) — waves2 is parametric.
+        //   p0 += weight*(tx + waves2_scalex·sin(ty·waves2_freqx));
+        //   p1 += weight*(ty + waves2_scaley·sin(tx·waves2_freqy)).
+        // Param order in par = descriptor-declared order: waves2_freqx,
+        // waves2_freqy, waves2_scalex, waves2_scaley.
+        t["waves2"]       = { p, w, par, _ in
+            let fx = resolve("waves2", "waves2_freqx", par)
+            let fy = resolve("waves2", "waves2_freqy", par)
+            let sx = resolve("waves2", "waves2_scalex", par)
+            let sy = resolve("waves2", "waves2_scaley", par)
+            return SIMD2(w * (p.x + sx * sin(p.y * fx)),
+                         w * (p.y + sy * sin(p.x * fy)))
+        }
+        // var77_wedge (variations.c:1649-1671). 4 params wedge_angle/wedge_count/
+        // wedge_hole/wedge_swirl, default 0. Parametric; 0 RNG draws. Uses
+        // precalc_sqrt, precalc_atanyx. ⚠️ DIFFERENT from var78 wedge_julia (RNG)
+        // and var79 wedge_sph (uses 1/(sqrt+EPS)) — wedge uses precalc_sqrt
+        // DIRECTLY (no 1/r, no EPS).
+        //   r = precalc_sqrt;
+        //   a = precalc_atanyx + wedge_swirl·r;
+        //   c = floor((wedge_count·a + π)·(1/π)·0.5);
+        //   comp_fac = 1 - wedge_angle·wedge_count·(1/π)·0.5;
+        //   a = a·comp_fac + c·wedge_angle;
+        //   sincos(a,&sa,&ca); r = weight·(r + wedge_hole);
+        //   p0 += r·ca; p1 += r·sa.
+        // Param order in par = descriptor-declared order: wedge_angle,
+        // wedge_count, wedge_hole, wedge_swirl.
+        t["wedge"]        = { p, w, par, _ in
+            let angle = resolve("wedge", "wedge_angle", par)
+            let count = resolve("wedge", "wedge_count", par)
+            let hole  = resolve("wedge", "wedge_hole", par)
+            let swirl = resolve("wedge", "wedge_swirl", par)
+            let r = (p.x * p.x + p.y * p.y).squareRoot()       // precalc_sqrt
+            let atanyx = atan2(p.y, p.x)                        // precalc_atanyx
+            var a = atanyx + swirl * r
+            let c = floor((count * a + .pi) * (1.0 / .pi) * 0.5)
+            let comp_fac = 1.0 - angle * count * (1.0 / .pi) * 0.5
+            a = a * comp_fac + c * angle
+            let rr = w * (r + hole)
+            return SIMD2(rr * cos(a), rr * sin(a))
+        }
+        // var69_oscope (variations.c:1521-1538). 3 params oscilloscope_separation/
+        // oscilloscope_frequency/oscilloscope_amplitude, default 0. Parametric;
+        // 0 RNG draws. XML name `oscilloscope`; the C struct field is `oscope_*`
+        // (parser.c:1140-1155 maps both forms). The 4th C param oscope_damping
+        // is NOT exposed here (defaults 0 → damping=0 branch only — match spec's
+        // 3-param contract).
+        //   tpf = 2π·frequency;
+        //   t = amplitude·cos(tpf·tx) + separation;       // damping=0 branch
+        //   if (|ty| <= t) { p0 += weight·tx; p1 -= weight·ty; }
+        //   else           { p0 += weight·tx; p1 += weight·ty; }.
+        // Param order in par = descriptor-declared order: oscilloscope_separation,
+        // oscilloscope_frequency, oscilloscope_amplitude.
+        t["oscilloscope"] = { p, w, par, _ in
+            let sep  = resolve("oscilloscope", "oscilloscope_separation", par)
+            let freq = resolve("oscilloscope", "oscilloscope_frequency", par)
+            let amp  = resolve("oscilloscope", "oscilloscope_amplitude", par)
+            let tpf = 2.0 * .pi * freq
+            let t = amp * cos(tpf * p.x) + sep
+            if abs(p.y) <= t {
+                return SIMD2(w * p.x, -w * p.y)
+            } else {
+                return SIMD2(w * p.x,  w * p.y)
+            }
+        }
+        // ---- End batch 3b (9 variations, slots 87..95) ----
         return t
     }()
 }
@@ -1506,10 +1764,11 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 78-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 96-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
     /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
-    /// flower/conic/parabola + secant2/disc2).
+    /// flower/conic/parabola + secant2/disc2 + trig family + paramless non-trig
+    /// + parametric batches 3a/3b).
     ///
     /// RNG-EQUIVALENCE NOTE: eighteen variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/

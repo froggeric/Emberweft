@@ -753,6 +753,268 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(outSmall.y, wSmall * r * sin(aOut), accuracy: 1e-9)
     }
 
+    // MARK: - Batch 3b: parametric 3+-params non-RNG (9 variations).
+    // Hand-traced closed forms against flam3 variations.c.
+
+    // var96_auger (variations.c:1899-1910). 4 params, default 0.
+    //   s = sin(freq·tx); t = sin(freq·ty);
+    //   dy = ty + auger_weight*(auger_scale·s/2 + |ty|·s);
+    //   dx = tx + auger_weight*(auger_scale·t/2 + |tx|·t);
+    //   p0 += weight*(tx + auger_sym*(dx-tx)); p1 += weight*dy.
+    func testAuger() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let freq = 1.0, scale = 0.5, sym = 2.0, augW = 0.5
+        let params: [String: Double] = [
+            "auger_freq": freq, "auger_scale": scale,
+            "auger_sym": sym, "auger_weight": augW,
+        ]
+        let out = eval("auger", p, 1.0, params)
+        let s = sin(freq * p.x)
+        let t = sin(freq * p.y)
+        let dy = p.y + augW * (scale * s / 2.0 + abs(p.y) * s)
+        let dx = p.x + augW * (scale * t / 2.0 + abs(p.x) * t)
+        XCTAssertEqual(out.x, 1.0 * (p.x + sym * (dx - p.x)), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * dy, accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("auger", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(2.0 * (p.x + sym * (dx - p.x)), 2.0 * dy), accuracy: 1e-9)
+    }
+
+    // var60_curve (variations.c:1312-1324). 4 params, default 0. NOTE the clamp
+    // is 1E-20 (NOT EPS — the only place in variations.c using 1E-20).
+    //   pc_xlen = xlength²; if (<1E-20) =1E-20; same for pc_ylen.
+    //   p0 += w*(tx + xamp·exp(-ty²/pc_xlen)); p1 += w*(ty + yamp·exp(-tx²/pc_ylen)).
+    func testCurve() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let xamp = 0.5, xlen = 1.0, yamp = 0.5, ylen = 1.0
+        let params: [String: Double] = [
+            "curve_xamp": xamp, "curve_xlength": xlen,
+            "curve_yamp": yamp, "curve_ylength": ylen,
+        ]
+        let out = eval("curve", p, 1.0, params)
+        let pc_xlen = max(xlen * xlen, 1e-20)
+        let pc_ylen = max(ylen * ylen, 1e-20)
+        XCTAssertEqual(out.x, 1.0 * (p.x + xamp * exp(-p.y * p.y / pc_xlen)), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * (p.y + yamp * exp(-p.x * p.x / pc_ylen)), accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("curve", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(
+            2.0 * (p.x + xamp * exp(-p.y * p.y / pc_xlen)),
+            2.0 * (p.y + yamp * exp(-p.x * p.x / pc_ylen))), accuracy: 1e-9)
+        // Zero xlength/ylength triggers the 1E-20 clamp (a faithful flam3 path
+        // — without the clamp, /0 = inf). Verify the clamp fires and output is
+        // finite (exp(-16) is tiny but nonzero).
+        let zeroParams: [String: Double] = [
+            "curve_xamp": 0.5, "curve_xlength": 0,
+            "curve_yamp": 0.5, "curve_ylength": 0,
+        ]
+        let outZero = eval("curve", p, 1.0, zeroParams)
+        let pcX = 1e-20, pcY = 1e-20
+        XCTAssertEqual(outZero.x, 1.0 * (p.x + 0.5 * exp(-p.y * p.y / pcX)), accuracy: 1e-9)
+        XCTAssertEqual(outZero.y, 1.0 * (p.y + 0.5 * exp(-p.x * p.x / pcY)), accuracy: 1e-9)
+        XCTAssertTrue(outZero.x.isFinite, "curve 1E-20 clamp keeps output finite")
+    }
+
+    // var65_lazysusan (variations.c:1428-1461). 5 params, default 0. ⚠️ ASYMMETRIC
+    // SIGNS — y = ty + lazysusan_y (PLUS); p1 -= lazysusan_y (MINUS); p0 +=
+    // lazysusan_x (PLUS).
+    func testLazysusan() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let space = 0.5, spin = 0.3, twist = 0.3, lsx = 0.2, lsy = 0.2
+        let params: [String: Double] = [
+            "lazysusan_space": space, "lazysusan_spin": spin,
+            "lazysusan_twist": twist, "lazysusan_x": lsx, "lazysusan_y": lsy,
+        ]
+        // Inside branch (r < weight): weight=1.0, x=0.3-0.2=0.1, y=0.4+0.2=0.6,
+        //   r = sqrt(0.01+0.36)=sqrt(0.37)≈0.608 < 1.0.
+        let out = eval("lazysusan", p, 1.0, params)
+        let x = p.x - lsx, y = p.y + lsy
+        let r = (x * x + y * y).squareRoot()
+        let a = atan2(y, x) + spin + twist * (1.0 - r)
+        let rr = 1.0 * r
+        XCTAssertEqual(out.x, rr * cos(a) + lsx, accuracy: 1e-9)
+        XCTAssertEqual(out.y, rr * sin(a) - lsy, accuracy: 1e-9)
+        // Outside branch: tiny weight=0.1 → r=0.608 > weight → else branch.
+        let wSmall = 0.1
+        let outSmall = eval("lazysusan", p, wSmall, params)
+        let rrOut = wSmall * (1.0 + space / r)
+        XCTAssertEqual(outSmall.x, rrOut * x + lsx, accuracy: 1e-9)
+        XCTAssertEqual(outSmall.y, rrOut * y - lsy, accuracy: 1e-9)
+    }
+
+    // var98_mobius (variations.c:1923-1940). 8 params, default 0. Complex
+    // Möbius transform; rad_v = weight / (re_v² + im_v²).
+    //   re_u = re_a·tx - im_a·ty + re_b; im_u = re_a·ty + im_a·tx + im_b;
+    //   re_v = re_c·tx - im_c·ty + re_d; im_v = re_c·ty + im_c·tx + im_d;
+    //   p0 += rad_v·(re_u·re_v + im_u·im_v); p1 += rad_v·(im_u·re_v - re_u·im_v).
+    func testMobius() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        // re_a=1, re_b=0.3, re_c=0.1, re_d=1; im_a/b/c/d=0 → rad_v=1/|v|²,
+        // and im_u/im_v collapse, giving the standard complex a·z+b form.
+        let reA = 1.0, reB = 0.3, reC = 0.1, reD = 1.0
+        let imA = 0.0, imB = 0.0, imC = 0.0, imD = 0.0
+        let params: [String: Double] = [
+            "mobius_re_a": reA, "mobius_re_b": reB, "mobius_re_c": reC, "mobius_re_d": reD,
+            "mobius_im_a": imA, "mobius_im_b": imB, "mobius_im_c": imC, "mobius_im_d": imD,
+        ]
+        let out = eval("mobius", p, 1.0, params)
+        let reU = reA * p.x - imA * p.y + reB
+        let imU = reA * p.y + imA * p.x + imB
+        let reV = reC * p.x - imC * p.y + reD
+        let imV = reC * p.y + imC * p.x + imD
+        let radV = 1.0 / (reV * reV + imV * imV)
+        XCTAssertEqual(out.x, radV * (reU * reV + imU * imV), accuracy: 1e-9)
+        XCTAssertEqual(out.y, radV * (imU * reV - reU * imV), accuracy: 1e-9)
+        // Verify all 8 params round-trip via a fully-populated nonzero case
+        // (im_a/b/c/d all nonzero) — pins the CPU↔descriptor param-name match
+        // for the 8-param slot.
+        let reA2 = 0.7, reB2 = 0.1, reC2 = -0.2, reD2 = 0.9
+        let imA2 = 0.3, imB2 = -0.4, imC2 = 0.6, imD2 = -0.5
+        let params2: [String: Double] = [
+            "mobius_re_a": reA2, "mobius_re_b": reB2, "mobius_re_c": reC2, "mobius_re_d": reD2,
+            "mobius_im_a": imA2, "mobius_im_b": imB2, "mobius_im_c": imC2, "mobius_im_d": imD2,
+        ]
+        let out2 = eval("mobius", p, 1.5, params2)
+        let reU2 = reA2 * p.x - imA2 * p.y + reB2
+        let imU2 = reA2 * p.y + imA2 * p.x + imB2
+        let reV2 = reC2 * p.x - imC2 * p.y + reD2
+        let imV2 = reC2 * p.y + imC2 * p.x + imD2
+        let radV2 = 1.5 / (reV2 * reV2 + imV2 * imV2)
+        XCTAssertEqual(out2, SIMD2<Double>(radV2 * (reU2 * reV2 + imU2 * imV2),
+                                           radV2 * (imU2 * reV2 - reU2 * imV2)),
+                       accuracy: 1e-9)
+    }
+
+    // var71_popcorn2 (variations.c:1554-1562). 3 params, default 0.
+    //   p0 += w*(tx + popcorn2_x·sin(tan(popcorn2_c·ty)));
+    //   p1 += w*(ty + popcorn2_y·sin(tan(popcorn2_c·tx))).
+    func testPopcorn2() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let c = 0.5, x = 0.3, y = 0.3
+        let params: [String: Double] = [
+            "popcorn2_c": c, "popcorn2_x": x, "popcorn2_y": y,
+        ]
+        let out = eval("popcorn2", p, 1.0, params)
+        XCTAssertEqual(out.x, 1.0 * (p.x + x * sin(tan(c * p.y))), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * (p.y + y * sin(tan(c * p.x))), accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("popcorn2", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(
+            2.0 * (p.x + x * sin(tan(c * p.y))),
+            2.0 * (p.y + y * sin(tan(c * p.x)))), accuracy: 1e-9)
+    }
+
+    // var73_separation (variations.c:1584-1601). 4 params, default 0.
+    //   if (tx>0) p0 += w*(sqrt(tx²+sx²) - tx·xinside);
+    //   else      p0 -= w*(sqrt(tx²+sx²) + tx·xinside).  (same for ty → p1).
+    func testSeparation() {
+        let sx = 0.5, sxi = 0.2, sy = 0.5, syi = 0.2
+        let params: [String: Double] = [
+            "separation_x": sx, "separation_xinside": sxi,
+            "separation_y": sy, "separation_yinside": syi,
+        ]
+        // Case 1: both positive → both + branches.
+        let p1 = SIMD2<Double>(0.3, 0.4)
+        let sx2 = sx * sx, sy2 = sy * sy
+        XCTAssertEqual(eval("separation", p1, 1.0, params), SIMD2<Double>(
+            1.0 * ((p1.x * p1.x + sx2).squareRoot() - p1.x * sxi),
+            1.0 * ((p1.y * p1.y + sy2).squareRoot() - p1.y * syi)), accuracy: 1e-9)
+        // Case 2: both negative → both - branches (subtract).
+        let p2 = SIMD2<Double>(-0.3, -0.4)
+        XCTAssertEqual(eval("separation", p2, 1.0, params), SIMD2<Double>(
+            -1.0 * ((p2.x * p2.x + sx2).squareRoot() + p2.x * sxi),
+            -1.0 * ((p2.y * p2.y + sy2).squareRoot() + p2.y * syi)), accuracy: 1e-9)
+        // Weight folds into both.
+        XCTAssertEqual(eval("separation", p1, 2.0, params), SIMD2<Double>(
+            2.0 * ((p1.x * p1.x + sx2).squareRoot() - p1.x * sxi),
+            2.0 * ((p1.y * p1.y + sy2).squareRoot() - p1.y * syi)), accuracy: 1e-9)
+    }
+
+    // var81_waves2 (variations.c:1735-1741). 4 params, default 0. ⚠️ DIFFERENT
+    // from var15 waves (paramless, uses affine c,d,e,f) — waves2 is parametric.
+    //   p0 += w*(tx + waves2_scalex·sin(ty·waves2_freqx));
+    //   p1 += w*(ty + waves2_scaley·sin(tx·waves2_freqy)).
+    func testWaves2() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let fx = 1.0, fy = 1.0, sx = 0.5, sy = 0.5
+        let params: [String: Double] = [
+            "waves2_freqx": fx, "waves2_freqy": fy,
+            "waves2_scalex": sx, "waves2_scaley": sy,
+        ]
+        let out = eval("waves2", p, 1.0, params)
+        XCTAssertEqual(out.x, 1.0 * (p.x + sx * sin(p.y * fx)), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * (p.y + sy * sin(p.x * fy)), accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("waves2", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(
+            2.0 * (p.x + sx * sin(p.y * fx)),
+            2.0 * (p.y + sy * sin(p.x * fy))), accuracy: 1e-9)
+    }
+
+    // var77_wedge (variations.c:1649-1671). 4 params, default 0. Uses
+    // precalc_sqrt, precalc_atanyx. ⚠️ DIFFERENT from wedge_julia (RNG) and
+    // wedge_sph (1/(sqrt+EPS)) — wedge uses precalc_sqrt DIRECTLY.
+    //   r=sqrt; a=atanyx+swirl·r; c=floor((count·a+π)·(1/π)·0.5);
+    //   comp_fac=1-angle·count·(1/π)·0.5; a=a·comp_fac+c·angle;
+    //   r=weight·(r+hole); (r·cos(a), r·sin(a)).
+    func testWedge() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let angle = 0.5, count = 2.0, hole = 0.3, swirl = 0.3
+        let params: [String: Double] = [
+            "wedge_angle": angle, "wedge_count": count,
+            "wedge_hole": hole, "wedge_swirl": swirl,
+        ]
+        let out = eval("wedge", p, 1.0, params)
+        let r0 = (p.x * p.x + p.y * p.y).squareRoot()
+        let atanyx = atan2(p.y, p.x)
+        var a = atanyx + swirl * r0
+        let c = floor((count * a + .pi) * (1.0 / .pi) * 0.5)
+        let comp_fac = 1.0 - angle * count * (1.0 / .pi) * 0.5
+        a = a * comp_fac + c * angle
+        let rr = 1.0 * (r0 + hole)
+        XCTAssertEqual(out.x, rr * cos(a), accuracy: 1e-9)
+        XCTAssertEqual(out.y, rr * sin(a), accuracy: 1e-9)
+        // Weight folds into rr only (it does NOT touch a or r0).
+        let outW = eval("wedge", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(2.0 * rr * cos(a), 2.0 * rr * sin(a)), accuracy: 1e-9)
+    }
+
+    // var69_oscope (variations.c:1521-1538). 3 params, default 0. XML name
+    // `oscilloscope`; C field `oscope_*`. damping=0 branch only (4th C param
+    // NOT exposed per spec).
+    //   tpf = 2π·frequency; t = amplitude·cos(tpf·tx) + separation;
+    //   if (|ty|<=t) { p0+=w·tx; p1-=w·ty; } else { p0+=w·tx; p1+=w·ty; }.
+    func testOscilloscope() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let sep = 0.5, freq = 1.0, amp = 1.0
+        let params: [String: Double] = [
+            "oscilloscope_separation": sep,
+            "oscilloscope_frequency": freq,
+            "oscilloscope_amplitude": amp,
+        ]
+        // tpf = 2π, t = cos(2π·0.3) + 0.5 ≈ 0.309 + 0.5 = 0.809; |ty|=0.4 ≤ 0.809
+        // → inside branch (p1 subtracts).
+        let tpf = 2.0 * .pi * freq
+        let t = amp * cos(tpf * p.x) + sep
+        let out = eval("oscilloscope", p, 1.0, params)
+        if abs(p.y) <= t {
+            XCTAssertEqual(out, SIMD2<Double>(1.0 * p.x, -1.0 * p.y), accuracy: 1e-9)
+        } else {
+            XCTAssertEqual(out, SIMD2<Double>(1.0 * p.x, 1.0 * p.y), accuracy: 1e-9)
+        }
+        // Force the else branch: huge |ty| > t always → p1 adds.
+        let pBig = SIMD2<Double>(0.3, 100.0)
+        let outBig = eval("oscilloscope", pBig, 1.0, params)
+        XCTAssertEqual(outBig, SIMD2<Double>(1.0 * pBig.x, 1.0 * pBig.y), accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("oscilloscope", p, 2.0, params)
+        if abs(p.y) <= t {
+            XCTAssertEqual(outW, SIMD2<Double>(2.0 * p.x, -2.0 * p.y), accuracy: 1e-9)
+        } else {
+            XCTAssertEqual(outW, SIMD2<Double>(2.0 * p.x, 2.0 * p.y), accuracy: 1e-9)
+        }
+    }
+
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")
@@ -1765,12 +2027,15 @@ final class VariationsTests: XCTestCase {
             // cell/modulus likewise hit a flam3 singularity at their default-0
             // params: cell_size=0 → 1/0=inf → Int(inf) trap (Swift's strict Int
             // cast traps where C's `(int)` cast just yields UB garbage); and
-            // modulus_x/y=0 → xr/yr=0 → fmod(_,0)=NaN. Both are faithful to
-            // flam3 (NO explicit guards in variations.c; the chaos-game badvalue
-            // check handles them downstream), and genomes always set nonzero
-            // cell_size / modulus_x/y. testCell / testModulus cover them with
+            // modulus_x/y=0 → xr/yr=0 → fmod(_,0)=NaN. mobius's 8 default-0
+            // params collapse v=0 → rad_v=weight/0=inf → p0/p1=NaN. All three
+            // are faithful to flam3 (NO explicit guards in variations.c; the
+            // chaos-game badvalue check handles them downstream), and genomes
+            // always set nonzero cell_size / modulus_x/y / mobius_re_d. The
+            // dedicated testCell / testModulus / testMobius cover them with
             // valid nonzero params.
-            if name == "perspective" || name == "cell" || name == "modulus" { continue }
+            if name == "perspective" || name == "cell" || name == "modulus"
+                || name == "mobius" { continue }
             let point = m1Names.contains(name) ? origin : nonSingular
             var rng = ISAAC(isaacSeed: "finiteness")
             let r = Variations.evaluate([Variation(name: name, weight: 1)], at: point, affine: .zero, rng: &rng)

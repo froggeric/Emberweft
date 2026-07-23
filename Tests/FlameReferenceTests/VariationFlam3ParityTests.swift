@@ -167,6 +167,20 @@ final class VariationFlam3ParityTests: XCTestCase {
             ("splits",  "linear=\"0.6\" splits=\"0.5\" splits_x=\"0.3\" splits_y=\"0.2\" \(aff)"),
             ("stripes", "linear=\"0.6\" stripes=\"0.5\" stripes_space=\"0.5\" stripes_warp=\"0.5\" \(aff)"),
             ("whorl",   "linear=\"0.6\" whorl=\"0.5\" whorl_inside=\"0.3\" whorl_outside=\"0.5\" \(aff)"),
+            // --- Work A batch 3b: parametric 3+-params non-RNG
+            // (var96/60/65/98/71/73/81/77/69). Each MUST clear the ≥38 dB gate
+            // (enforced below), not diagnostic. NONZERO params required (the
+            // flam3 defaults are all 0 and degenerate for mobius: 8 zero params
+            // → v=0 → rad_v=w/0=inf). ---
+            ("auger",        "linear=\"0.6\" auger=\"0.5\" auger_freq=\"1\" auger_scale=\"0.5\" auger_sym=\"2\" auger_weight=\"0.5\" \(aff)"),
+            ("curve",        "linear=\"0.6\" curve=\"0.5\" curve_xamp=\"0.5\" curve_xlength=\"1\" curve_yamp=\"0.5\" curve_ylength=\"1\" \(aff)"),
+            ("lazysusan",    "linear=\"0.6\" lazysusan=\"0.5\" lazysusan_space=\"0.5\" lazysusan_spin=\"0.3\" lazysusan_twist=\"0.3\" lazysusan_x=\"0.2\" lazysusan_y=\"0.2\" \(aff)"),
+            ("mobius",       "linear=\"0.6\" mobius=\"0.5\" mobius_re_a=\"1\" mobius_re_b=\"0.3\" mobius_re_c=\"0.1\" mobius_re_d=\"1\" mobius_im_a=\"0\" mobius_im_b=\"0\" mobius_im_c=\"0\" mobius_im_d=\"0\" \(aff)"),
+            ("popcorn2",     "linear=\"0.6\" popcorn2=\"0.5\" popcorn2_c=\"0.5\" popcorn2_x=\"0.3\" popcorn2_y=\"0.3\" \(aff)"),
+            ("separation",   "linear=\"0.6\" separation=\"0.5\" separation_x=\"0.5\" separation_xinside=\"0.2\" separation_y=\"0.5\" separation_yinside=\"0.2\" \(aff)"),
+            ("waves2",       "linear=\"0.6\" waves2=\"0.5\" waves2_freqx=\"1\" waves2_freqy=\"1\" waves2_scalex=\"0.5\" waves2_scaley=\"0.5\" \(aff)"),
+            ("wedge",        "linear=\"0.6\" wedge=\"0.5\" wedge_angle=\"0.5\" wedge_count=\"2\" wedge_hole=\"0.3\" wedge_swirl=\"0.3\" \(aff)"),
+            ("oscilloscope", "linear=\"0.6\" oscilloscope=\"0.5\" oscilloscope_separation=\"0.5\" oscilloscope_frequency=\"1\" oscilloscope_amplitude=\"1\" \(aff)"),
             // --- large/non-contracting affine probe (242.00099's waves-xform
             // coefs). If linear_LRG diverges but small-affine linear passed,
             // the trigger is large-affine iteration handling (badvalue
@@ -211,6 +225,9 @@ final class VariationFlam3ParityTests: XCTestCase {
             // Work A batch 3a: parametric ≤2-params non-RNG.
             "bent2", "bipolar", "cell", "escher", "flux", "modulus",
             "splits", "stripes", "whorl",
+            // Work A batch 3b: parametric 3+-params non-RNG.
+            "auger", "curve", "lazysusan", "mobius", "popcorn2",
+            "separation", "waves2", "wedge", "oscilloscope",
         ]
         var gateFailures: [String] = []
         for label in cases.map({ $0.0 }) where workA.contains(label) {

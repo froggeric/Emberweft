@@ -12,10 +12,10 @@ import FlameKit
 /// `Array<Float>` field would be heap-allocated and not inlined into the struct,
 /// corrupting the `withUnsafeBytes` copy. This struct therefore carries only
 /// the 15 inline header floats (a..f, pa..pf, color/colorSpeed/opacity) used by
-/// host-side extraction; the full device layout (798 floats = header + 87
-/// varWeights + 696 varParams) is described by `floatsPerXform`/`bytesPerXform`
-/// and built by the packer. The MSL `struct GPUXform` mirrors the full 798-float
-/// layout field-for-field (15 scalars + `varWeights[87]` + `varParams[696]`).
+/// host-side extraction; the full device layout (879 floats = header + 96
+/// varWeights + 768 varParams) is described by `floatsPerXform`/`bytesPerXform`
+/// and built by the packer. The MSL `struct GPUXform` mirrors the full 879-float
+/// layout field-for-field (15 scalars + `varWeights[96]` + `varParams[768]`).
 public struct GPUXform {
     public var a: Float = 0, b: Float = 0, c: Float = 0, d: Float = 0, e: Float = 0, f: Float = 0
     public var pa: Float = 0, pb: Float = 0, pc: Float = 0, pd: Float = 0, pe: Float = 0, pf: Float = 0
@@ -27,12 +27,12 @@ public struct GPUXform {
     // ---- Device layout constants (both sides must agree) ----
     // DERIVED from the authority (VariationDescriptor.canonicalOrder) so numSlots
     // and floatsPerXform can't internally drift. 6 (pre) + 6 (post) + 3
-    // (color/cs/opacity) + 87 (varWeights) + 87*8 (varParams) = 798 floats.
+    // (color/cs/opacity) + 96 (varWeights) + 96*8 (varParams) = 879 floats.
     public static let headerFloats = 15
     public static let numSlots = VariationDescriptor.canonicalOrder.count   // authority
     public static let slotWidth = 8                                         // MAX_PARAMS_PER_SLOT=6, device slot width 8
-    public static let floatsPerXform = headerFloats + numSlots + numSlots * slotWidth   // 15+87+696 = 798
-    public static let bytesPerXform = floatsPerXform * 4                    // 3192
+    public static let floatsPerXform = headerFloats + numSlots + numSlots * slotWidth   // 15+96+768 = 879
+    public static let bytesPerXform = floatsPerXform * 4                    // 3516
 }
 
 /// Per-frame constants passed to the chaos kernel.
@@ -70,10 +70,10 @@ enum MetalHost {
     }
 
     /// Build the flat-packed device xform buffer for a Flame. Each xform emits
-    /// `GPUXform.floatsPerXform` (798) floats: 15 header (a..f, pa..pf,
-    /// color/colorSpeed/opacity), then 87 `varWeights` (canonical slot order,
+    /// `GPUXform.floatsPerXform` (879) floats: 15 header (a..f, pa..pf,
+    /// color/colorSpeed/opacity), then 96 `varWeights` (canonical slot order,
     /// summing weights of repeated names — algebraically identical to CPU's
-    /// array-order sum because variation terms commute), then 696 `varParams`
+    /// array-order sum because variation terms commute), then 768 `varParams`
     /// (`varParams[slot*8 + intraIdx]`; `super_shape_rnd` clamped to [0,1];
     /// parameterless variations + unused tail slots zeroed).
     ///
@@ -82,7 +82,7 @@ enum MetalHost {
     /// so the `withUnsafeBytes` device-buffer copy would send garbage. This
     /// returns a contiguous `[Float]` that crosses the boundary intact.
     static func packXforms(_ flame: Flame) -> [Float] {
-        let order = Variations.canonicalOrder          // 87-name authority
+        let order = Variations.canonicalOrder          // 96-name authority
         var idxMap = [String: Int]()
         for (i, n) in order.enumerated() { idxMap[n] = i }
         let nXforms = flame.xforms.count
@@ -107,8 +107,8 @@ enum MetalHost {
             flat[base + 13] = Float(xf.colorSpeed)
             flat[base + 14] = Float(xf.opacity)
 
-            let wBase = base + GPUXform.headerFloats                  // 87 weights
-            let pBase = wBase + GPUXform.numSlots                     // 696 params
+            let wBase = base + GPUXform.headerFloats                  // 96 weights
+            let pBase = wBase + GPUXform.numSlots                     // 768 params
 
             for v in xf.variations where v.weight != 0 {
                 guard let slot = idxMap[v.name] else { continue }

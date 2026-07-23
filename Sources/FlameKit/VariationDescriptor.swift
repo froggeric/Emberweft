@@ -1,6 +1,6 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 87-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 96-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
@@ -11,7 +11,7 @@ import Foundation
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 87-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 96-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 87-device-slot layout) ----
-    /// Fixed 87-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 96-device-slot layout) ----
+    /// Fixed 96-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -49,8 +49,10 @@ public struct VariationDescriptor: Sendable {
     /// in the 23k-genome corpus survey); the trig family var82–95 (slots
     /// 57..70) extends Emberweft to 71/99, the paramless non-trig family
     /// (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to 78/99,
-    /// and the parametric ≤2-params non-RNG family (var54/55/58/63/97/68/75/
-    /// 76/80, slots 78..86) extends Emberweft to 87/99.
+    /// the parametric ≤2-params non-RNG family (var54/55/58/63/97/68/75/
+    /// 76/80, slots 78..86) extends Emberweft to 87/99, and the parametric
+    /// 3+-params non-RNG family (var96/60/65/98/71/73/81/77/69, slots 87..95)
+    /// extends Emberweft to 96/99.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -242,8 +244,45 @@ public struct VariationDescriptor: Sendable {
         //   (w*r*cos a, w*r*sin a). NOTE: weight is in the denominator (non-
         //   standard; singular at r==weight — match flam3).
         "whorl",
+        // ---- Batch 3b: parametric 3+-params non-RNG (var96/60/65/98/71/73/81/
+        // 77/69; slots 87..95) ----
+        // All parametric (3..8 params, ALL defaults 0); 0 RNG draws. Formulas
+        // ported verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c
+        // L1312-1928. Brings Emberweft to 96/99 variations.
+        // var96_auger: 4 params auger_freq/scale/sym/weight; sign-sym sinusoidal
+        //   perturbation of dx, dy; p1 = w*dy, p0 = w*(tx+sym*(dx-tx)).
+        "auger",
+        // var60_curve: 4 params curve_xamp/xlength/yamp/ylength; Gaussian bump
+        //   per axis; pc_xlen/pc_ylen clamped to 1E-20 (NOT EPS — match source).
+        "curve",
+        // var65_lazysusan: 5 params lazysusan_space/spin/twist/x/y; ⚠️ y=ty+y,
+        //   p1 -= y (signs are asymmetric — match source verbatim).
+        "lazysusan",
+        // var98_mobius: 8 params mobius_re_a/b/c/d + mobius_im_a/b/c/d; complex
+        //   Möbius transform (re_u/im_u/re_v/im_v); weight / |v|² prefactor.
+        //   Uses ALL 8 slot params (slotWidth=8).
+        "mobius",
+        // var71_popcorn2: 3 params popcorn2_c/x/y; p0 += w*(tx + x·sin(tan(c·ty))),
+        //   p1 += w*(ty + y·sin(tan(c·tx))).
+        "popcorn2",
+        // var73_separation: 4 params separation_x/xinside/y/yinside; per-axis
+        //   sqrt(tx²+sx²) ∓ tx·xinside by sign of tx; same for ty.
+        "separation",
+        // var81_waves2: 4 params waves2_freqx/freqy/scalex/scaley;
+        //   p0 += w*(tx + scalex·sin(ty·freqx)), p1 += w*(ty + scaley·sin(tx·freqy)).
+        //   ⚠️ DIFFERENT from var15 waves (paramless, uses affine c,d,e,f).
+        "waves2",
+        // var77_wedge: 4 params wedge_angle/count/hole/swirl; uses precalc_sqrt,
+        //   precalc_atanyx. ⚠️ DIFFERENT from var78 wedge_julia (RNG) and
+        //   var79 wedge_sph (1/r) — wedge uses r directly (no 1/r).
+        "wedge",
+        // var69_oscope: 3 params oscilloscope_separation/frequency/amplitude;
+        //   genome attr is `oscilloscope` (parser.c maps oscilloscope_* →
+        //   oscope_*). 4th C param oscope_damping defaults 0 → simpler branch
+        //   (exp damping factor) only — exposed here as 3 params per spec.
+        "oscilloscope",
     ]
-    /// Canonical device-slot index for a variation name (0..<87), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<96), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -456,6 +495,60 @@ public struct VariationDescriptor: Sendable {
         d("whorl", ["whorl_inside","whorl_outside"],
           ["whorl_inside":0,"whorl_outside":0])
         // --- End batch 3a (9 variations) ---
+        // --- Batch 3b: parametric 3+-params non-RNG (9 variations). All
+        //     parametric (3..8 params); 0 RNG draws → live in the closure table,
+        //     NOT `evaluate`'s switch. Formulas ported verbatim from
+        //     /Users/frederic/flam3-oracle-src/flam3/variations.c. flam3
+        //     `clear_cp` does NOT initialize ANY of these params (memset(0) in
+        //     parser.c:229 wins) → missing XML attrs parse as 0, exactly like
+        //     batch 3a. `oscilloscope` is the XML name; the C struct field is
+        //     `oscope_*` (parser.c:1140-1155 maps both forms) — Emberweft uses
+        //     the XML form (`oscilloscope_*`) everywhere, like flam3 genomes. ---
+        // var96_auger (4 params, default 0): s=sin(freq·tx), t=sin(freq·ty);
+        //   dy=ty+weight*(scale·s/2+|ty|·s); dx=tx+weight*(scale·t/2+|tx|·t);
+        //   p0=w*(tx+sym*(dx-tx)); p1=w*dy.
+        d("auger", ["auger_freq","auger_scale","auger_sym","auger_weight"],
+          ["auger_freq":0,"auger_scale":0,"auger_sym":0,"auger_weight":0])
+        // var60_curve (4 params, default 0): pc_xlen/xlength² clamped to 1E-20
+        //   (NOT EPS — match source); p0 += w*(tx + xamp·exp(-ty²/pc_xlen));
+        //   p1 += w*(ty + yamp·exp(-tx²/pc_ylen)).
+        d("curve", ["curve_xamp","curve_xlength","curve_yamp","curve_ylength"],
+          ["curve_xamp":0,"curve_xlength":0,"curve_yamp":0,"curve_ylength":0])
+        // var65_lazysusan (5 params, default 0): ⚠️ asymmetric signs:
+        //   x=tx-lazysusan_x, y=ty+lazysusan_y; p0 += ... +lazysusan_x;
+        //   p1 += ... -lazysusan_y. if r<w inside-branch else outside-branch.
+        d("lazysusan", ["lazysusan_space","lazysusan_spin","lazysusan_twist","lazysusan_x","lazysusan_y"],
+          ["lazysusan_space":0,"lazysusan_spin":0,"lazysusan_twist":0,"lazysusan_x":0,"lazysusan_y":0])
+        // var98_mobius (8 params, default 0): complex Möbius transform. Uses all
+        //   8 slot params (slotWidth=8 — MAX_PARAMS_PER_SLOT=6 is a stale comment
+        //   and NOT enforced by the packer; `intraIdx < slotWidth` = 8 holds).
+        d("mobius",
+          ["mobius_re_a","mobius_re_b","mobius_re_c","mobius_re_d",
+           "mobius_im_a","mobius_im_b","mobius_im_c","mobius_im_d"],
+          ["mobius_re_a":0,"mobius_re_b":0,"mobius_re_c":0,"mobius_re_d":0,
+           "mobius_im_a":0,"mobius_im_b":0,"mobius_im_c":0,"mobius_im_d":0])
+        // var71_popcorn2 (3 params, default 0): p0 += w*(tx + x·sin(tan(c·ty)));
+        //   p1 += w*(ty + y·sin(tan(c·tx))).
+        d("popcorn2", ["popcorn2_c","popcorn2_x","popcorn2_y"],
+          ["popcorn2_c":0,"popcorn2_x":0,"popcorn2_y":0])
+        // var73_separation (4 params, default 0): per-axis branchy sqrt fold.
+        d("separation", ["separation_x","separation_xinside","separation_y","separation_yinside"],
+          ["separation_x":0,"separation_xinside":0,"separation_y":0,"separation_yinside":0])
+        // var81_waves2 (4 params, default 0): ⚠️ DIFFERENT from var15 waves
+        //   (paramless, uses affine c,d,e,f) — waves2 is parametric sinusoidal.
+        d("waves2", ["waves2_freqx","waves2_freqy","waves2_scalex","waves2_scaley"],
+          ["waves2_freqx":0,"waves2_freqy":0,"waves2_scalex":0,"waves2_scaley":0])
+        // var77_wedge (4 params, default 0): ⚠️ DIFFERENT from var78 wedge_julia
+        //   (RNG) and var79 wedge_sph (1/r+EPS) — wedge uses precalc_sqrt directly
+        //   (no 1/r, no EPS); r = weight*(sqrt + hole).
+        d("wedge", ["wedge_angle","wedge_count","wedge_hole","wedge_swirl"],
+          ["wedge_angle":0,"wedge_count":0,"wedge_hole":0,"wedge_swirl":0])
+        // var69_oscope (3 params, default 0): XML name `oscilloscope`, C field
+        //   `oscope_*`. 4th C param oscope_damping NOT exposed (defaults 0 →
+        //   damping=0 branch only; spec contract = 3 params).
+        d("oscilloscope", ["oscilloscope_separation","oscilloscope_frequency","oscilloscope_amplitude"],
+          ["oscilloscope_separation":0,"oscilloscope_frequency":0,"oscilloscope_amplitude":0])
+        // --- End batch 3b (9 variations) ---
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

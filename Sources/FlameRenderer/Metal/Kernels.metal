@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+87+(87*8) = 798 floats = 3192 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+96+(96*8) = 879 floats = 3516 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 87
+#define NUM_XFORM_SLOTS_MS 96
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 87
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 87*8 = 696
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 96
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 96*8 = 768
 };
 
 struct GPUFrameParams {
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 87 variation terms (canonical slot order). Each returns the term that CPU
+// 96 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -696,6 +696,201 @@ static inline float2 v_whorl(float2 p, float w, thread const float* pr) {
     return float2(w * r * cos(a), w * r * sin(a));
 }
 // ---- End batch 3a (9 variations) ----
+// ---- Batch 3b: parametric 3+-params non-RNG (var96/60/65/98/71/73/81/77/69).
+// All parametric (3..8 params, default 0); 0 RNG draws. Formulas ported
+// verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c. ----
+
+// var96_auger (variations.c:1899-1910). 4 params auger_freq/auger_scale/
+// auger_sym/auger_weight, default 0. Parametric; 0 RNG draws.
+//   s = sin(freq·tx); t = sin(freq·ty);
+//   dy = ty + auger_weight*(auger_scale·s/2 + |ty|·s);
+//   dx = tx + auger_weight*(auger_scale·t/2 + |tx|·t);
+//   p0 += weight*(tx + auger_sym*(dx-tx)); p1 += weight*dy.
+// Param order in pr[0..3] = descriptor-declared order: auger_freq, auger_scale,
+// auger_sym, auger_weight.
+static inline float2 v_auger(float2 p, float w, thread const float* pr) {
+    float freq  = pr[0];
+    float scale = pr[1];
+    float sym   = pr[2];
+    float augW  = pr[3];
+    float s = sin(freq * p.x);
+    float t = sin(freq * p.y);
+    float dy = p.y + augW * (scale * s * 0.5f + fabs(p.y) * s);
+    float dx = p.x + augW * (scale * t * 0.5f + fabs(p.x) * t);
+    return float2(w * (p.x + sym * (dx - p.x)),
+                  w * dy);
+}
+// var60_curve (variations.c:1312-1324). 4 params curve_xamp/curve_xlength/
+// curve_yamp/curve_ylength, default 0. Parametric; 0 RNG draws. NOTE the clamp
+// is 1E-20 (NOT EPS — match source; the only place in variations.c using 1E-20).
+//   pc_xlen = xlength²; if (<1E-20) =1E-20; same for pc_ylen.
+//   p0 += w*(tx + xamp·exp(-ty²/pc_xlen)); p1 += w*(ty + yamp·exp(-tx²/pc_ylen)).
+// Param order in pr[0..3] = descriptor-declared order: curve_xamp, curve_xlength,
+// curve_yamp, curve_ylength.
+static inline float2 v_curve(float2 p, float w, thread const float* pr) {
+    float xamp = pr[0];
+    float xlen = pr[1];
+    float yamp = pr[2];
+    float ylen = pr[3];
+    float pc_xlen = xlen * xlen;
+    float pc_ylen = ylen * ylen;
+    if (pc_xlen < 1.0e-20f) pc_xlen = 1.0e-20f;
+    if (pc_ylen < 1.0e-20f) pc_ylen = 1.0e-20f;
+    return float2(w * (p.x + xamp * exp(-p.y * p.y / pc_xlen)),
+                  w * (p.y + yamp * exp(-p.x * p.x / pc_ylen)));
+}
+// var65_lazysusan (variations.c:1428-1461). 5 params lazysusan_space/
+// lazysusan_spin/lazysusan_twist/lazysusan_x/lazysusan_y, default 0.
+// Parametric; 0 RNG draws. ⚠️ ASYMMETRIC SIGNS — match source verbatim:
+//   y = ty + lazysusan_y (PLUS); p1 -= lazysusan_y (MINUS); p0 += lazysusan_x (PLUS).
+//   if (r<weight) { a=atan2(y,x)+spin+twist*(weight-r); r=weight*r;
+//     (r*cos(a)+lsx, r*sin(a)-lsy) }
+//   else { r=weight*(1+space/r); (r*x+lsx, r*y-lsy) }.
+// Param order in pr[0..4] = descriptor-declared order: lazysusan_space,
+// lazysusan_spin, lazysusan_twist, lazysusan_x, lazysusan_y.
+static inline float2 v_lazysusan(float2 p, float w, thread const float* pr) {
+    float space = pr[0];
+    float spin  = pr[1];
+    float twist = pr[2];
+    float lsx   = pr[3];
+    float lsy   = pr[4];
+    float x = p.x - lsx;
+    float y = p.y + lsy;
+    float r = sqrt(x*x + y*y);
+    if (r < w) {
+        float a = atan2(y, x) + spin + twist * (w - r);
+        float rr = w * r;
+        return float2(rr * cos(a) + lsx,
+                      rr * sin(a) - lsy);
+    } else {
+        float rr = w * (1.0f + space / r);
+        return float2(rr * x + lsx,
+                      rr * y - lsy);
+    }
+}
+// var98_mobius (variations.c:1923-1940). 8 params mobius_re_a/b/c/d + im_a/b/c/d,
+// default 0. Parametric; 0 RNG draws. Complex Möbius transform. Uses ALL 8
+// slot params (slotWidth=8 holds them exactly — intraIdx < 8 always true).
+//   re_u = re_a·tx - im_a·ty + re_b;
+//   im_u = re_a·ty + im_a·tx + im_b;
+//   re_v = re_c·tx - im_c·ty + re_d;
+//   im_v = re_c·ty + im_c·tx + im_d;
+//   rad_v = weight / (re_v² + im_v²);
+//   p0 += rad_v·(re_u·re_v + im_u·im_v); p1 += rad_v·(im_u·re_v - re_u·im_v).
+// Param order in pr[0..7] = descriptor-declared order: mobius_re_a, mobius_re_b,
+// mobius_re_c, mobius_re_d, mobius_im_a, mobius_im_b, mobius_im_c, mobius_im_d.
+static inline float2 v_mobius(float2 p, float w, thread const float* pr) {
+    float reA = pr[0];
+    float reB = pr[1];
+    float reC = pr[2];
+    float reD = pr[3];
+    float imA = pr[4];
+    float imB = pr[5];
+    float imC = pr[6];
+    float imD = pr[7];
+    float reU = reA * p.x - imA * p.y + reB;
+    float imU = reA * p.y + imA * p.x + imB;
+    float reV = reC * p.x - imC * p.y + reD;
+    float imV = reC * p.y + imC * p.x + imD;
+    float radV = w / (reV * reV + imV * imV);
+    return float2(radV * (reU * reV + imU * imV),
+                  radV * (imU * reV - reU * imV));
+}
+// var71_popcorn2 (variations.c:1554-1562). 3 params popcorn2_c/popcorn2_x/
+// popcorn2_y, default 0. Parametric; 0 RNG draws.
+//   p0 += w*(tx + popcorn2_x·sin(tan(popcorn2_c·ty)));
+//   p1 += w*(ty + popcorn2_y·sin(tan(popcorn2_c·tx))).
+// Param order in pr[0..2] = descriptor-declared order: popcorn2_c, popcorn2_x,
+// popcorn2_y.
+static inline float2 v_popcorn2(float2 p, float w, thread const float* pr) {
+    float c = pr[0];
+    float x = pr[1];
+    float y = pr[2];
+    return float2(w * (p.x + x * sin(tan(c * p.y))),
+                  w * (p.y + y * sin(tan(c * p.x))));
+}
+// var73_separation (variations.c:1584-1601). 4 params separation_x/separation_xinside/
+// separation_y/separation_yinside, default 0. Parametric; 0 RNG draws.
+//   sx2=separation_x²; sy2=separation_y²;
+//   if (tx>0) p0 += w*(sqrt(tx²+sx2) - tx·xinside); else p0 -= w*(sqrt(tx²+sx2) + tx·xinside);
+//   (same for ty → p1).
+// Param order in pr[0..3] = descriptor-declared order: separation_x,
+// separation_xinside, separation_y, separation_yinside.
+static inline float2 v_separation(float2 p, float w, thread const float* pr) {
+    float sx  = pr[0];
+    float sxi = pr[1];
+    float sy  = pr[2];
+    float syi = pr[3];
+    float sx2 = sx * sx;
+    float sy2 = sy * sy;
+    float p0 = (p.x > 0.0f)
+        ? w * (sqrt(p.x * p.x + sx2) - p.x * sxi)
+        : -w * (sqrt(p.x * p.x + sx2) + p.x * sxi);
+    float p1 = (p.y > 0.0f)
+        ? w * (sqrt(p.y * p.y + sy2) - p.y * syi)
+        : -w * (sqrt(p.y * p.y + sy2) + p.y * syi);
+    return float2(p0, p1);
+}
+// var81_waves2 (variations.c:1735-1741). 4 params waves2_freqx/freqy/scalex/
+// scaley, default 0. Parametric; 0 RNG draws. ⚠️ DIFFERENT from var15 waves
+// (paramless, uses affine c,d,e,f) — waves2 is parametric sinusoidal.
+//   p0 += w*(tx + waves2_scalex·sin(ty·waves2_freqx));
+//   p1 += w*(ty + waves2_scaley·sin(tx·waves2_freqy)).
+// Param order in pr[0..3] = descriptor-declared order: waves2_freqx,
+// waves2_freqy, waves2_scalex, waves2_scaley.
+static inline float2 v_waves2(float2 p, float w, thread const float* pr) {
+    float fx = pr[0];
+    float fy = pr[1];
+    float sx = pr[2];
+    float sy = pr[3];
+    return float2(w * (p.x + sx * sin(p.y * fx)),
+                  w * (p.y + sy * sin(p.x * fy)));
+}
+// var77_wedge (variations.c:1649-1671). 4 params wedge_angle/wedge_count/
+// wedge_hole/wedge_swirl, default 0. Parametric; 0 RNG draws. Uses
+// precalc_sqrt, precalc_atanyx. ⚠️ DIFFERENT from var78 wedge_julia (RNG) and
+// var79 wedge_sph (uses 1/(sqrt+EPS)) — wedge uses precalc_sqrt DIRECTLY.
+//   r = sqrt; a = atanyx + swirl·r;
+//   c = floor((count·a + π)·(1/π)·0.5); comp_fac = 1 - angle·count·(1/π)·0.5;
+//   a = a·comp_fac + c·angle; r = weight·(r + hole); (r·cos(a), r·sin(a)).
+// Param order in pr[0..3] = descriptor-declared order: wedge_angle, wedge_count,
+// wedge_hole, wedge_swirl.
+static inline float2 v_wedge(float2 p, float w, thread const float* pr) {
+    float angle = pr[0];
+    float count = pr[1];
+    float hole  = pr[2];
+    float swirl = pr[3];
+    float r = sqrt(p.x * p.x + p.y * p.y);                       // precalc_sqrt
+    float atanyx = atan2(p.y, p.x);                              // precalc_atanyx
+    float a = atanyx + swirl * r;
+    float c = floor((count * a + M_PI_F) * M_1_PI_F * 0.5f);
+    float comp_fac = 1.0f - angle * count * M_1_PI_F * 0.5f;
+    a = a * comp_fac + c * angle;
+    float rr = w * (r + hole);
+    return float2(rr * cos(a), rr * sin(a));
+}
+// var69_oscope (variations.c:1521-1538). 3 params oscilloscope_separation/
+// oscilloscope_frequency/oscilloscope_amplitude, default 0. Parametric; 0 RNG
+// draws. XML name `oscilloscope`; C struct field is `oscope_*` (parser.c:1140-
+// 1155 maps both forms). 4th C param oscope_damping NOT exposed (defaults 0 →
+// damping=0 branch only).
+//   tpf = 2π·frequency; t = amplitude·cos(tpf·tx) + separation;
+//   if (|ty| <= t) { p0 += w·tx; p1 -= w·ty; } else { p0 += w·tx; p1 += w·ty; }.
+// Param order in pr[0..2] = descriptor-declared order: oscilloscope_separation,
+// oscilloscope_frequency, oscilloscope_amplitude.
+static inline float2 v_oscilloscope(float2 p, float w, thread const float* pr) {
+    float sep  = pr[0];
+    float freq = pr[1];
+    float amp  = pr[2];
+    float tpf = 2.0f * M_PI_F * freq;
+    float t = amp * cos(tpf * p.x) + sep;
+    if (fabs(p.y) <= t) {
+        return float2(w * p.x, -w * p.y);
+    } else {
+        return float2(w * p.x,  w * p.y);
+    }
+}
+// ---- End batch 3b (9 variations) ----
 // var31_noise (variations.c:696-708). TWO isaac_01 draws in EXACT order:
 // (1) angle   tmpr = d1*2π;  sincos(tmpr, &sinr, &cosr)
 // (2) radius  r = w * d2
@@ -1160,7 +1355,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 87 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 96 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
 // flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
 // one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
@@ -1378,6 +1573,57 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // Param order in pr[0..1] = descriptor-declared order: whorl_inside, whorl_outside.
     if (w[86] != 0.0f) acc += v_whorl(pre, w[86], &x.varParams[86*SLOT_WIDTH_MS]);
     // ---- End batch 3a (9 variations) ----
+    // ---- Batch 3b: parametric 3+-params non-RNG (slots 87..95). All
+    // parametric; 0 RNG draws → take `pr` (no `rng`). Slot→name order MUST match
+    // VariationDescriptor.canonicalOrder. ----
+    // slot 87 — auger (var96_auger, 4 params freq/scale/sym/weight default 0;
+    //   sinusoidal dx/dy perturbation, sym-mixed back into tx for p0).
+    // Param order in pr[0..3] = descriptor-declared order: auger_freq, auger_scale,
+    // auger_sym, auger_weight.
+    if (w[87] != 0.0f) acc += v_auger(pre, w[87], &x.varParams[87*SLOT_WIDTH_MS]);
+    // slot 88 — curve (var60_curve, 4 params xamp/xlength/yamp/ylength default 0;
+    //   Gaussian bump per axis; pc_xlen/ylen clamped to 1E-20 NOT EPS).
+    // Param order in pr[0..3] = descriptor-declared order: curve_xamp, curve_xlength,
+    // curve_yamp, curve_ylength.
+    if (w[88] != 0.0f) acc += v_curve(pre, w[88], &x.varParams[88*SLOT_WIDTH_MS]);
+    // slot 89 — lazysusan (var65_lazysusan, 5 params space/spin/twist/x/y default
+    //   0; ⚠️ ASYMMETRIC SIGNS: y=ty+lazysusan_y, p1 -= lazysusan_y).
+    // Param order in pr[0..4] = descriptor-declared order: lazysusan_space,
+    // lazysusan_spin, lazysusan_twist, lazysusan_x, lazysusan_y.
+    if (w[89] != 0.0f) acc += v_lazysusan(pre, w[89], &x.varParams[89*SLOT_WIDTH_MS]);
+    // slot 90 — mobius (var98_mobius, 8 params re_a/b/c/d + im_a/b/c/d default 0;
+    //   uses ALL 8 slot params — slotWidth=8).
+    // Param order in pr[0..7] = descriptor-declared order: mobius_re_a, mobius_re_b,
+    // mobius_re_c, mobius_re_d, mobius_im_a, mobius_im_b, mobius_im_c, mobius_im_d.
+    if (w[90] != 0.0f) acc += v_mobius(pre, w[90], &x.varParams[90*SLOT_WIDTH_MS]);
+    // slot 91 — popcorn2 (var71_popcorn2, 3 params c/x/y default 0;
+    //   p0 += w*(tx + x·sin(tan(c·ty)))).
+    // Param order in pr[0..2] = descriptor-declared order: popcorn2_c, popcorn2_x,
+    // popcorn2_y.
+    if (w[91] != 0.0f) acc += v_popcorn2(pre, w[91], &x.varParams[91*SLOT_WIDTH_MS]);
+    // slot 92 — separation (var73_separation, 4 params x/xinside/y/yinside default
+    //   0; per-axis branchy sqrt fold).
+    // Param order in pr[0..3] = descriptor-declared order: separation_x,
+    // separation_xinside, separation_y, separation_yinside.
+    if (w[92] != 0.0f) acc += v_separation(pre, w[92], &x.varParams[92*SLOT_WIDTH_MS]);
+    // slot 93 — waves2 (var81_waves2, 4 params freqx/freqy/scalex/scaley default 0;
+    //   ⚠️ DIFFERENT from slot 37 waves — waves2 is parametric, not affine-driven).
+    // Param order in pr[0..3] = descriptor-declared order: waves2_freqx,
+    // waves2_freqy, waves2_scalex, waves2_scaley.
+    if (w[93] != 0.0f) acc += v_waves2(pre, w[93], &x.varParams[93*SLOT_WIDTH_MS]);
+    // slot 94 — wedge (var77_wedge, 4 params angle/count/hole/swirl default 0;
+    //   ⚠️ DIFFERENT from slot 31 wedge_julia (RNG) and slot 32 wedge_sph (1/r+EPS)
+    //   — wedge uses precalc_sqrt DIRECTLY).
+    // Param order in pr[0..3] = descriptor-declared order: wedge_angle, wedge_count,
+    // wedge_hole, wedge_swirl.
+    if (w[94] != 0.0f) acc += v_wedge(pre, w[94], &x.varParams[94*SLOT_WIDTH_MS]);
+    // slot 95 — oscilloscope (var69_oscope, 3 params separation/frequency/amplitude
+    //   default 0; XML name `oscilloscope`, C field `oscope_*`; damping=0 branch
+    //   only — 4th C param NOT exposed).
+    // Param order in pr[0..2] = descriptor-declared order: oscilloscope_separation,
+    // oscilloscope_frequency, oscilloscope_amplitude.
+    if (w[95] != 0.0f) acc += v_oscilloscope(pre, w[95], &x.varParams[95*SLOT_WIDTH_MS]);
+    // ---- End batch 3b (9 variations) ----
     return apply_post(x, acc);
 }
 
