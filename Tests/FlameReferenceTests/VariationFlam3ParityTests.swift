@@ -154,6 +154,19 @@ final class VariationFlam3ParityTests: XCTestCase {
             ("loonie",    "linear=\"0.6\" loonie=\"0.5\" \(aff)"),
             ("polar2",    "linear=\"0.6\" polar2=\"0.5\" \(aff)"),
             ("scry",      "linear=\"0.6\" scry=\"0.5\" \(aff)"),
+            // --- Work A batch 3a: parametric ≤2-params non-RNG
+            // (var54/55/58/63/97/68/75/76/80). Each MUST clear the ≥38 dB gate
+            // (enforced below), not diagnostic. NONZERO params required (the
+            // flam3 defaults are all 0 and degenerate for cell/modulus). ---
+            ("bent2",   "linear=\"0.6\" bent2=\"0.5\" bent2_x=\"0.5\" bent2_y=\"0.4\" \(aff)"),
+            ("bipolar", "linear=\"0.6\" bipolar=\"0.5\" bipolar_shift=\"0.5\" \(aff)"),
+            ("cell",    "linear=\"0.6\" cell=\"0.5\" cell_size=\"1.0\" \(aff)"),
+            ("escher",  "linear=\"0.6\" escher=\"0.5\" escher_beta=\"0.5\" \(aff)"),
+            ("flux",    "linear=\"0.6\" flux=\"0.5\" flux_spread=\"0.5\" \(aff)"),
+            ("modulus", "linear=\"0.6\" modulus=\"0.5\" modulus_x=\"1.0\" modulus_y=\"1.0\" \(aff)"),
+            ("splits",  "linear=\"0.6\" splits=\"0.5\" splits_x=\"0.3\" splits_y=\"0.2\" \(aff)"),
+            ("stripes", "linear=\"0.6\" stripes=\"0.5\" stripes_space=\"0.5\" stripes_warp=\"0.5\" \(aff)"),
+            ("whorl",   "linear=\"0.6\" whorl=\"0.5\" whorl_inside=\"0.3\" whorl_outside=\"0.5\" \(aff)"),
             // --- large/non-contracting affine probe (242.00099's waves-xform
             // coefs). If linear_LRG diverges but small-affine linear passed,
             // the trigger is large-affine iteration handling (badvalue
@@ -195,6 +208,9 @@ final class VariationFlam3ParityTests: XCTestCase {
             "sinh", "cosh", "tanh", "sech", "csch", "coth",
             // Work A batch 2: paramless non-trig.
             "butterfly", "edisc", "elliptic", "foci", "loonie", "polar2", "scry",
+            // Work A batch 3a: parametric ≤2-params non-RNG.
+            "bent2", "bipolar", "cell", "escher", "flux", "modulus",
+            "splits", "stripes", "whorl",
         ]
         var gateFailures: [String] = []
         for label in cases.map({ $0.0 }) where workA.contains(label) {

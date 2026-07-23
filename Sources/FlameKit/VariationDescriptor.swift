@@ -1,6 +1,6 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 78-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 87-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
@@ -11,7 +11,7 @@ import Foundation
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 78-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 87-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 78-device-slot layout) ----
-    /// Fixed 78-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 87-device-slot layout) ----
+    /// Fixed 87-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -47,8 +47,10 @@ public struct VariationDescriptor: Sendable {
     /// disc2_twist default 0, precalc inlined) at slots 55..56. The 2 final
     /// slots brought Emberweft to 57/99 (100% of the variations that appear
     /// in the 23k-genome corpus survey); the trig family var82–95 (slots
-    /// 57..70) extends Emberweft to 71/99, and the paramless non-trig family
-    /// (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to 78/99.
+    /// 57..70) extends Emberweft to 71/99, the paramless non-trig family
+    /// (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to 78/99,
+    /// and the parametric ≤2-params non-RNG family (var54/55/58/63/97/68/75/
+    /// 76/80, slots 78..86) extends Emberweft to 87/99.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -201,8 +203,47 @@ public struct VariationDescriptor: Sendable {
         // var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS)));
         //   (tx*r, ty*r). Note: weight folded only inside 1/(w+EPS).
         "scry",
+        // ---- Batch 3a: parametric ≤2-params non-RNG (var54/55/58/63/97/68/75/
+        // 76/80; slots 78..86) ----
+        // All parametric (1 or 2 params, ALL defaults 0); 0 RNG draws. Formulas
+        // ported verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c
+        // L1164-1730. Brings Emberweft to 87/99 variations.
+        // var54_bent2: 2 params bent2_x/bent2_y; nx*=bent2_x if nx<0, ny*=bent2_y
+        //   if ny<0; (w*nx, w*ny).
+        "bent2",
+        // var55_bipolar: 1 param bipolar_shift; uses precalc_sumsq;
+        //   ps=-π/2*shift; y=0.5*atan2(2ty, sumsq-1)+ps; wrap to [-π/2,π/2];
+        //   p0=w*0.25*(2/π)*log((t+x2)/(t-x2)); p1=w*(2/π)*y.
+        "bipolar",
+        // var58_cell: 1 param cell_size; int x=floor(tx/cs),y=floor(ty/cs);
+        //   interleave cells by quadrant; NOTE p1 SUBTRACTS: p0=w*(dx+x*cs),
+        //   p1=-(w*(dy+y*cs)).
+        "cell",
+        // var63_escher: 1 param escher_beta; uses precalc_sumsq, precalc_atanyx;
+        //   vc=0.5*(1+cosβ), vd=0.5*sinβ; m=w*exp(vc*lnr-vd*a);
+        //   n=vc*a+vd*lnr; (m*cos n, m*sin n).
+        "escher",
+        // var97_flux: 1 param flux_spread; xpw=tx+w, xmw=tx-w;
+        //   avgr=w*(2+spread)*sqrt(sqrt(ty²+xpw²)/sqrt(ty²+xmw²));
+        //   avga=(atan2(ty,xmw)-atan2(ty,xpw))*0.5; (avgr*cos avga, avgr*sin avga).
+        "flux",
+        // var68_modulus: 2 params modulus_x/y; xr=2*mx, yr=2*my; branchy fold
+        //   of tx/ty back into [-mx,mx]/[-my,my] via fmod; (w*nx, w*ny).
+        "modulus",
+        // var75_splits: 2 params splits_x/y. ⚠️ DIFFERENT from var74 split —
+        //   adds ±splits_x/y by sign of tx/ty: (w*(tx±sx), w*(ty±sy)).
+        "splits",
+        // var76_stripes: 2 params stripes_space/stripes_warp;
+        //   roundx=floor(tx+0.5); offsetx=tx-roundx;
+        //   p0=w*(offsetx*(1-space)+roundx); p1=w*(ty+offsetx²*warp).
+        "stripes",
+        // var80_whorl: 2 params whorl_inside/whorl_outside; uses precalc_sqrt,
+        //   precalc_atanyx; if r<w: a=θ+inside/(w-r) else a=θ+outside/(w-r);
+        //   (w*r*cos a, w*r*sin a). NOTE: weight is in the denominator (non-
+        //   standard; singular at r==weight — match flam3).
+        "whorl",
     ]
-    /// Canonical device-slot index for a variation name (0..<78), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<87), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -378,6 +419,43 @@ public struct VariationDescriptor: Sendable {
         d("polar2", [], [:])
         d("scry", [], [:])
         // --- End batch 2 (7 variations) ---
+        // --- Batch 3a: parametric ≤2-params non-RNG (9 variations). All
+        //     parametric; 0 RNG draws → live in the closure table, NOT
+        //     `evaluate`'s switch. Formulas ported verbatim from
+        //     /Users/frederic/flam3-oracle-src/flam3/variations.c. flam3
+        //     `clear_cp` does NOT initialize ANY of these params (memset(0) in
+        //     parser.c:229 wins) → missing XML attrs parse as 0, exactly like
+        //     pdj/split. ---
+        // var54_bent2 (2 params, default 0): nx*=bent2_x if nx<0; ny*=bent2_y if ny<0.
+        d("bent2", ["bent2_x","bent2_y"],
+          ["bent2_x":0,"bent2_y":0])
+        // var55_bipolar (1 param, default 0): uses precalc_sumsq; ps=-π/2*shift;
+        //   y=0.5*atan2(2ty, sumsq-1)+ps, wrapped to [-π/2,π/2].
+        d("bipolar", ["bipolar_shift"],
+          ["bipolar_shift":0])
+        // var58_cell (1 param, default 0): int-cell interleave; p1 SUBTRACTS.
+        d("cell", ["cell_size"],
+          ["cell_size":0])
+        // var63_escher (1 param, default 0): complex-log-power; precalc_sumsq/atanyx.
+        d("escher", ["escher_beta"],
+          ["escher_beta":0])
+        // var97_flux (1 param, default 0): xpw=tx+w, xmw=tx-w.
+        d("flux", ["flux_spread"],
+          ["flux_spread":0])
+        // var68_modulus (2 params, default 0): branchy fmod fold.
+        d("modulus", ["modulus_x","modulus_y"],
+          ["modulus_x":0,"modulus_y":0])
+        // var75_splits (2 params, default 0): ⚠️ DIFFERENT from var74 split
+        //   (split_xsize/ysize). Adds ±splits_x/y by sign of tx/ty.
+        d("splits", ["splits_x","splits_y"],
+          ["splits_x":0,"splits_y":0])
+        // var76_stripes (2 params, default 0): roundx=floor(tx+0.5).
+        d("stripes", ["stripes_space","stripes_warp"],
+          ["stripes_space":0,"stripes_warp":0])
+        // var80_whorl (2 params, default 0): weight in denominator (non-standard).
+        d("whorl", ["whorl_inside","whorl_outside"],
+          ["whorl_inside":0,"whorl_outside":0])
+        // --- End batch 3a (9 variations) ---
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

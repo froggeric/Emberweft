@@ -143,6 +143,31 @@ public enum Variations {
         "polar2",
         // var72_scry: t=sumsq; r=1/(sqrt*(t+1/(w+EPS))); (tx*r, ty*r)
         "scry",
+        // ---- Batch 3a: parametric ≤2-params non-RNG (var54/55/58/63/97/68/75/
+        // 76/80) ----
+        // All parametric (1 or 2 params, all default 0); 0 RNG draws → live in
+        // the table closures, NOT `evaluate`'s switch. Formulas ported verbatim
+        // from /Users/frederic/flam3-oracle-src/flam3/variations.c.
+        // var54_bent2: 2 params bent2_x/y; nx*=x if nx<0, ny*=y if ny<0.
+        "bent2",
+        // var55_bipolar: 1 param bipolar_shift; uses precalc_sumsq;
+        //   ps=-π/2*shift; y=0.5*atan2(2ty,sumsq-1)+ps wrapped to [-π/2,π/2].
+        "bipolar",
+        // var58_cell: 1 param cell_size; int-cell interleave; p1 SUBTRACTS.
+        "cell",
+        // var63_escher: 1 param escher_beta; complex-log-power (sumsq,atanyx).
+        "escher",
+        // var97_flux: 1 param flux_spread; xpw=tx+w, xmw=tx-w.
+        "flux",
+        // var68_modulus: 2 params modulus_x/y; branchy fmod fold into [-m,m].
+        "modulus",
+        // var75_splits: 2 params splits_x/y; ⚠️ DIFFERENT from var74 split.
+        //   Adds ±splits_x/y by sign of tx/ty.
+        "splits",
+        // var76_stripes: 2 params stripes_space/warp; roundx=floor(tx+0.5).
+        "stripes",
+        // var80_whorl: 2 params whorl_inside/outside; weight in denominator.
+        "whorl",
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -1298,6 +1323,182 @@ public enum Variations {
             r = w * (r + hole)
             return SIMD2(r * cos(a), r * sin(a))
         }
+        // ---- Batch 3a: parametric ≤2-params non-RNG (var54/55/58/63/97/68/75/
+        // 76/80). All parametric (1 or 2 params, default 0); 0 RNG draws → live
+        // in the table closures, NOT `evaluate`'s switch. Formulas ported
+        // verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c
+        // (line numbers cited per closure). ----
+
+        // var54_bent2 (variations.c:1164-1174). 2 params bent2_x/bent2_y,
+        // default 0. Parametric; 0 RNG draws. nx*=x if nx<0, ny*=y if ny<0.
+        //   nx = tx; ny = ty;
+        //   if (nx<0) nx *= bent2_x; if (ny<0) ny *= bent2_y;
+        //   p0 += w*nx; p1 += w*ny.
+        // Param order in par = descriptor-declared order: bent2_x, bent2_y.
+        t["bent2"]        = { p, w, par, _ in
+            let bx = resolve("bent2", "bent2_x", par)
+            let by = resolve("bent2", "bent2_y", par)
+            var nx = p.x, ny = p.y
+            if nx < 0 { nx *= bx }
+            if ny < 0 { ny *= by }
+            return SIMD2(w * nx, w * ny)
+        }
+        // var55_bipolar (variations.c:1180-1196). 1 param bipolar_shift, default
+        // 0. Parametric; 0 RNG draws. Uses precalc_sumsq. M_2_PI = 2/π, M_PI_2 = π/2.
+        //   x2y2 = sumsq; t = x2y2+1; x2 = 2*tx;
+        //   ps = -π/2 * shift;
+        //   y   = 0.5 * atan2(2*ty, sumsq-1) + ps;
+        //   if (y> π/2) y = -π/2 + fmod(y+π/2, π);  else if (y<-π/2) y = π/2 - fmod(π/2-y, π);
+        //   p0 += w*0.25*(2/π) * log((t+x2)/(t-x2));
+        //   p1 += w*(2/π) * y.
+        t["bipolar"]      = { p, w, par, _ in
+            let shift = resolve("bipolar", "bipolar_shift", par)
+            let sumsq = p.x*p.x + p.y*p.y
+            let t = sumsq + 1.0
+            let x2 = 2.0 * p.x
+            let ps = -.pi / 2.0 * shift
+            var y = 0.5 * atan2(2.0 * p.y, sumsq - 1.0) + ps
+            if y > .pi / 2.0 {
+                y = -.pi / 2.0 + (y + .pi / 2.0).truncatingRemainder(dividingBy: .pi)
+            } else if y < -.pi / 2.0 {
+                y = .pi / 2.0 - (.pi / 2.0 - y).truncatingRemainder(dividingBy: .pi)
+            }
+            let p0 = w * 0.25 * (2.0 / .pi) * log((t + x2) / (t - x2))
+            let p1 = w * (2.0 / .pi) * y
+            return SIMD2(p0, p1)
+        }
+        // var58_cell (variations.c:1253-1290). 1 param cell_size, default 0.
+        // Parametric; 0 RNG draws. NOTE p1 SUBTRACTS (mirror the C source):
+        //   inv = 1/cell_size; int x=floor(tx*inv), y=floor(ty*inv);
+        //   dx = tx-x*cs; dy = ty-y*cs;
+        //   if (y>=0)  { if (x>=0) { y*=2; x*=2; } else { y*=2; x=-(2x+1); } }
+        //   else       { if (x>=0) { y=-(2y+1); x*=2; } else { y=-(2y+1); x=-(2x+1); } }
+        //   p0 += w*(dx + x*cs);  p1 -= w*(dy + y*cs).
+        t["cell"]         = { p, w, par, _ in
+            let cs = resolve("cell", "cell_size", par)
+            let inv = 1.0 / cs
+            var x = Int(floor(p.x * inv))
+            var y = Int(floor(p.y * inv))
+            let dx = p.x - Double(x) * cs
+            let dy = p.y - Double(y) * cs
+            if y >= 0 {
+                if x >= 0 { y *= 2; x *= 2 }
+                else      { y *= 2; x = -(2 * x + 1) }
+            } else {
+                if x >= 0 { y = -(2 * y + 1); x *= 2 }
+                else      { y = -(2 * y + 1); x = -(2 * x + 1) }
+            }
+            return SIMD2(w * (dx + Double(x) * cs),
+                         -w * (dy + Double(y) * cs))
+        }
+        // var63_escher (variations.c:1385-1403). 1 param escher_beta, default 0.
+        // Parametric; 0 RNG draws. Uses precalc_sumsq, precalc_atanyx.
+        //   a = atanyx; lnr = 0.5*log(sumsq); sincos(β, &seb, &ceb);
+        //   vc = 0.5*(1+ceb); vd = 0.5*seb;
+        //   m = w*exp(vc*lnr - vd*a); n = vc*a + vd*lnr;
+        //   p0 += m*cos(n); p1 += m*sin(n).
+        t["escher"]       = { p, w, par, _ in
+            let beta = resolve("escher", "escher_beta", par)
+            let sumsq = p.x*p.x + p.y*p.y
+            let a = atan2(p.y, p.x)                              // precalc_atanyx
+            let lnr = 0.5 * log(sumsq)
+            let ceb = cos(beta), seb = sin(beta)                 // sincos(β)
+            let vc = 0.5 * (1.0 + ceb)
+            let vd = 0.5 * seb
+            let m = w * exp(vc * lnr - vd * a)
+            let n = vc * a + vd * lnr
+            return SIMD2(m * cos(n), m * sin(n))
+        }
+        // var97_flux (variations.c:1911-1922). 1 param flux_spread, default 0.
+        // Parametric; 0 RNG draws. Uses weight in the formula itself (not just
+        // as outer multiplier).
+        //   xpw = tx+w; xmw = tx-w;
+        //   avgr = w*(2+spread) * sqrt( sqrt(ty²+xpw²) / sqrt(ty²+xmw²) );
+        //   avga = (atan2(ty,xmw) - atan2(ty,xpw)) * 0.5;
+        //   p0 += avgr*cos(avga); p1 += avgr*sin(avga).
+        t["flux"]         = { p, w, par, _ in
+            let spread = resolve("flux", "flux_spread", par)
+            let xpw = p.x + w
+            let xmw = p.x - w
+            let avgr = w * (2.0 + spread)
+                     * ((p.y*p.y + xpw*xpw).squareRoot() / (p.y*p.y + xmw*xmw).squareRoot()).squareRoot()
+            let avga = (atan2(p.y, xmw) - atan2(p.y, xpw)) * 0.5
+            return SIMD2(avgr * cos(avga), avgr * sin(avga))
+        }
+        // var68_modulus (variations.c:1498-1515). 2 params modulus_x/modulus_y,
+        // default 0. Parametric; 0 RNG draws. Branchy fmod fold into [-m,m].
+        //   xr=2*mx; yr=2*my;
+        //   if (tx>mx)      p0 += w*(-mx + fmod(tx+mx, xr));
+        //   else if (tx<-mx) p0 += w*( mx - fmod(mx-tx, xr));
+        //   else             p0 += w*tx;
+        //   (same for ty → p1).
+        t["modulus"]      = { p, w, par, _ in
+            let mx = resolve("modulus", "modulus_x", par)
+            let my = resolve("modulus", "modulus_y", par)
+            let xr = 2.0 * mx
+            let yr = 2.0 * my
+            var p0 = 0.0, p1 = 0.0
+            if p.x > mx {
+                p0 += w * (-mx + (p.x + mx).truncatingRemainder(dividingBy: xr))
+            } else if p.x < -mx {
+                p0 += w * ( mx - (mx - p.x).truncatingRemainder(dividingBy: xr))
+            } else {
+                p0 += w * p.x
+            }
+            if p.y > my {
+                p1 += w * (-my + (p.y + my).truncatingRemainder(dividingBy: yr))
+            } else if p.y < -my {
+                p1 += w * ( my - (my - p.y).truncatingRemainder(dividingBy: yr))
+            } else {
+                p1 += w * p.y
+            }
+            return SIMD2(p0, p1)
+        }
+        // var75_splits (variations.c:1619-1633). 2 params splits_x/splits_y,
+        // default 0. Parametric; 0 RNG draws. ⚠️ DIFFERENT variation from
+        // var74 split (split_xsize/ysize) — adds ±splits_x/y by sign of tx/ty.
+        //   if (tx>=0) p0 += w*(tx+splits_x); else p0 += w*(tx-splits_x);
+        //   if (ty>=0) p1 += w*(ty+splits_y); else p1 += w*(ty-splits_y).
+        t["splits"]       = { p, w, par, _ in
+            let sx = resolve("splits", "splits_x", par)
+            let sy = resolve("splits", "splits_y", par)
+            let p0 = p.x >= 0 ? w * (p.x + sx) : w * (p.x - sx)
+            let p1 = p.y >= 0 ? w * (p.y + sy) : w * (p.y - sy)
+            return SIMD2(p0, p1)
+        }
+        // var76_stripes (variations.c:1635-1645). 2 params stripes_space/
+        // stripes_warp, default 0. Parametric; 0 RNG draws.
+        //   roundx = floor(tx+0.5); offsetx = tx-roundx;
+        //   p0 += w*(offsetx*(1-space) + roundx);
+        //   p1 += w*(ty + offsetx²*warp).
+        t["stripes"]      = { p, w, par, _ in
+            let space = resolve("stripes", "stripes_space", par)
+            let warp  = resolve("stripes", "stripes_warp", par)
+            let roundx = floor(p.x + 0.5)
+            let offsetx = p.x - roundx
+            return SIMD2(w * (offsetx * (1.0 - space) + roundx),
+                         w * (p.y + offsetx * offsetx * warp))
+        }
+        // var80_whorl (variations.c:1710-1728). 2 params whorl_inside/
+        // whorl_outside, default 0. Parametric; 0 RNG draws. Uses precalc_sqrt,
+        // precalc_atanyx. !!! flam3 note: weight is used NON-STANDARD fashion
+        // (in the denominator); r==weight is a singularity — match flam3 (NO
+        // EPS guard; the chaos game's badvalue check handles Inf downstream).
+        //   r = sqrt;
+        //   if (r<weight) a = atanyx + whorl_inside /(weight-r);
+        //   else          a = atanyx + whorl_outside/(weight-r);
+        //   p0 += w*r*cos(a); p1 += w*r*sin(a).
+        t["whorl"]        = { p, w, par, _ in
+            let inside  = resolve("whorl", "whorl_inside", par)
+            let outside = resolve("whorl", "whorl_outside", par)
+            let r = (p.x*p.x + p.y*p.y).squareRoot()           // precalc_sqrt
+            let atanyx = atan2(p.y, p.x)                        // precalc_atanyx
+            let a = r < w
+                ? atanyx + inside  / (w - r)
+                : atanyx + outside / (w - r)
+            return SIMD2(w * r * cos(a), w * r * sin(a))
+        }
+        // ---- End batch 3a (9 variations, slots 78..86) ----
         return t
     }()
 }

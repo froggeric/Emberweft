@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+78+(78*8) = 717 floats = 2868 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+87+(87*8) = 798 floats = 3192 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 78
+#define NUM_XFORM_SLOTS_MS 87
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 78
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 78*8 = 624
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 87
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 87*8 = 696
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 78 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 87 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 78 variation terms (canonical slot order). Each returns the term that CPU
+// 87 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -557,6 +557,145 @@ static inline float2 v_disc2(float2 p, float w, thread const float* pr) {
     float r = w * atan2(p.x, p.y) / M_PI_F;                    // atan2(x,y) flam3 order
     return float2((sinr + cosadd) * r, (cosr + sinadd) * r);
 }
+// ---- Batch 3a: parametric ≤2-params non-RNG (var54/55/58/63/97/68/75/76/80).
+// All parametric (1 or 2 params, default 0); 0 RNG draws. Formulas ported
+// verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c. ----
+
+// var54_bent2 (variations.c:1164-1174). 2 params bent2_x/y, default 0.
+// Parametric; 0 RNG draws. nx*=x if nx<0; ny*=y if ny<0.
+// Param order in pr[0..1] = descriptor-declared order: bent2_x, bent2_y.
+static inline float2 v_bent2(float2 p, float w, thread const float* pr) {
+    float bx = pr[0], by = pr[1];
+    float nx = p.x, ny = p.y;
+    if (nx < 0.0f) nx *= bx;
+    if (ny < 0.0f) ny *= by;
+    return float2(w * nx, w * ny);
+}
+// var55_bipolar (variations.c:1180-1196). 1 param bipolar_shift, default 0.
+// Parametric; 0 RNG draws. Uses precalc_sumsq. M_PI_2 = π/2, M_2_PI = 2/π.
+// Param order in pr[0] = descriptor-declared order: bipolar_shift.
+static inline float2 v_bipolar(float2 p, float w, thread const float* pr) {
+    float shift = pr[0];
+    float sumsq = p.x*p.x + p.y*p.y;
+    float t = sumsq + 1.0f;
+    float x2 = 2.0f * p.x;
+    float ps = -M_PI_F * 0.5f * shift;                         // -π/2 * shift
+    float y = 0.5f * atan2(2.0f * p.y, sumsq - 1.0f) + ps;
+    if (y > M_PI_F * 0.5f) {
+        y = -M_PI_F * 0.5f + fmod(y + M_PI_F * 0.5f, M_PI_F);
+    } else if (y < -M_PI_F * 0.5f) {
+        y = M_PI_F * 0.5f - fmod(M_PI_F * 0.5f - y, M_PI_F);
+    }
+    float p0 = w * 0.25f * (2.0f / M_PI_F) * log((t + x2) / (t - x2));
+    float p1 = w * (2.0f / M_PI_F) * y;
+    return float2(p0, p1);
+}
+// var58_cell (variations.c:1253-1290). 1 param cell_size, default 0.
+// Parametric; 0 RNG draws. NOTE p1 SUBTRACTS (mirror the C source).
+// Param order in pr[0] = descriptor-declared order: cell_size.
+static inline float2 v_cell(float2 p, float w, thread const float* pr) {
+    float cs = pr[0];
+    float inv = 1.0f / cs;
+    int x = (int)floor(p.x * inv);
+    int y = (int)floor(p.y * inv);
+    float dx = p.x - (float)x * cs;
+    float dy = p.y - (float)y * cs;
+    if (y >= 0) {
+        if (x >= 0) { y *= 2; x *= 2; }
+        else        { y *= 2; x = -(2 * x + 1); }
+    } else {
+        if (x >= 0) { y = -(2 * y + 1); x *= 2; }
+        else        { y = -(2 * y + 1); x = -(2 * x + 1); }
+    }
+    return float2(w * (dx + (float)x * cs),
+                  -w * (dy + (float)y * cs));
+}
+// var63_escher (variations.c:1385-1403). 1 param escher_beta, default 0.
+// Parametric; 0 RNG draws. Uses precalc_sumsq, precalc_atanyx.
+// Param order in pr[0] = descriptor-declared order: escher_beta.
+static inline float2 v_escher(float2 p, float w, thread const float* pr) {
+    float beta = pr[0];
+    float sumsq = p.x*p.x + p.y*p.y;
+    float a = atan2(p.y, p.x);                                 // precalc_atanyx
+    float lnr = 0.5f * log(sumsq);
+    float ceb = cos(beta), seb = sin(beta);                    // sincos(β)
+    float vc = 0.5f * (1.0f + ceb);
+    float vd = 0.5f * seb;
+    float m = w * exp(vc * lnr - vd * a);
+    float n = vc * a + vd * lnr;
+    return float2(m * cos(n), m * sin(n));
+}
+// var97_flux (variations.c:1911-1922). 1 param flux_spread, default 0.
+// Parametric; 0 RNG draws. Uses weight in the formula itself.
+// Param order in pr[0] = descriptor-declared order: flux_spread.
+static inline float2 v_flux(float2 p, float w, thread const float* pr) {
+    float spread = pr[0];
+    float xpw = p.x + w;
+    float xmw = p.x - w;
+    float avgr = w * (2.0f + spread)
+               * sqrt( sqrt(p.y*p.y + xpw*xpw) / sqrt(p.y*p.y + xmw*xmw) );
+    float avga = (atan2(p.y, xmw) - atan2(p.y, xpw)) * 0.5f;
+    return float2(avgr * cos(avga), avgr * sin(avga));
+}
+// var68_modulus (variations.c:1498-1515). 2 params modulus_x/y, default 0.
+// Parametric; 0 RNG draws. Branchy fmod fold into [-m,m].
+// Param order in pr[0..1] = descriptor-declared order: modulus_x, modulus_y.
+static inline float2 v_modulus(float2 p, float w, thread const float* pr) {
+    float mx = pr[0], my = pr[1];
+    float xr = 2.0f * mx;
+    float yr = 2.0f * my;
+    float p0 = 0.0f, p1 = 0.0f;
+    if (p.x > mx) {
+        p0 += w * (-mx + fmod(p.x + mx, xr));
+    } else if (p.x < -mx) {
+        p0 += w * ( mx - fmod(mx - p.x, xr));
+    } else {
+        p0 += w * p.x;
+    }
+    if (p.y > my) {
+        p1 += w * (-my + fmod(p.y + my, yr));
+    } else if (p.y < -my) {
+        p1 += w * ( my - fmod(my - p.y, yr));
+    } else {
+        p1 += w * p.y;
+    }
+    return float2(p0, p1);
+}
+// var75_splits (variations.c:1619-1633). 2 params splits_x/y, default 0.
+// Parametric; 0 RNG draws. ⚠️ DIFFERENT from var74 split (split_xsize/ysize) —
+// adds ±splits_x/y by sign of tx/ty.
+// Param order in pr[0..1] = descriptor-declared order: splits_x, splits_y.
+static inline float2 v_splits(float2 p, float w, thread const float* pr) {
+    float sx = pr[0], sy = pr[1];
+    float p0 = (p.x >= 0.0f) ? w * (p.x + sx) : w * (p.x - sx);
+    float p1 = (p.y >= 0.0f) ? w * (p.y + sy) : w * (p.y - sy);
+    return float2(p0, p1);
+}
+// var76_stripes (variations.c:1635-1645). 2 params stripes_space/warp, default 0.
+// Parametric; 0 RNG draws. roundx=floor(tx+0.5).
+// Param order in pr[0..1] = descriptor-declared order: stripes_space, stripes_warp.
+static inline float2 v_stripes(float2 p, float w, thread const float* pr) {
+    float space = pr[0], warp = pr[1];
+    float roundx = floor(p.x + 0.5f);
+    float offsetx = p.x - roundx;
+    return float2(w * (offsetx * (1.0f - space) + roundx),
+                  w * (p.y + offsetx * offsetx * warp));
+}
+// var80_whorl (variations.c:1710-1728). 2 params whorl_inside/outside, default 0.
+// Parametric; 0 RNG draws. Uses precalc_sqrt, precalc_atanyx. flam3 NOTE:
+// weight is used NON-STANDARD (in the denominator); r==weight is a singularity
+// — match flam3 (NO EPS guard; chaos-game badvalue handles Inf downstream).
+// Param order in pr[0..1] = descriptor-declared order: whorl_inside, whorl_outside.
+static inline float2 v_whorl(float2 p, float w, thread const float* pr) {
+    float inside = pr[0], outside = pr[1];
+    float r = sqrt(p.x*p.x + p.y*p.y);                         // precalc_sqrt
+    float atanyx = atan2(p.y, p.x);                             // precalc_atanyx
+    float a = (r < w)
+        ? atanyx + inside  / (w - r)
+        : atanyx + outside / (w - r);
+    return float2(w * r * cos(a), w * r * sin(a));
+}
+// ---- End batch 3a (9 variations) ----
 // var31_noise (variations.c:696-708). TWO isaac_01 draws in EXACT order:
 // (1) angle   tmpr = d1*2π;  sincos(tmpr, &sinr, &cosr)
 // (2) radius  r = w * d2
@@ -1021,7 +1160,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 78 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 87 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
 // flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
 // one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
@@ -1205,6 +1344,40 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // and |twist|>2π scaling branches — is inlined into v_disc2).
     // Param order in pr[0..1] = descriptor-declared order: disc2_rot, disc2_twist.
     if (w[56] != 0.0f) acc += v_disc2(pre, w[56], &x.varParams[56*SLOT_WIDTH_MS]);
+    // ---- Batch 3a: parametric ≤2-params non-RNG (slots 78..86). All
+    // parametric; 0 RNG draws → take `pr` (no `rng`). Slot→name order MUST match
+    // VariationDescriptor.canonicalOrder. ----
+    // slot 78 — bent2 (var54_bent2, 2 params bent2_x/y default 0; nx*=x if nx<0).
+    // Param order in pr[0..1] = descriptor-declared order: bent2_x, bent2_y.
+    if (w[78] != 0.0f) acc += v_bent2(pre, w[78], &x.varParams[78*SLOT_WIDTH_MS]);
+    // slot 79 — bipolar (var55_bipolar, 1 param bipolar_shift default 0; sumsq + log).
+    // Param order in pr[0] = descriptor-declared order: bipolar_shift.
+    if (w[79] != 0.0f) acc += v_bipolar(pre, w[79], &x.varParams[79*SLOT_WIDTH_MS]);
+    // slot 80 — cell (var58_cell, 1 param cell_size default 0; int-cell interleave,
+    //   p1 SUBTRACTS).
+    // Param order in pr[0] = descriptor-declared order: cell_size.
+    if (w[80] != 0.0f) acc += v_cell(pre, w[80], &x.varParams[80*SLOT_WIDTH_MS]);
+    // slot 81 — escher (var63_escher, 1 param escher_beta default 0; complex-log-power).
+    // Param order in pr[0] = descriptor-declared order: escher_beta.
+    if (w[81] != 0.0f) acc += v_escher(pre, w[81], &x.varParams[81*SLOT_WIDTH_MS]);
+    // slot 82 — flux (var97_flux, 1 param flux_spread default 0; xpw/xmw=tx±w).
+    // Param order in pr[0] = descriptor-declared order: flux_spread.
+    if (w[82] != 0.0f) acc += v_flux(pre, w[82], &x.varParams[82*SLOT_WIDTH_MS]);
+    // slot 83 — modulus (var68_modulus, 2 params modulus_x/y default 0; fmod fold).
+    // Param order in pr[0..1] = descriptor-declared order: modulus_x, modulus_y.
+    if (w[83] != 0.0f) acc += v_modulus(pre, w[83], &x.varParams[83*SLOT_WIDTH_MS]);
+    // slot 84 — splits (var75_splits, 2 params splits_x/y default 0;
+    //   ⚠️ DIFFERENT from slot 43 split — adds ±splits_x/y by sign of tx/ty).
+    // Param order in pr[0..1] = descriptor-declared order: splits_x, splits_y.
+    if (w[84] != 0.0f) acc += v_splits(pre, w[84], &x.varParams[84*SLOT_WIDTH_MS]);
+    // slot 85 — stripes (var76_stripes, 2 params stripes_space/warp default 0).
+    // Param order in pr[0..1] = descriptor-declared order: stripes_space, stripes_warp.
+    if (w[85] != 0.0f) acc += v_stripes(pre, w[85], &x.varParams[85*SLOT_WIDTH_MS]);
+    // slot 86 — whorl (var80_whorl, 2 params whorl_inside/outside default 0;
+    //   weight in denominator — singular at r==weight, match flam3).
+    // Param order in pr[0..1] = descriptor-declared order: whorl_inside, whorl_outside.
+    if (w[86] != 0.0f) acc += v_whorl(pre, w[86], &x.varParams[86*SLOT_WIDTH_MS]);
+    // ---- End batch 3a (9 variations) ----
     return apply_post(x, acc);
 }
 

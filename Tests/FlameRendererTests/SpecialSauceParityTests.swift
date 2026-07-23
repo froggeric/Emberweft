@@ -167,6 +167,55 @@ final class SpecialSauceParityTests: XCTestCase {
         try assertParity("split", ["split_xsize": 0.3, "split_ysize": 0.4])
     }
 
+    // ---- Batch 3a: parametric ≤2-params non-RNG (var54/55/58/63/97/68/75/76/80,
+    // slots 78..86). All parametric; 0 RNG draws. NONZERO params (defaults are 0
+    // and degenerate for cell/modulus). weight=0.4 tames any Float-vs-Double
+    // orbit divergence (the radial_blur/noise precedent) — the MSL ports are
+    // byte-faithful to the CPU closures; this test only verifies Metal↔CPU
+    // agreement. The closed-form CPU behavior is pinned by VariationsTests. ----
+
+    // var54_bent2: 2 params bent2_x/y; sign-conditional affine fold of nx, ny.
+    @MainActor func testBent2() throws {
+        try assertParity("bent2", ["bent2_x": 0.5, "bent2_y": 0.4], weight: 0.4)
+    }
+    // var55_bipolar: 1 param bipolar_shift; sumsq + log + atan2 with y-wrap.
+    @MainActor func testBipolar() throws {
+        try assertParity("bipolar", ["bipolar_shift": 0.5], weight: 0.4)
+    }
+    // var58_cell: 1 param cell_size; int-cell interleave (p1 SUBTRACTS). A
+    // nonzero cell_size is mandatory (default 0 → 1/0 = inf → Int trap).
+    @MainActor func testCell() throws {
+        try assertParity("cell", ["cell_size": 1.0], weight: 0.4)
+    }
+    // var63_escher: 1 param escher_beta; complex-log-power (exp + sincos).
+    @MainActor func testEscher() throws {
+        try assertParity("escher", ["escher_beta": 0.5], weight: 0.4)
+    }
+    // var97_flux: 1 param flux_spread; weight in the formula (xpw=tx+w, xmw=tx-w).
+    @MainActor func testFlux() throws {
+        try assertParity("flux", ["flux_spread": 0.5], weight: 0.4)
+    }
+    // var68_modulus: 2 params modulus_x/y; branchy fmod fold. Nonzero required
+    // (defaults 0 → fmod(_,0) = NaN).
+    @MainActor func testModulus() throws {
+        try assertParity("modulus", ["modulus_x": 1.0, "modulus_y": 1.0], weight: 0.4)
+    }
+    // var75_splits: 2 params splits_x/y. ⚠️ DIFFERENT from var74 split — adds
+    // ±splits_x/y by sign of tx/ty (vs split's cos-gated ±tx/ty).
+    @MainActor func testSplits() throws {
+        try assertParity("splits", ["splits_x": 0.3, "splits_y": 0.2], weight: 0.4)
+    }
+    // var76_stripes: 2 params stripes_space/warp; roundx=floor(tx+0.5).
+    @MainActor func testStripes() throws {
+        try assertParity("stripes", ["stripes_space": 0.5, "stripes_warp": 0.5], weight: 0.4)
+    }
+    // var80_whorl: 2 params whorl_inside/outside; weight in denominator
+    // (non-standard; singular at r==weight — weight=0.4 keeps orbits small so
+    // r stays well away from the singular; match flam3).
+    @MainActor func testWhorl() throws {
+        try assertParity("whorl", ["whorl_inside": 0.3, "whorl_outside": 0.5], weight: 0.4)
+    }
+
     // ---- corpus-variations RNG simple set (slots 44..48).
     // All paramless but RNG-consuming (1..5 isaac_01 draws each). The PSNR is the
     // real RNG-parity oracle: a draw-count or draw-order mismatch collapses PSNR

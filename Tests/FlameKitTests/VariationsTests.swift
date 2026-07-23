@@ -501,6 +501,258 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(outW.y, 2.0 * p1.y, accuracy: 1e-9)
     }
 
+    // MARK: - Batch 3a: parametric ≤2-params non-RNG (9 variations).
+    // Hand-traced closed forms against flam3 variations.c.
+
+    // var54_bent2 (variations.c:1164-1174). 2 params, default 0.
+    //   nx = tx; ny = ty;
+    //   if (nx<0) nx *= bent2_x; if (ny<0) ny *= bent2_y;
+    //   p0 += w*nx; p1 += w*ny.
+    func testBent2() {
+        let params = ["bent2_x":2.0, "bent2_y":3.0]
+        // Case 1: both positive → no fold (pass-through).
+        let p1 = SIMD2<Double>(0.3, 0.4)
+        XCTAssertEqual(eval("bent2", p1, 1.0, params), SIMD2<Double>(0.3, 0.4), accuracy: 1e-9)
+        // Case 2: both NEGATIVE → both folded (nx*=2, ny*=3).
+        let p2 = SIMD2<Double>(-0.3, -0.4)
+        XCTAssertEqual(eval("bent2", p2, 1.0, params), SIMD2<Double>(-0.6, -1.2), accuracy: 1e-9)
+        // Case 3: mixed (x<0, y>0) → only x folded.
+        let p3 = SIMD2<Double>(-0.3, 0.4)
+        XCTAssertEqual(eval("bent2", p3, 1.0, params), SIMD2<Double>(-0.6, 0.4), accuracy: 1e-9)
+        // Weight folds into both.
+        XCTAssertEqual(eval("bent2", p2, 2.0, params), SIMD2<Double>(-1.2, -2.4), accuracy: 1e-9)
+        // Default-0 params with positive input = pass-through (nx*0 only fires for nx<0).
+        XCTAssertEqual(eval("bent2", SIMD2(0.7, 0.5), 1.0, [:]), SIMD2<Double>(0.7, 0.5), accuracy: 1e-9)
+    }
+
+    // var55_bipolar (variations.c:1180-1196). 1 param, default 0. Uses precalc_sumsq.
+    //   x2y2=sumsq; t=x2y2+1; x2=2*tx; ps=-π/2*shift;
+    //   y=0.5*atan2(2ty, sumsq-1)+ps; wrap to [-π/2,π/2];
+    //   p0 += w*0.25*(2/π)*log((t+x2)/(t-x2)); p1 += w*(2/π)*y.
+    func testBipolar() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let shift = 0.5
+        let params = ["bipolar_shift": shift]
+        let out = eval("bipolar", p, 1.0, params)
+        // Verbatim re-derivation from variations.c.
+        let sumsq = p.x*p.x + p.y*p.y
+        let t = sumsq + 1.0
+        let x2 = 2.0 * p.x
+        let ps = -.pi / 2.0 * shift
+        var y = 0.5 * atan2(2.0 * p.y, sumsq - 1.0) + ps
+        if y > .pi / 2.0 {
+            y = -.pi / 2.0 + (y + .pi / 2.0).truncatingRemainder(dividingBy: .pi)
+        } else if y < -.pi / 2.0 {
+            y = .pi / 2.0 - (.pi / 2.0 - y).truncatingRemainder(dividingBy: .pi)
+        }
+        let expP0 = 1.0 * 0.25 * (2.0 / .pi) * log((t + x2) / (t - x2))
+        let expP1 = 1.0 * (2.0 / .pi) * y
+        XCTAssertEqual(out.x, expP0, accuracy: 1e-9)
+        XCTAssertEqual(out.y, expP1, accuracy: 1e-9)
+        // Weight folds into both.
+        let outW = eval("bipolar", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(2.0 * expP0, 2.0 * expP1), accuracy: 1e-9)
+        // Wraparound case: a large negative shift forces y < -π/2 → fmod branch.
+        let shiftBig = 2.0
+        let paramsBig = ["bipolar_shift": shiftBig]
+        let outBig = eval("bipolar", p, 1.0, paramsBig)
+        let psBig = -.pi / 2.0 * shiftBig
+        var yBig = 0.5 * atan2(2.0 * p.y, sumsq - 1.0) + psBig
+        if yBig > .pi / 2.0 {
+            yBig = -.pi / 2.0 + (yBig + .pi / 2.0).truncatingRemainder(dividingBy: .pi)
+        } else if yBig < -.pi / 2.0 {
+            yBig = .pi / 2.0 - (.pi / 2.0 - yBig).truncatingRemainder(dividingBy: .pi)
+        }
+        XCTAssertEqual(outBig.y, 1.0 * (2.0 / .pi) * yBig, accuracy: 1e-9)
+    }
+
+    // var58_cell (variations.c:1253-1290). 1 param, default 0. NOTE p1 SUBTRACTS.
+    //   inv=1/cs; int x=floor(tx*inv), y=floor(ty*inv); dx=tx-x*cs; dy=ty-y*cs;
+    //   quadrant interleave of int x,y; p0 += w*(dx+x*cs); p1 -= w*(dy+y*cs).
+    func testCell() {
+        let cs = 1.0
+        let params = ["cell_size": cs]
+        // Case 1: (0.3, 0.4) in cell (0,0); y>=0,x>=0 → x=2*0=0, y=2*0=0.
+        //   dx=0.3, dy=0.4; p0 = 0.3+0=0.3; p1 = -(0.4+0)=-0.4 (SUBTRACT).
+        XCTAssertEqual(eval("cell", SIMD2(0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(0.3, -0.4), accuracy: 1e-9)
+        // Case 2: (1.3, 1.4) in cell (1,1); x=2*1=2, y=2*1=2.
+        //   dx=0.3, dy=0.4; p0 = 0.3+2=2.3; p1 = -(0.4+2)=-2.4.
+        XCTAssertEqual(eval("cell", SIMD2(1.3, 1.4), 1.0, params),
+                       SIMD2<Double>(2.3, -2.4), accuracy: 1e-9)
+        // Case 3: (-1.3, -0.4) in cell x=floor(-1.3)=-2, y=floor(-0.4)=-1; y<0,x<0.
+        //   x=-(2*(-2)+1)=-(-3)=3; y=-(2*(-1)+1)=-(-1)=1.
+        //   dx=-1.3-(-2)=0.7; dy=-0.4-(-1)=0.6.
+        //   p0 = 0.7+3=3.7; p1 = -(0.6+1)=-1.6.
+        XCTAssertEqual(eval("cell", SIMD2(-1.3, -0.4), 1.0, params),
+                       SIMD2<Double>(3.7, -1.6), accuracy: 1e-9)
+        // Case 4: (-0.3, 0.4) in cell x=-1, y=0; y>=0,x<0 → x=-(2*(-1)+1)=1, y=0.
+        //   dx=-0.3-(-1)=0.7; dy=0.4-0=0.4.
+        //   p0 = 0.7+1=1.7; p1 = -(0.4+0)=-0.4.
+        XCTAssertEqual(eval("cell", SIMD2(-0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(1.7, -0.4), accuracy: 1e-9)
+        // Weight folds into both p0 and the subtracted p1.
+        XCTAssertEqual(eval("cell", SIMD2(1.3, 1.4), 2.0, params),
+                       SIMD2<Double>(4.6, -4.8), accuracy: 1e-9)
+    }
+
+    // var63_escher (variations.c:1385-1403). 1 param, default 0. Uses precalc_sumsq,
+    // precalc_atanyx. Re-derived inline (formula has no simple closed numeric).
+    //   a=atanyx; lnr=0.5*log(sumsq); sincos(β,&seb,&ceb);
+    //   vc=0.5*(1+ceb); vd=0.5*seb; m=w*exp(vc*lnr-vd*a); n=vc*a+vd*lnr;
+    //   p0 += m*cos(n); p1 += m*sin(n).
+    func testEscher() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let beta = 0.5
+        let params = ["escher_beta": beta]
+        let out = eval("escher", p, 1.0, params)
+        let sumsq = p.x*p.x + p.y*p.y
+        let a = atan2(p.y, p.x)
+        let lnr = 0.5 * log(sumsq)
+        let ceb = cos(beta), seb = sin(beta)
+        let vc = 0.5 * (1.0 + ceb)
+        let vd = 0.5 * seb
+        let m = 1.0 * exp(vc * lnr - vd * a)
+        let n = vc * a + vd * lnr
+        XCTAssertEqual(out.x, m * cos(n), accuracy: 1e-9)
+        XCTAssertEqual(out.y, m * sin(n), accuracy: 1e-9)
+        // Weight multiplies m (outermost).
+        let outW = eval("escher", p, 2.0, params)
+        XCTAssertEqual(outW, SIMD2<Double>(2.0 * m * cos(n), 2.0 * m * sin(n)), accuracy: 1e-9)
+    }
+
+    // var97_flux (variations.c:1911-1922). 1 param, default 0. Uses weight in
+    // the formula itself (xpw=tx+w, xmw=tx-w).
+    //   avgr = w*(2+spread)*sqrt(sqrt(ty²+xpw²)/sqrt(ty²+xmw²));
+    //   avga = (atan2(ty,xmw)-atan2(ty,xpw))*0.5;
+    //   p0 += avgr*cos(avga); p1 += avgr*sin(avga).
+    func testFlux() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let spread = 0.5
+        let params = ["flux_spread": spread]
+        let out = eval("flux", p, 1.0, params)
+        let xpw = p.x + 1.0
+        let xmw = p.x - 1.0
+        let avgr = 1.0 * (2.0 + spread)
+                 * ((p.y*p.y + xpw*xpw).squareRoot() / (p.y*p.y + xmw*xmw).squareRoot()).squareRoot()
+        let avga = (atan2(p.y, xmw) - atan2(p.y, xpw)) * 0.5
+        XCTAssertEqual(out.x, avgr * cos(avga), accuracy: 1e-9)
+        XCTAssertEqual(out.y, avgr * sin(avga), accuracy: 1e-9)
+        // Weight drives xpw/xmw AND avgr — verify weight=2 independently.
+        let wW = 2.0
+        let outW = eval("flux", p, wW, params)
+        let xpwW = p.x + wW, xmwW = p.x - wW
+        let avgrW = wW * (2.0 + spread)
+                  * ((p.y*p.y + xpwW*xpwW).squareRoot() / (p.y*p.y + xmwW*xmwW).squareRoot()).squareRoot()
+        let avgaW = (atan2(p.y, xmwW) - atan2(p.y, xpwW)) * 0.5
+        XCTAssertEqual(outW, SIMD2<Double>(avgrW * cos(avgaW), avgrW * sin(avgaW)), accuracy: 1e-9)
+    }
+
+    // var68_modulus (variations.c:1498-1515). 2 params, default 0. Branchy fmod
+    // fold back into [-mx, mx] / [-my, my]. Hand-traced per branch.
+    //   xr=2*mx; if (tx>mx) p0+=w*(-mx+fmod(tx+mx,xr));
+    //   else if (tx<-mx) p0+=w*(mx-fmod(mx-tx,xr)); else p0+=w*tx.  (same for ty → p1).
+    func testModulus() {
+        // modulus_x=y=1 → xr=yr=2.
+        let params = ["modulus_x":1.0, "modulus_y":1.0]
+        // Case 1: (0.3, 0.4) in range → pass-through.
+        XCTAssertEqual(eval("modulus", SIMD2(0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(0.3, 0.4), accuracy: 1e-9)
+        // Case 2: tx>mx: p0 = -1 + fmod(2.5+1, 2) = -1 + fmod(3.5, 2) = -1 + 1.5 = 0.5.
+        XCTAssertEqual(eval("modulus", SIMD2(2.5, 0.4), 1.0, params),
+                       SIMD2<Double>(0.5, 0.4), accuracy: 1e-9)
+        // Case 3: tx<-mx: p0 = 1 - fmod(1-(-2.5), 2) = 1 - fmod(3.5, 2) = 1 - 1.5 = -0.5.
+        XCTAssertEqual(eval("modulus", SIMD2(-2.5, 0.4), 1.0, params),
+                       SIMD2<Double>(-0.5, 0.4), accuracy: 1e-9)
+        // Case 4: ty>my: p1 = -1 + fmod(2.3+1, 2) = -1 + 1.3 = 0.3.
+        XCTAssertEqual(eval("modulus", SIMD2(0.3, 2.3), 1.0, params),
+                       SIMD2<Double>(0.3, 0.3), accuracy: 1e-9)
+        // Weight folds into both.
+        XCTAssertEqual(eval("modulus", SIMD2(2.5, 2.3), 2.0, params),
+                       SIMD2<Double>(2.0 * 0.5, 2.0 * 0.3), accuracy: 1e-9)
+        // Default-0 params at the ORIGIN only: p=(0,0) hits the `else` branches
+        // (no fmod-by-zero); any nonzero input would divide by zero (xr=yr=0),
+        // which mirrors the C source — so the only safe default-0 case is origin.
+        XCTAssertEqual(eval("modulus", SIMD2(0.0, 0.0), 1.0, [:]),
+                       SIMD2<Double>(0.0, 0.0), accuracy: 1e-9)
+    }
+
+    // var75_splits (variations.c:1619-1633). 2 params, default 0. ⚠️ DIFFERENT
+    // from var74 split — adds ±splits_x/y by sign of tx/ty.
+    //   if (tx>=0) p0 += w*(tx+splits_x); else p0 += w*(tx-splits_x);
+    //   if (ty>=0) p1 += w*(ty+splits_y); else p1 += w*(ty-splits_y).
+    func testSplits() {
+        let params = ["splits_x":0.5, "splits_y":0.7]
+        // Case 1: both >= 0 → both add.
+        XCTAssertEqual(eval("splits", SIMD2(0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(0.3 + 0.5, 0.4 + 0.7), accuracy: 1e-9)
+        // Case 2: both < 0 → both subtract.
+        XCTAssertEqual(eval("splits", SIMD2(-0.3, -0.4), 1.0, params),
+                       SIMD2<Double>(-0.3 - 0.5, -0.4 - 0.7), accuracy: 1e-9)
+        // Case 3: mixed.
+        XCTAssertEqual(eval("splits", SIMD2(-0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(-0.3 - 0.5, 0.4 + 0.7), accuracy: 1e-9)
+        // Case 4: tx=0 boundary → >=0 branch (adds splits_x).
+        XCTAssertEqual(eval("splits", SIMD2(0.0, 0.0), 1.0, params),
+                       SIMD2<Double>(0.5, 0.7), accuracy: 1e-9)
+        // Weight folds into both (and through the ±offset term).
+        XCTAssertEqual(eval("splits", SIMD2(0.3, 0.4), 2.0, params),
+                       SIMD2<Double>(2.0 * 0.8, 2.0 * 1.1), accuracy: 1e-9)
+        // Default-0 params: ±0 added → both branches collapse to w*tx, w*ty
+        // (LINEAR pass-through).
+        XCTAssertEqual(eval("splits", SIMD2(0.7, -0.3), 1.0, [:]),
+                       SIMD2<Double>(0.7, -0.3), accuracy: 1e-9)
+    }
+
+    // var76_stripes (variations.c:1635-1645). 2 params, default 0.
+    //   roundx = floor(tx+0.5); offsetx = tx-roundx;
+    //   p0 += w*(offsetx*(1-space) + roundx); p1 += w*(ty + offsetx²*warp).
+    func testStripes() {
+        let params = ["stripes_space":0.3, "stripes_warp":0.5]
+        // Case 1: tx=0.3 → roundx=0, offsetx=0.3.
+        //   p0 = 0.3*(1-0.3) + 0 = 0.21; p1 = 0.4 + 0.3²*0.5 = 0.4 + 0.045 = 0.445.
+        XCTAssertEqual(eval("stripes", SIMD2(0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(0.21, 0.445), accuracy: 1e-9)
+        // Case 2: tx=1.3 → roundx=floor(1.8)=1, offsetx=0.3.
+        //   p0 = 0.3*0.7 + 1 = 1.21; p1 = 0.4 + 0.045 = 0.445.
+        XCTAssertEqual(eval("stripes", SIMD2(1.3, 0.4), 1.0, params),
+                       SIMD2<Double>(1.21, 0.445), accuracy: 1e-9)
+        // Case 3: tx=-0.3 → roundx=floor(0.2)=0, offsetx=-0.3.
+        //   p0 = -0.3*0.7 + 0 = -0.21; p1 = 0.4 + 0.09*0.5 = 0.445.
+        XCTAssertEqual(eval("stripes", SIMD2(-0.3, 0.4), 1.0, params),
+                       SIMD2<Double>(-0.21, 0.445), accuracy: 1e-9)
+        // Weight folds into both.
+        XCTAssertEqual(eval("stripes", SIMD2(0.3, 0.4), 2.0, params),
+                       SIMD2<Double>(2.0 * 0.21, 2.0 * 0.445), accuracy: 1e-9)
+        // Default-0 params: space=0, warp=0 → p0=offsetx+roundx=tx, p1=ty.
+        XCTAssertEqual(eval("stripes", SIMD2(0.7, 0.5), 1.0, [:]),
+                       SIMD2<Double>(0.7, 0.5), accuracy: 1e-9)
+    }
+
+    // var80_whorl (variations.c:1710-1728). 2 params, default 0. Uses precalc_sqrt,
+    // precalc_atanyx. NOTE weight is in the denominator (non-standard; singular at
+    // r==weight). Re-derived inline.
+    //   r = sqrt; if (r<weight) a=atanyx+inside/(weight-r); else a=atanyx+outside/(weight-r);
+    //   p0 += w*r*cos(a); p1 += w*r*sin(a).
+    func testWhorl() {
+        let p = SIMD2<Double>(0.3, 0.4)
+        let inside = 0.5, outside = 0.3
+        let params = ["whorl_inside":inside, "whorl_outside":outside]
+        // r = sqrt(0.25) = 0.5 < weight=1 → inside branch.
+        let out = eval("whorl", p, 1.0, params)
+        let r = (p.x*p.x + p.y*p.y).squareRoot()
+        let atanyx = atan2(p.y, p.x)
+        let a = atanyx + inside / (1.0 - r)
+        XCTAssertEqual(out.x, 1.0 * r * cos(a), accuracy: 1e-9)
+        XCTAssertEqual(out.y, 1.0 * r * sin(a), accuracy: 1e-9)
+        // Weight=0.3 → r=0.5 > weight=0.3 → OUTSIDE branch (exercises the else).
+        let wSmall = 0.3
+        let outSmall = eval("whorl", p, wSmall, params)
+        let aOut = atanyx + outside / (wSmall - r)
+        XCTAssertEqual(outSmall.x, wSmall * r * cos(aOut), accuracy: 1e-9)
+        XCTAssertEqual(outSmall.y, wSmall * r * sin(aOut), accuracy: 1e-9)
+    }
+
     func testJuliaUsesRngAndDeterministic() {
         var r1 = ISAAC(isaacSeed: "julia-determinism")
         var r2 = ISAAC(isaacSeed: "julia-determinism")
@@ -1510,7 +1762,15 @@ final class VariationsTests: XCTestCase {
             // perspective's default dist=0 makes t=1/(0-ty·0)=1/0 → a genuine
             // flam3 singularity (genomes always set a nonzero dist). Its
             // dedicated testPerspective checks finiteness with a valid dist.
-            if name == "perspective" { continue }
+            // cell/modulus likewise hit a flam3 singularity at their default-0
+            // params: cell_size=0 → 1/0=inf → Int(inf) trap (Swift's strict Int
+            // cast traps where C's `(int)` cast just yields UB garbage); and
+            // modulus_x/y=0 → xr/yr=0 → fmod(_,0)=NaN. Both are faithful to
+            // flam3 (NO explicit guards in variations.c; the chaos-game badvalue
+            // check handles them downstream), and genomes always set nonzero
+            // cell_size / modulus_x/y. testCell / testModulus cover them with
+            // valid nonzero params.
+            if name == "perspective" || name == "cell" || name == "modulus" { continue }
             let point = m1Names.contains(name) ? origin : nonSingular
             var rng = ISAAC(isaacSeed: "finiteness")
             let r = Variations.evaluate([Variation(name: name, weight: 1)], at: point, affine: .zero, rng: &rng)
