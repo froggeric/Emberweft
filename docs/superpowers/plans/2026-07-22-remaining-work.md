@@ -2,9 +2,11 @@
 
 > **Purpose:** survive context compaction. After CV7 (secant2+disc2) lands, this doc captures the two remaining work-streams so a fresh session/subagent can resume. Self-contained — read the referenced files for detail.
 
-## STATUS / RESUME (updated 2026-07-23 — POST PALETTE_MODE FIX, post-compaction entry point)
+## STATUS / RESUME (updated 2026-07-23 — v0.1.2 SHIPPED, post-compaction entry point)
 
-**Emberweft:** `main` @ `b707a0429` (NOT yet pushed — origin is at `f907f150d`). **99/99** flam3 variations (Work A COMPLETE — all 4 batches landed + verified). Build green, all parity gates green, goldens byte-identical. v0.1.2 release. Oracle (`~/.local/bin/flam3-*`) symlinks repoint at `~/flam3-oracle-src/flam3/` (the `/tmp` build evicted; symlinks MUST be re-created if they dangle). flam3 source survives at `~/flam3-oracle-src/flam3/` (note: `flam3.c` + `rect.c` carry gated `FLAM3_TRACE` debug prints — harmless w/o the env var).
+**▶ RESUME HERE: Work B follow-ups (task #35) — see "Work B REMAINING" below. Easiest first: bump `244.00788` quality 500→1000 → flip `.knownGate`→`.gate` (closes 3/4 knownGap).**
+
+**Emberweft:** `main` @ `d50e78fe2` — **1 commit ahead of origin** (unpushed `docs(claude)` gotchas commit; v0.1.2 itself IS pushed, tag `v0.1.2` on origin at `647e859ea`). **99/99** flam3 variations (Work A COMPLETE — all 4 batches landed + verified ≥38 dB). Build green, all parity gates green, goldens byte-identical. Oracle (`~/.local/bin/flam3-*`) symlinks repoint at `~/flam3-oracle-src/flam3/` (the `/tmp` build evicted; symlinks MUST be re-created if they dangle). flam3 source survives at `~/flam3-oracle-src/flam3/` (note: `flam3.c` + `rect.c` carry gated `FLAM3_TRACE` debug prints — harmless w/o the env var).
 
 **Work B (knownGap) — ROOT CAUSE FOUND + FIXED + MERGED (commit `171083515`).** The 4 knownGap were NOT a display-pipeline/hp/camera/iteration gap (all ruled out via a two-sided point trace that PROVED the chaos game is bit-faithful). The cause was **palette_mode**: Emberweft used LINEAR dmap interpolation; flam3's DEFAULT is STEP (nearest). Fix: `PaletteMode` enum (default `.step`) in FlameKit, parse `palette_mode`, branch in `ChaosGame`. **Result: 2/4 knownGap CLOSED → `.gate`** — `242.00099` (waves) 28.7→53.9, `242.00261` (split/cross) 30.7→52.4; gate fixtures improved. The per-variation vs-flam3 harness (`Tests/FlameReferenceTests/VariationFlam3ParityTests.swift`, commit `c5fb0389b`) now passes ALL single variations at 52-69 dB and is the validation tool for Work A. See memory `workb-knowngap-iteration-divergence`.
 
