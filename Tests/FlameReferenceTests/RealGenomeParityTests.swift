@@ -40,17 +40,34 @@ final class RealGenomeParityTests: XCTestCase {
     // smaller op-point sacrifices a few dB to sampling noise but still clears
     // 38 dB comfortably, AND runs in seconds-per-fixture in debug (vs ~6 min).
     // The full operating point is exercised by `python3 Tools/density_diff.py`.
+    // A few high-variance genomes can't clear the gate at this op-point and run
+    // at the stress op-point instead — see `opPointOverrides` below.
     private static let renderSize = SIMD2<Int>(400, 296)
     private static let quality = 500
-    private static let sanitizeAttrs: [(String, String)] = [
-        ("passes", "1"),
-        ("temporal_samples", "1"),
-        ("supersample", "1"),
-        ("estimator_radius", "0"),
-        ("estimator_minimum", "0"),
-        ("quality", String(quality)),
-        ("size", "\(renderSize.x) \(renderSize.y)"),
+
+    // Fixtures that need a heavier op-point than the default fast 400×296×500
+    // to demonstrate parity. 244.00788 is a 12-xform high-variance genome whose
+    // per-pixel noise at the fast op-point can't reach the 38 dB gate even at
+    // 1000 spp (the 400×296 grid carries a ~4 dB resolution tax vs the native
+    // 800×592 — observed 35.71 dB at 400×296×1000); it passes cleanly at the
+    // stress op-point (800×592×1000 = `density_diff.py`, 39.85 dB), so run it
+    // there. Only the overridden fixture pays the ~8× cost; all others stay at
+    // the fast op-point.
+    private static let opPointOverrides: [String: (size: SIMD2<Int>, quality: Int)] = [
+        "electricsheep.244.00788": (SIMD2(800, 592), 1000),
     ]
+
+    private static func sanitizeAttrs(quality: Int, size: SIMD2<Int>) -> [(String, String)] {
+        [
+            ("passes", "1"),
+            ("temporal_samples", "1"),
+            ("supersample", "1"),
+            ("estimator_radius", "0"),
+            ("estimator_minimum", "0"),
+            ("quality", String(quality)),
+            ("size", "\(size.x) \(size.y)"),
+        ]
+    }
 
     // Matched reproducibility pins (mirror Tools/density_diff.py).
     private static let libcSeed = "42"                    // flam3 aux RNG (env `seed`)
@@ -93,18 +110,16 @@ final class RealGenomeParityTests: XCTestCase {
         // stays in SpecialSauceParityTests; this is the Emberweft-CPU-vs-flam3
         // oracle on real ES genomes. ----
         //
-        // Coverage status (see CV6 closeout report):
-        //  GATE  (5 fixtures, ≥38 dB): 243.16209, 243.17257, 244.00081,
-        //                              244.36620, 248.34413
-        //  GAP   (4 fixtures, <38 dB): 242.00099, 242.00261, 244.00788,
-        //                              244.28122 — non-hp=1 genomes show a
-        //                              residual density-distribution gap
-        //                              (Emberweft peakier than flam3) even
-        //                              after the Task-6 hp+filter fix; the
-        //                              per-variation SpecialSauce gate still
-        //                              covers them at Metal↔CPU level. This
-        //                              is a Task-6 follow-on, not a CV6
-        //                              variation-port regression.
+        // Coverage status (post Work-B palette_mode + op-point fixes):
+        //  GATE  (8 fixtures, ≥38 dB): the 5 hp="1" fixtures below (243.16209,
+        //         243.17257, 244.00081, 244.36620, 248.34413) + 242.00099 and
+        //         242.00261 (palette_mode STEP dmap fix — flam3's default, not
+        //         linear; closed the spiky-palette divergence) + 244.00788
+        //         (12-xform high-variance → run at stress op-point 800×592×1000
+        //         via `opPointOverrides`; the fast 400×296 grid can't reach it).
+        //  GAP   (1 fixture): 244.28122 — genuine marginal residual (37.65 dB
+        //         at stress, ~0.35 dB under gate; centroids/light match). The
+        //         only remaining Work-B real-genome gap; not a faithfulness bug.
 
         // twintrian + blade + conic + pdj + power (5 of 18 in one fixture).
         // 38.76 dB / 0.9924 — marginal (~0.8 dB over gate); kept as .gate
@@ -125,16 +140,15 @@ final class RealGenomeParityTests: XCTestCase {
         // `perspective` and stay clean, but this one is the smallest clean).
         // 51.64 dB / 0.9998.
         ("electricsheep.248.34413", .gate),
-        // ---- .knownGap: CV6 fixtures that EXERCISE the remaining 5 new
-        // variations (waves/split/cross/noise/flower) but cannot reach 38 dB
-        // because of a residual Task-6 display-pipeline gap on non-hp=1
-        // genomes (Emberweft's density distribution is peakier than flam3's
-        // for genomes whose `highlight_power` attr is absent — the Task-6 fix
-        // targeted the hp="1" case, which all 7 original fixtures use).
-        // density_diff.py confirms the gap is in the display pipeline (pixel
-        // histogram divergence), NOT in the variation math (SpecialSauce
-        // parity passes Metal↔CPU for all 5). Flip to .gate when the
-        // display-pipeline gap closes (M4 follow-on). ----
+        // ---- .knownGap: the ONE remaining Work-B real-genome gap. The four
+        // original CV6 knownGap fixtures all cleared the gate once the root
+        // cause was found (palette_mode: flam3 defaults to STEP dmap sampling,
+        // not linear — linear interp across spiky palettes diverged), with
+        // 244.00788 additionally needing a 1000-spp bump (`qualityOverrides`)
+        // to clear sampling noise at this fast op-point. Only the marginal
+        // residual below stays — its variation/pipeline are all proven correct
+        // (SpecialSauce Metal↔CPU parity passes), the gap is a subtle density
+        // distribution difference ~0.35 dB under gate. ----
         // waves + popcorn (gen-242 sheep). Was 28.76 dB (.knownGap) → 53.94 dB
         // after the palette_mode fix (flam3 defaults to STEP dmap sampling, not
         // linear — linear interp across this genome's spiky palette diverged).
@@ -143,12 +157,13 @@ final class RealGenomeParityTests: XCTestCase {
         // after the palette_mode (step) fix.
         ("electricsheep.242.00261", .gate),
         // cross + noise + gaussian_blur (gen-244 sheep, 1920×1080, 12 xforms).
-        // 32.76 dB at the test's fast op-point (400×296×500) but PASSES at the
-        // stress op-point (800×592×1000 = density_diff.py): 39.85 dB, centroids
-        // identical, total light +0.8%. So this is SAMPLING NOISE at the low
-        // op-point, NOT a faithfulness bug (palette_mode closed the real gaps).
-        // Closing at the fast op-point needs a quality bump (slows the gate).
-        ("electricsheep.244.00788", .knownGap(reason: "sampling-noise at the fast 500spp op-point (32.76 dB); PASSES at stress 39.85 dB with matching centroids — not a faithfulness bug")),
+        // High-variance genome: 32.76 dB at the default 400×296×500 fast
+        // op-point (and only 35.71 at 400×296×1000 — the coarse grid costs ~4
+        // dB vs native res), but PASSES at stress (800×592×1000 =
+        // density_diff.py): 39.85 dB, centroids identical, total light +0.8% —
+        // not a faithfulness bug (palette_mode closed the real gaps). Run at
+        // the stress op-point via `opPointOverrides` so it clears the gate.
+        ("electricsheep.244.00788", .gate),
         // flower + disc + linear + spherical + rings2 (gen-244 sheep, rotate=-178).
         // 34.23 dB (fast op-point) / 37.65 dB (stress) — a genuine MARGINAL
         // residual (~0.35 dB under gate at max quality); centroids + total light
@@ -179,9 +194,9 @@ final class RealGenomeParityTests: XCTestCase {
     /// `\(key)="…"` substring match clobbered split's params with "400 296",
     /// breaking flam3's parser). Pre-existing bug — exposed by the CV6
     /// split-bearing fixtures (242.00261 / 242.00825).
-    private func sanitize(_ xml: String) -> String {
+    private func sanitize(_ xml: String, quality: Int, size: SIMD2<Int>) -> String {
         var out = xml
-        for (key, value) in Self.sanitizeAttrs {
+        for (key, value) in Self.sanitizeAttrs(quality: quality, size: size) {
             // Match `key="..."` only when `key` is the FULL attribute name
             // (preceded by whitespace, not a letter/_ — so `size` does not
             // match inside `split_xsize`). NSRegularExpression supports
@@ -207,11 +222,14 @@ final class RealGenomeParityTests: XCTestCase {
     }
 
     /// One parity row. Returns `(psnr, ssim)`; throws on flam3 failure.
-    private func parityRow(fixture: URL) throws -> (psnr: Float, ssim: Float) {
+    /// `quality`/`size` are the per-fixture op-point (defaults 500 /
+    /// `renderSize`, or `opPointOverrides` for fixtures needing the stress
+    /// op-point).
+    private func parityRow(fixture: URL, quality: Int, size: SIMD2<Int>) throws -> (psnr: Float, ssim: Float) {
         // 1. Load + sanitize the genome XML (preserve filter / highlight_power /
         //    brightness / gamma — those ARE what we're parity-testing).
         let raw = try String(contentsOf: fixture, encoding: .utf8)
-        let sanitized = sanitize(raw)
+        let sanitized = sanitize(raw, quality: quality, size: size)
 
         // 2. flam3-render the sanitized XML to a PNG.
         let tmp = FileManager.default.temporaryDirectory
@@ -235,11 +253,11 @@ final class RealGenomeParityTests: XCTestCase {
         let p = RenderParams(
             seed: UInt64(Self.libcSeed) ?? 42,
             width: flame.size.x, height: flame.size.y,
-            oversample: 1, samplesPerPixel: Self.quality)
-        // `flame.size` was overridden in sanitization to `renderSize`; assert
-        // it actually took (the regex-insert path could fail silently on a
+            oversample: 1, samplesPerPixel: quality)
+        // `flame.size` was overridden in sanitization to `size`; assert it
+        // actually took (the regex-insert path could fail silently on a
         // malformed tag) so a quiet size mismatch doesn't degrade the gate.
-        XCTAssertEqual(SIMD2(flame.size.x, flame.size.y), Self.renderSize,
+        XCTAssertEqual(SIMD2(flame.size.x, flame.size.y), size,
                        "\(fixture.lastPathComponent): size sanitization didn't take")
         let ours = ReferenceRenderer.render(flame: flame, params: p)
 
@@ -268,7 +286,8 @@ final class RealGenomeParityTests: XCTestCase {
                 print("[RealParity] SKIP \(name): fixture missing at \(fixture.path)")
                 continue
             }
-            let row = try parityRow(fixture: fixture)
+            let opPoint = Self.opPointOverrides[name] ?? (size: Self.renderSize, quality: Self.quality)
+            let row = try parityRow(fixture: fixture, quality: opPoint.quality, size: opPoint.size)
             let psnrStr = row.psnr.isInfinite ? "inf" : String(format: "%.2f", row.psnr)
             switch kind {
             case .gate:
