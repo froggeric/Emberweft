@@ -198,6 +198,23 @@ public enum Variations {
         // var69_oscope: 3 params oscilloscope_separation/frequency/amplitude
         //   (XML name `oscilloscope`, C field `oscope_*`); damping=0 branch only.
         "oscilloscope",
+        // ---- Batch 4: RNG family (var56/59/67). The final 3 variations, bringing
+        // Emberweft to 99/99 (full flam3 coverage). ----
+        // var56_boarders: paramless, 1 isaac_01 draw. Branchy boarder-walk.
+        //   RNG-consuming → lives in `evaluate`'s switch, NOT the table.
+        "boarders",
+        // var59_cpow: parametric (cpow_r/cpow_i/cpow_power, default 0) + 1
+        //   isaac_01 draw INSIDE floor(cpow_power * isaac_01). RNG-consuming →
+        //   lives in `evaluate`'s switch.
+        "cpow",
+        // var67_pre_blur: paramless, 5 isaac_01 draws; a PRE-transform that
+        //   mutates (tx,ty) after the affine but BEFORE the variation loop.
+        //   Handled by ChaosGame.applyXformBody's pre-step on the CPU +
+        //   apply_xform_body's pre-step in Metal — NOT dispatched in `evaluate`
+        //   (the loop below explicitly `continue`s on pre_blur). In knownNames
+        //   so the parser accepts `pre_blur="..."` weights + canonicalOrder
+        //   slots it for the Metal host packer.
+        "pre_blur",
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -220,9 +237,11 @@ public enum Variations {
     /// coefficient-dependent variations: `rings`/`fan` (use e,f;
     /// variations.c:521,543), `waves` (uses c,d,e,f; variations.c:405-409),
     /// `popcorn` (uses e,f; variations.c:442-446). `rng` is threaded for the
-    /// eighteen RNG-consuming variations (julia/julian/juliascope/super_shape/
+    /// twenty RNG-consuming variations (julia/julian/juliascope/super_shape/
     /// wedge_julia/pie/radial_blur/noise/blur/gaussian_blur/arch/square/
-    /// rays/blade/twintrian/flower/conic/parabola):
+    /// rays/blade/twintrian/flower/conic/parabola/boarders/cpow, plus pre_blur
+    /// which is NOT dispatched here — it is a PRE-transform applied in
+    /// `ChaosGame.applyXformBody` before this function runs):
     /// julia/julian/juliascope/super_shape/wedge_julia each draw one
     /// `flam3_random_isaac_01`/`_bit` word when reached; `pie` draws three
     /// `isaac_01` words in flam3's exact order (slice → angular → radial);
@@ -238,7 +257,14 @@ public enum Variations {
     /// `flower` draws one (r = w*(d1-holes)*cos(petals*θ)/sqrt, NO EPS);
     /// `conic` draws one (ct = tx/sqrt, r = w*(d1-holes)*ecc/(1+ecc*ct)/sqrt,
     /// NO EPS); `parabola` draws TWO per-axis (draw #1 → p0 via height*sin²*r,
-    /// draw #2 → p1 via width*cos*r).
+    /// draw #2 → p1 via width*cos*r); `boarders` draws one (the ≥0.75 branch
+    /// test); `cpow` draws one INSIDE `floor(cpow_power * isaac_01)`.
+    ///
+    /// `pre_blur` is EXPLICITLY SKIPPED here — it is a PRE-transform applied
+    /// AFTER the affine but BEFORE the variation loop in flam3 (variations.c:
+    /// 2148-2150), so handling it here would both double-apply and draw out of
+    /// RNG order. `ChaosGame.applyXformBody` performs the pre-step + 5 ordered
+    /// draws before calling this function.
     ///
     /// `variations` is walked in ARRAY order — the parser already sorts an xform's
     /// variations alphabetically, so for [julia, julian] julia draws before julian.
@@ -247,6 +273,13 @@ public enum Variations {
         var acc = SIMD2<Double>.zero
         for v in variations {
             guard v.weight != 0 else { continue }
+            // pre_blur is a PRE-transform (variations.c:2148-2150): applied in
+            // ChaosGame.applyXformBody AFTER the affine and BEFORE this loop, so
+            // it consumes its 5 RNG words before any variation here. Dispatching
+            // it now would double-apply the offset AND draw its 5 words in the
+            // wrong stream position vs flam3. Skip — its closure is intentionally
+            // absent from the table and its case is intentionally absent below.
+            if v.name == "pre_blur" { continue }
             let term: SIMD2<Double>
             switch v.name {
             case "julia":
@@ -285,6 +318,10 @@ public enum Variations {
                 term = superShape(p, weight: v.weight, params: v.parameters, rng: &rng)
             case "wedge_julia":
                 term = wedgeJulia(p, weight: v.weight, params: v.parameters, rng: &rng)
+            case "boarders":
+                term = boarders(p, weight: v.weight, rng: &rng)
+            case "cpow":
+                term = cpow(p, weight: v.weight, params: v.parameters, rng: &rng)
             default:
                 if let fn = table[v.name] {
                     term = fn(p, v.weight, v.parameters, affine)
@@ -704,6 +741,95 @@ public enum Variations {
         let c = floor((count * a + .pi) * (1.0 / .pi) * 0.5)
         a = a * cf + c * angle
         return SIMD2(r * cos(a), r * sin(a))
+    }
+
+    /// flam3 `var56_boarders` (variations.c:1199-1236). Paramless; consumes ONE
+    /// `flam3_random_isaac_01` word as the ≥0.75 branch test. `rint` is C's
+    /// round-to-nearest-EVEN (banker's rounding) — Swift `.rounded(.toNearestOrEven)`.
+    /// The branch structure mirrors flam3 verbatim:
+    ///   roundX = rint(tx); roundY = rint(ty);
+    ///   offsetX = tx - roundX; offsetY = ty - roundY;
+    ///   if (isaac_01() >= 0.75) {                          // <-- 1 draw
+    ///      p0 += w*(offsetX*0.5 + roundX);  p1 += w*(offsetY*0.5 + roundY);
+    ///   } else {
+    ///      if (|offsetX| >= |offsetY|) {
+    ///         if (offsetX >= 0) { p0 += w*(offsetX*0.5+roundX+0.25);
+    ///                             p1 += w*(offsetY*0.5+roundY + 0.25*offsetY/offsetX); }
+    ///         else              { p0 += w*(offsetX*0.5+roundX-0.25);
+    ///                             p1 += w*(offsetY*0.5+roundY - 0.25*offsetY/offsetX); }
+    ///      } else {
+    ///         if (offsetY >= 0) { p1 += w*(offsetY*0.5+roundY+0.25);
+    ///                             p0 += w*(offsetX*0.5+roundX + offsetX/offsetY*0.25); }
+    ///         else              { p1 += w*(offsetY*0.5+roundY-0.25);
+    ///                             p0 += w*(offsetX*0.5+roundX - offsetX/offsetY*0.25); }
+    ///      }
+    ///   }
+    /// Divisions by offsetX/offsetY are guarded by the |offsetX|>=|offsetY| (or
+    /// its else) branch structure — the divisor in each branch is the axis that
+    /// the same branch just proved nonzero-except-at-origin. At the origin both
+    /// offsets are 0 → the inner branches divide by zero → NaN; match flam3 (no
+    /// per-term guard; the chaos game's post-affine badvalue check handles NaN
+    /// downstream, redrawing).
+    private static func boarders(_ p: SIMD2<Double>, weight: Double,
+                                 rng: inout ISAAC) -> SIMD2<Double> {
+        let roundX = p.x.rounded(.toNearestOrEven)         // rint(tx)
+        let roundY = p.y.rounded(.toNearestOrEven)         // rint(ty)
+        let offsetX = p.x - roundX
+        let offsetY = p.y - roundY
+        let draw = rng.isaac01()                            // draw #1 (branch test)
+        if draw >= 0.75 {
+            return SIMD2(weight * (offsetX * 0.5 + roundX),
+                         weight * (offsetY * 0.5 + roundY))
+        } else {
+            if abs(offsetX) >= abs(offsetY) {
+                if offsetX >= 0 {
+                    return SIMD2(weight * (offsetX * 0.5 + roundX + 0.25),
+                                 weight * (offsetY * 0.5 + roundY + 0.25 * offsetY / offsetX))
+                } else {
+                    return SIMD2(weight * (offsetX * 0.5 + roundX - 0.25),
+                                 weight * (offsetY * 0.5 + roundY - 0.25 * offsetY / offsetX))
+                }
+            } else {
+                if offsetY >= 0 {
+                    return SIMD2(weight * (offsetX * 0.5 + roundX + offsetX / offsetY * 0.25),
+                                 weight * (offsetY * 0.5 + roundY + 0.25))
+                } else {
+                    return SIMD2(weight * (offsetX * 0.5 + roundX - offsetX / offsetY * 0.25),
+                                 weight * (offsetY * 0.5 + roundY - 0.25))
+                }
+            }
+        }
+    }
+
+    /// flam3 `var59_cpow` (variations.c:1291-1310). Parametric (cpow_r/cpow_i/
+    /// cpow_power, all default 0) + consumes ONE `flam3_random_isaac_01` word,
+    /// INSIDE `floor(cpow_power * isaac_01())` — the draw MUST happen before the
+    /// `va*floor(...)` multiply, not after (reordering diverges the ISAAC stream).
+    /// Uses precalc_atanyx (= atan2(ty,tx) = atan2(p.y,p.x)) + precalc_sumsq.
+    ///   a   = precalc_atanyx
+    ///   lnr = 0.5 * log(precalc_sumsq)
+    ///   va  = 2π / cpow_power;  vc = cpow_r / cpow_power;  vd = cpow_i / cpow_power
+    ///   ang = vc*a + vd*lnr + va*floor(cpow_power * isaac_01())    // <-- draw inside floor
+    ///   m   = weight * exp(vc*lnr - vd*a)
+    ///   p0 += m*cos(ang);  p1 += m*sin(ang)
+    /// At cpow_power=0 (the parse default) the divisions by cpow_power are NaN/
+    /// Inf → ang/m are NaN; genomes always set a nonzero cpow_power (the flam3
+    /// singularity at power=0 is faithful — no EPS guard; the chaos game's
+    /// post-affine badvalue check handles NaN downstream).
+    private static func cpow(_ p: SIMD2<Double>, weight: Double,
+                             params: [String: Double], rng: inout ISAAC) -> SIMD2<Double> {
+        let r     = resolve("cpow", "cpow_r", params)
+        let i     = resolve("cpow", "cpow_i", params)
+        let power = resolve("cpow", "cpow_power", params)
+        let sumsq = p.x*p.x + p.y*p.y
+        let a = atan2(p.y, p.x)                              // precalc_atanyx
+        let lnr = 0.5 * log(sumsq)
+        let va = 2 * .pi / power
+        let vc = r / power
+        let vd = i / power
+        let ang = vc * a + vd * lnr + va * floor(power * rng.isaac01())   // draw #1 inside floor
+        let m = weight * exp(vc * lnr - vd * a)
+        return SIMD2(m * cos(ang), m * sin(ang))
     }
 
     /// Resolve a variation parameter: the genome value if present, else the
@@ -1764,11 +1890,11 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 96-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 99-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
     /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
     /// flower/conic/parabola + secant2/disc2 + trig family + paramless non-trig
-    /// + parametric batches 3a/3b).
+    /// + parametric batches 3a/3b + boarders/cpow/pre_blur).
     ///
     /// RNG-EQUIVALENCE NOTE: eighteen variations consume the ISAAC stream
     /// (julia/julian/juliascope/super_shape/wedge_julia/pie/radial_blur/noise/
@@ -1865,11 +1991,20 @@ public extension Variations {
     /// scaling branches — is inlined into the closure + MSL function, NOT
     /// exposed as XML params; precalc_atan = atan2(tx,ty) flam3 order). Both
     /// non-RNG → live in the table closures / w-guarded MSL dispatch chain.
+    /// Slots 96..98 are the final RNG family (Work A batch 4): `boarders`
+    /// (var56, paramless, 1 isaac_01 draw, branchy boarder-walk — RNG-consuming
+    /// → evaluate switch + MSL w-guarded chain with rng), `cpow` (var59,
+    /// parametric cpow_r/i/power default 0, 1 isaac_01 draw INSIDE floor; uses
+    /// precalc_atanyx + precalc_sumsq — RNG-consuming → evaluate switch + MSL
+    /// w-guarded chain with rng + pr), `pre_blur` (var67, paramless, 5 isaac_01
+    /// draws; PRE-transform applied in ChaosGame.applyXformBody + apply_xform_body
+    /// AFTER the affine but BEFORE the variation loop — NOT dispatched here, NOT
+    /// in the MSL w-guarded chain; the host packer still writes its weight to
+    /// slot 98 so the pre-step can gate on `w[98] != 0.0f`). These complete
+    /// Emberweft's flam3 coverage at 99/99.
     /// `apply_xform_body` reads them positionally and pulls
-    /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 57 lines (`Kernels.metal`); the trig family var82–95 (slots 57..70) grew
-    /// it to 71 lines + 14 more `v_<name>` functions (Work A batch 1); the
-    /// paramless non-trig family var57/61/62/64/66/70/72 (slots 71..77) grew
-    /// it to 78 lines + 7 more `v_<name>` functions (Work A batch 2).
+    /// their params from `varParams[slot*8 + idx]`. The MSL if-chain now covers
+    /// the 99 canonical slots (boarders + cpow dispatched at slots 96/97;
+    /// pre_blur is the pre-step, NOT a dispatch line).
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

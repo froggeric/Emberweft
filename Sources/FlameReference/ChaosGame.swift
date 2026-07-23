@@ -270,13 +270,41 @@ public enum ChaosGame {
 
     // MARK: - xform body & color blend (mirror apply_xform, variations.c:2129+)
 
-    /// Affine pre-transform → sum of weighted variations → post-affine.
-    /// Matches flam3 `apply_xform` body (variations.c:2145-2201). The julia
-    /// variation (if active) consumes one ISAAC word here, exactly when it is
-    /// reached in the variation loop.
+    /// Affine pre-transform → optional pre_blur PRE-transform → sum of weighted
+    /// variations → post-affine. Matches flam3 `apply_xform` body (variations.c:
+    /// 2145-2201). The julia variation (if active) consumes one ISAAC word inside
+    /// the variation loop, exactly when it is reached.
+    ///
+    /// pre_blur (var67, variations.c:1480-1496): applied AFTER the affine but
+    /// BEFORE precalcs and the variation loop (variations.c:2148-2150), mutating
+    /// the input point — a PRE-transform, not an accumulator. flam3's
+    /// `has_preblur` is set to `var[VAR_PRE_BLUR]` (the pre_blur weight) in
+    /// `init_xform` (variations.c:2101-2102), so a present nonzero pre_blur
+    /// weight triggers the pre-step. The 5 ordered isaac_01 draws (4 summed
+    /// left-to-right into rndG = w*(d1+d2+d3+d4-2.0), then 1 into rndA = d5*2π)
+    /// MUST happen before `Variations.evaluate` so they precede the variation
+    /// loop's RNG draws (julia/pie/etc.) in the exact flam3 stream order.
+    /// `Variations.evaluate` explicitly `continue`s on `pre_blur` so this
+    /// pre-step is the ONLY place it is applied.
     @inline(__always)
     static func applyXformBody(_ x: Xform, _ p: SIMD2<Double>, rng: inout ISAAC) -> SIMD2<Double> {
-        let pre = x.affine.apply(p)
+        var pre = x.affine.apply(p)
+        // pre_blur pre-step (var67, variations.c:2148-2150 + 1480-1496). The 5
+        // ordered isaac_01 draws happen here, BEFORE the variation loop's RNG
+        // draws, in the exact flam3 order: 4 summed left-to-right into rndG,
+        // then 1 into rndA. Mutates `pre` (the input to the variation loop).
+        if let pb = x.variations.first(where: { $0.name == "pre_blur" }), pb.weight != 0 {
+            let w = pb.weight
+            let d1 = rng.isaac01()
+            let d2 = rng.isaac01()
+            let d3 = rng.isaac01()
+            let d4 = rng.isaac01()
+            let rndG = w * (d1 + d2 + d3 + d4 - 2.0)
+            let d5 = rng.isaac01()
+            let rndA = d5 * 2 * .pi
+            pre = SIMD2<Double>(pre.x + rndG * cos(rndA),
+                                pre.y + rndG * sin(rndA))
+        }
         // affine carries the xform's pre-affine 2×2 second row + translation as
         // SIMD4(c, d, e, f) = flam3 c[1][0], c[1][1], c[2][0], c[2][1], needed by
         // the coefficient-dependent variations rings/fan (e,f; variations.c:521,543),

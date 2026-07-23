@@ -13,8 +13,8 @@ final class ParamChannelParityTests: XCTestCase {
 
     @MainActor
     func testCanonicalOrderGrewTo33NoDupes() throws {
-        XCTAssertEqual(Variations.canonicalOrder.count, 96)
-        XCTAssertEqual(Set(Variations.canonicalOrder).count, 96, "duplicate canonical name")
+        XCTAssertEqual(Variations.canonicalOrder.count, 99)
+        XCTAssertEqual(Set(Variations.canonicalOrder).count, 99, "duplicate canonical name")
         XCTAssertEqual(Variations.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(Variations.canonicalOrder.filter { $0 == "polar" }.count, 1)
         for name in ["blob", "curl", "super_shape", "ngon", "julian", "juliascope",
@@ -27,8 +27,8 @@ final class ParamChannelParityTests: XCTestCase {
 
     @MainActor
     func testBytesPerXform() throws {
-        XCTAssertEqual(GPUXform.floatsPerXform, 879)
-        XCTAssertEqual(GPUXform.bytesPerXform, 3516)
+        XCTAssertEqual(GPUXform.floatsPerXform, 906)
+        XCTAssertEqual(GPUXform.bytesPerXform, 3624)
         // Lock the layout relationship so numSlots and floatsPerXform can't
         // silently desync (the constants are derived on the host, but this
         // guards against a future hand-edit that breaks the derivation).

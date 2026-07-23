@@ -1,17 +1,18 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 96-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 99-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
-/// flower/conic/parabola + secant2/disc2; spherical/polar counted once),
-/// per-variation params/defaults,
+/// flower/conic/parabola + secant2/disc2 + trig family + paramless non-trig
+/// + parametric batches 3a/3b + boarders/cpow/pre_blur; spherical/polar
+/// counted once), per-variation params/defaults,
 /// special-sauce rest values, and the name→(slot, intra-slot-index) maps.
 /// Shared by the parser, serializer, CPU `Variations` table, the Metal host
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 96-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 99-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +22,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 96-device-slot layout) ----
-    /// Fixed 96-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 99-device-slot layout) ----
+    /// Fixed 99-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -45,14 +46,16 @@ public struct VariationDescriptor: Sendable {
     /// 52..54; then the corpus-variations final pair: `secant2` (var46,
     /// paramless, un-guarded 1/cos), `disc2` (var49, parametric disc2_rot/
     /// disc2_twist default 0, precalc inlined) at slots 55..56. The 2 final
-    /// slots brought Emberweft to 57/99 (100% of the variations that appear
-    /// in the 23k-genome corpus survey); the trig family var82–95 (slots
-    /// 57..70) extends Emberweft to 71/99, the paramless non-trig family
-    /// (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to 78/99,
-    /// the parametric ≤2-params non-RNG family (var54/55/58/63/97/68/75/
-    /// 76/80, slots 78..86) extends Emberweft to 87/99, and the parametric
+    /// corpus slots brought Emberweft to 57/99 (100% of the variations that
+    /// appear in the 23k-genome corpus survey); the trig family var82–95
+    /// (slots 57..70) extends Emberweft to 71/99, the paramless non-trig
+    /// family (var57/61/62/64/66/70/72, slots 71..77) extends Emberweft to
+    /// 78/99, the parametric ≤2-params non-RNG family (var54/55/58/63/97/68/
+    /// 75/76/80, slots 78..86) extends Emberweft to 87/99, the parametric
     /// 3+-params non-RNG family (var96/60/65/98/71/73/81/77/69, slots 87..95)
-    /// extends Emberweft to 96/99.
+    /// extends Emberweft to 96/99, and the final RNG family (var56 boarders,
+    /// var59 cpow, var67 pre_blur, slots 96..98) extends Emberweft to 99/99
+    /// — full flam3 coverage.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -281,8 +284,31 @@ public struct VariationDescriptor: Sendable {
         //   oscope_*). 4th C param oscope_damping defaults 0 → simpler branch
         //   (exp damping factor) only — exposed here as 3 params per spec.
         "oscilloscope",
+        // ---- Batch 4: RNG family (var56/59/67; slots 96..98). Brings Emberweft
+        // to 99/99 — full flam3 coverage. boarders + cpow are NORMAL
+        // accumulator variations dispatched in `evaluate`'s switch + the MSL
+        // w-guarded chain (with rng). pre_blur is a PRE-transform: it mutates
+        // the input point AFTER the affine but BEFORE the variation loop (5
+        // isaac_01 draws), so it is NOT in the evaluate switch / MSL dispatch
+        // chain — see ChaosGame.applyXformBody + apply_xform_body's pre-step. ----
+        // var56_boarders: paramless, 1 isaac_01 draw, normal accumulator.
+        //   rint = round-to-nearest-EVEN (banker's); branchy offsetX/offsetY
+        //   boarder-walk (divisions guarded by |offsetX|>=|offsetY| structure;
+        //   origin → NaN is handled downstream by badvalue, no guard).
+        "boarders",
+        // var59_cpow: parametric (cpow_r/cpow_i/cpow_power, default 0) + 1
+        //   isaac_01 draw INSIDE floor(cpow_power * isaac_01). Uses
+        //   precalc_atanyx + precalc_sumsq. RNG-consuming → evaluate switch.
+        "cpow",
+        // var67_pre_blur: paramless, 5 isaac_01 draws (4 summed into rndG
+        //   left-to-right + 1 into rndA), a PRE-transform that mutates (tx,ty)
+        //   after the affine before the variation loop. Has a descriptor +
+        //   knownNames + canonicalOrder slot (parses + packs) but NO table
+        //   closure + NO evaluate-switch case — applied as a pre-step in
+        //   ChaosGame.applyXformBody (CPU) + apply_xform_body (Metal).
+        "pre_blur",
     ]
-    /// Canonical device-slot index for a variation name (0..<96), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<99), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -549,6 +575,28 @@ public struct VariationDescriptor: Sendable {
         d("oscilloscope", ["oscilloscope_separation","oscilloscope_frequency","oscilloscope_amplitude"],
           ["oscilloscope_separation":0,"oscilloscope_frequency":0,"oscilloscope_amplitude":0])
         // --- End batch 3b (9 variations) ---
+        // --- Batch 4: RNG family (var56/59/67). boarders + cpow are RNG-
+        // consuming normal accumulators → live in `evaluate`'s switch, NOT the
+        // table. pre_blur is a PRE-transform (mutates input after affine, BEFORE
+        // the variation loop) → has NO table closure AND NO evaluate-switch case
+        // (handled by ChaosGame.applyXformBody's pre-step). Formulas ported
+        // verbatim from /Users/frederic/flam3-oracle-src/flam3/variations.c. ---
+        // var56_boarders (paramless, 1 isaac_01 draw): RNG-consuming → evaluate
+        //   switch. The descriptor is paramless (no XML params).
+        d("boarders", [], [:])
+        // var59_cpow (3 params cpow_r/i/power, default 0; 1 isaac_01 draw):
+        //   RNG-consuming → evaluate switch. cpow_power=0 (the parse default)
+        //   is a flam3 singularity (2π/power, r/power, i/power → ±Inf/NaN);
+        //   genomes always set a nonzero power.
+        d("cpow", ["cpow_r","cpow_i","cpow_power"],
+          ["cpow_r":0,"cpow_i":0,"cpow_power":0])
+        // var67_pre_blur (paramless, 5 isaac_01 draws; PRE-transform). NOT in
+        //   the table closure AND NOT in evaluate's switch — applied as a pre-
+        //   step in ChaosGame.applyXformBody + apply_xform_body (Metal). The
+        //   descriptor exists only so the parser accepts `pre_blur="..."`
+        //   weights and the Metal host packer writes the weight to slot 98.
+        d("pre_blur", [], [:])
+        // --- End batch 4 (3 variations) ---
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

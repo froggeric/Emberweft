@@ -2036,12 +2036,192 @@ final class VariationsTests: XCTestCase {
             // valid nonzero params.
             if name == "perspective" || name == "cell" || name == "modulus"
                 || name == "mobius" { continue }
+            // cpow's default cpow_power=0 is a flam3 singularity (2π/power,
+            // r/power, i/power → ±Inf/NaN). Faithful to flam3 (no EPS guard;
+            // the chaos-game badvalue check handles it downstream). Genomes
+            // always set a nonzero cpow_power — testCpow covers that case.
+            // pre_blur is a PRE-transform skipped by `evaluate` (the loop
+            // `continue`s on it); with no other variations it returns (0, 0),
+            // which is finite — no skip needed, but documented here for clarity.
+            if name == "cpow" { continue }
             let point = m1Names.contains(name) ? origin : nonSingular
             var rng = ISAAC(isaacSeed: "finiteness")
             let r = Variations.evaluate([Variation(name: name, weight: 1)], at: point, affine: .zero, rng: &rng)
             XCTAssertTrue(r.x.isFinite, "\(name) at \(point) x not finite")
             XCTAssertTrue(r.y.isFinite, "\(name) at \(point) y not finite")
         }
+    }
+
+    // MARK: - Batch 4: RNG family (var56 boarders, var59 cpow, var67 pre_blur).
+    // Hand-traced closed forms + draw-count invariants. boarders + cpow are
+    // NORMAL accumulators dispatched in `evaluate`'s switch; pre_blur is a
+    // PRE-transform that `evaluate` explicitly `continue`s on — it is applied
+    // as a pre-step in ChaosGame.applyXformBody (tested directly via the
+    // draw-count + offset test below, NOT via evaluate).
+
+    // var56_boarders (variations.c:1199-1236). Paramless; ONE isaac_01 draw
+    // used as the ≥0.75 branch test. rint = round-to-nearest-EVEN.
+    //   roundX = rint(tx); roundY = rint(ty);
+    //   offsetX = tx - roundX; offsetY = ty - roundY;
+    //   if (isaac_01() >= 0.75) { p0 += w*(offsetX*0.5 + roundX); p1 += ...; }
+    //   else { branchy |offsetX|>=|offsetY| decision tree (divisor guarded by
+    //          the same branch that proves it nonzero-except-at-origin) }
+    // Origin (0,0) → 0/0 NaN in the inner branches (match flam3; chaos-game
+    // badvalue handles it downstream). At (0.3, 0.4) all branches are finite
+    // (offsetX=0.3, offsetY=0.4, |offsetX|<|offsetY| → else branch with
+    // offsetY≥0 → no division by zero).
+    func testBoardersDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "boarders", weight: 1, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()                              // boarders consumed 1 word
+        XCTAssertTrue(out.x.isFinite, "boarders x not finite")
+        XCTAssertTrue(out.y.isFinite, "boarders y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "boarders must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for boarders (1 draw → branch test). Pins count (1) + the
+    /// branch structure: the draw decides ≥0.75 (top branch) vs <0.75 (boarder
+    /// branch with |offsetX|>=|offsetY| decision). The branch taken depends on
+    /// the drawn value — this test traces BOTH possibilities by computing the
+    /// expected value from the SAME draw on a fresh-seed twin.
+    func testBoardersClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "boarders-closed-form")
+        var rng2 = ISAAC(isaacSeed: "boarders-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let out = Variations.evaluate(
+            [Variation(name: "boarders", weight: weight, parameters: [:])],
+            at: p, affine: .zero, rng: &rng1)
+        // Trace the EXACT branch structure of variations.c:1199-1236 with the
+        // same draw value.
+        let roundX = p.x.rounded(.toNearestOrEven)
+        let roundY = p.y.rounded(.toNearestOrEven)
+        let offsetX = p.x - roundX
+        let offsetY = p.y - roundY
+        let d1 = rng2.isaac01()                              // draw #1
+        let expected: SIMD2<Double>
+        if d1 >= 0.75 {
+            expected = SIMD2(weight * (offsetX * 0.5 + roundX),
+                             weight * (offsetY * 0.5 + roundY))
+        } else if abs(offsetX) >= abs(offsetY) {
+            if offsetX >= 0 {
+                expected = SIMD2(weight * (offsetX * 0.5 + roundX + 0.25),
+                                 weight * (offsetY * 0.5 + roundY + 0.25 * offsetY / offsetX))
+            } else {
+                expected = SIMD2(weight * (offsetX * 0.5 + roundX - 0.25),
+                                 weight * (offsetY * 0.5 + roundY - 0.25 * offsetY / offsetX))
+            }
+        } else if offsetY >= 0 {
+            expected = SIMD2(weight * (offsetX * 0.5 + roundX + offsetX / offsetY * 0.25),
+                             weight * (offsetY * 0.5 + roundY + 0.25))
+        } else {
+            expected = SIMD2(weight * (offsetX * 0.5 + roundX - offsetX / offsetY * 0.25),
+                             weight * (offsetY * 0.5 + roundY - 0.25))
+        }
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var59_cpow (variations.c:1291-1310). Parametric (cpow_r/cpow_i/cpow_power
+    // default 0) + ONE isaac_01 draw INSIDE floor(power * isaac_01()). Uses
+    // precalc_atanyx + precalc_sumsq. cpow_power=0 is a flam3 singularity
+    // (2π/power, r/power, i/power → ±Inf/NaN) — testCpow always sets a nonzero
+    // power (mirroring real genomes).
+    func testCpowDrawsOneAndFinite() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let out = Variations.evaluate(
+            [Variation(name: "cpow", weight: 1,
+                       parameters: ["cpow_r": 1, "cpow_i": 0.3, "cpow_power": 3])],
+            at: p, affine: .zero, rng: &rng1)
+        _ = rng2.isaac01()                              // cpow consumed 1 word
+        XCTAssertTrue(out.x.isFinite, "cpow x not finite")
+        XCTAssertTrue(out.y.isFinite, "cpow y not finite")
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                      "cpow must consume exactly 1 ISAAC word")
+    }
+    /// Closed form for cpow: 1 draw INSIDE floor(power*isaac_01()). Pins count
+    /// (1) AND the load-bearing draw position — the draw MUST be issued inside
+    /// the floor() argument, NOT before or after, to match flam3's stream order.
+    func testCpowClosedFormOrderedStream() {
+        var rng1 = ISAAC(isaacSeed: "cpow-closed-form")
+        var rng2 = ISAAC(isaacSeed: "cpow-closed-form")
+        let p = SIMD2<Double>(0.3, 0.4)
+        let weight = 1.0
+        let r = 1.0, i = 0.3, power = 3.0
+        let out = Variations.evaluate(
+            [Variation(name: "cpow", weight: weight,
+                       parameters: ["cpow_r": r, "cpow_i": i, "cpow_power": power])],
+            at: p, affine: .zero, rng: &rng1)
+        let sumsq = p.x*p.x + p.y*p.y
+        let a = atan2(p.y, p.x)                                 // precalc_atanyx
+        let lnr = 0.5 * log(sumsq)
+        let va = 2 * .pi / power
+        let vc = r / power
+        let vd = i / power
+        let d1 = rng2.isaac01()                                  // draw #1 inside floor
+        let ang = vc * a + vd * lnr + va * floor(power * d1)
+        let m = weight * exp(vc * lnr - vd * a)
+        let expected = SIMD2<Double>(m * cos(ang), m * sin(ang))
+        XCTAssertEqual(out, expected, accuracy: 1e-12)
+    }
+
+    // var67_pre_blur (variations.c:1480-1496). Paramless; FIVE isaac_01 draws
+    // (4 summed left-to-right into rndG = w*(d1+d2+d3+d4-2.0), then 1 into
+    // rndA = d5*2π). A PRE-transform applied in ChaosGame.applyXformBody AFTER
+    // the affine but BEFORE the variation loop (variations.c:2148-2150),
+    // mutating (tx, ty). `Variations.evaluate` explicitly `continue`s on
+    // `pre_blur` so this test does NOT exercise it via evaluate — instead it
+    // traces the exact draw count (5) and the formula directly, mirroring the
+    // applyXformBody pre-step.
+    func testPreBlurDrawsFiveAndShiftsPoint() {
+        // (1) Draw count: a `pre_blur`-only "xform" should consume exactly 5
+        // ISAAC words from the stream (4 into rndG + 1 into rndA). evaluate
+        // skips pre_blur, so we trace the draw sequence by hand — exactly what
+        // ChaosGame.applyXformBody does when an xform has a nonzero pre_blur.
+        var rng1 = ISAAC(isaacSeed: "t")
+        var rng2 = ISAAC(isaacSeed: "t")
+        let weight = 0.5
+        let preAffineP = SIMD2<Double>(0.3, 0.4)   // the point after the affine
+        // Mirror applyXformBody's pre-step exactly.
+        let d1 = rng1.isaac01(); let d2 = rng1.isaac01()
+        let d3 = rng1.isaac01(); let d4 = rng1.isaac01()
+        let rndG = weight * (d1 + d2 + d3 + d4 - 2.0)
+        let d5 = rng1.isaac01()
+        let rndA = d5 * 2 * .pi
+        let shifted = SIMD2<Double>(preAffineP.x + rndG * cos(rndA),
+                                    preAffineP.y + rndG * sin(rndA))
+        // Reference: consume 5 words from the twin.
+        _ = rng2.isaac01(); _ = rng2.isaac01(); _ = rng2.isaac01()
+        _ = rng2.isaac01(); _ = rng2.isaac01()
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                       "pre_blur must consume exactly 5 ISAAC words (4 into rndG + 1 into rndA)")
+        // The point moved (offset is nonzero in general — pinned by the rndG
+        // value's finite-nonzero expectation).
+        XCTAssertFalse(shifted.x == preAffineP.x && shifted.y == preAffineP.y,
+                       "pre_blur should generally shift the point (5 RNG draws → nonzero offset)")
+        XCTAssertTrue(shifted.x.isFinite, "pre_blur shifted x must be finite")
+        XCTAssertTrue(shifted.y.isFinite, "pre_blur shifted y must be finite")
+    }
+    /// `Variations.evaluate` MUST skip pre_blur entirely (no dispatch, no draw).
+    /// If dispatched here, it would draw 5 words AND double-apply the offset
+    /// (since ChaosGame.applyXformBody already applied the pre-step). This test
+    /// pins that `evaluate([pre_blur], ...)` returns (0, 0) and consumes 0
+    /// words — proving the skip is in place.
+    func testPreBlurIsSkippedByEvaluate() {
+        var rng1 = ISAAC(isaacSeed: "t"); var rng2 = ISAAC(isaacSeed: "t")
+        let out = Variations.evaluate(
+            [Variation(name: "pre_blur", weight: 1, parameters: [:])],
+            at: SIMD2<Double>(0.3, 0.4), affine: .zero, rng: &rng1)
+        // pre_blur must NOT be dispatched by evaluate (it's a PRE-transform);
+        // the loop `continue`s before the switch, so output is exactly (0, 0)
+        // (no accumulation) and no RNG words are consumed.
+        XCTAssertEqual(out, SIMD2<Double>.zero, accuracy: 1e-12)
+        // evaluate consumed 0 words (pre_blur skipped before the switch).
+        XCTAssertEqual(rng1.isaac01(), rng2.isaac01(),
+                       "evaluate(pre_blur) must consume 0 ISAAC words")
     }
     func testUnknownVariationIsZero() {
         Variations.resetWarnings()

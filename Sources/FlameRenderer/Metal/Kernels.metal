@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+96+(96*8) = 879 floats = 3516 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+99+(99*8) = 906 floats = 3624 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 96
+#define NUM_XFORM_SLOTS_MS 99
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 96
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 96*8 = 768
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 99
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 99*8 = 792
 };
 
 struct GPUFrameParams {
@@ -1355,18 +1355,98 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 96 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// var56_boarders (variations.c:1199-1236). ONE isaac_01 draw used as the ≥0.75
+// branch test. Paramless; RNG-consuming → lives in `apply_xform_body`'s
+// w-guarded dispatch chain. rint = round-to-nearest-EVEN (banker's); Metal's
+// `rint()` matches C's `rint()` (both honor the current rounding mode, which
+// defaults to round-to-nearest-even). Divisions by offsetX/offsetY are guarded
+// by the |offsetX|>=|offsetY| (or its else) branch structure — the divisor in
+// each branch is the axis that the same branch just proved nonzero-except-at-
+// origin. At the origin both offsets are 0 → inner branches divide by zero →
+// NaN; match flam3 (NO per-term guard; the chaos game's post-affine badvalue
+// check handles NaN downstream, redrawing).
+//   roundX = rint(tx); roundY = rint(ty);
+//   offsetX = tx - roundX; offsetY = ty - roundY;
+//   if (isaac_01() >= 0.75) {
+//      (w*(offsetX*0.5 + roundX), w*(offsetY*0.5 + roundY));
+//   } else {
+//      if (|offsetX| >= |offsetY|) {
+//         if (offsetX>=0) (w*(offsetX*0.5+roundX+0.25), w*(offsetY*0.5+roundY + 0.25*offsetY/offsetX))
+//         else            (w*(offsetX*0.5+roundX-0.25), w*(offsetY*0.5+roundY - 0.25*offsetY/offsetX))
+//      } else {
+//         if (offsetY>=0) (w*(offsetX*0.5+roundX + offsetX/offsetY*0.25), w*(offsetY*0.5+roundY+0.25))
+//         else            (w*(offsetX*0.5+roundX - offsetX/offsetY*0.25), w*(offsetY*0.5+roundY-0.25))
+//      }
+//   }
+static inline float2 v_boarders(float2 p, float w, thread IsaacState& rng) {
+    float roundX = rint(p.x);
+    float roundY = rint(p.y);
+    float offsetX = p.x - roundX;
+    float offsetY = p.y - roundY;
+    if (isaac_01(rng) >= 0.75f) {
+        return float2(w * (offsetX * 0.5f + roundX),
+                      w * (offsetY * 0.5f + roundY));
+    }
+    if (fabs(offsetX) >= fabs(offsetY)) {
+        if (offsetX >= 0.0f) {
+            return float2(w * (offsetX * 0.5f + roundX + 0.25f),
+                          w * (offsetY * 0.5f + roundY + 0.25f * offsetY / offsetX));
+        }
+        return float2(w * (offsetX * 0.5f + roundX - 0.25f),
+                      w * (offsetY * 0.5f + roundY - 0.25f * offsetY / offsetX));
+    }
+    if (offsetY >= 0.0f) {
+        return float2(w * (offsetX * 0.5f + roundX + offsetX / offsetY * 0.25f),
+                      w * (offsetY * 0.5f + roundY + 0.25f));
+    }
+    return float2(w * (offsetX * 0.5f + roundX - offsetX / offsetY * 0.25f),
+                  w * (offsetY * 0.5f + roundY - 0.25f));
+}
+
+// var59_cpow (variations.c:1291-1310). Parametric (cpow_r/cpow_i/cpow_power,
+// default 0) + ONE isaac_01 draw INSIDE floor(cpow_power * isaac_01()). The
+// draw MUST be issued before the va*floor(...) multiply (reordering diverges
+// the ISAAC stream). Uses precalc_atanyx + precalc_sumsq (computed inline).
+//   a   = atan2(ty, tx); lnr = 0.5*log(sumsq);
+//   va  = 2π/power; vc = r/power; vd = i/power;
+//   ang = vc*a + vd*lnr + va*floor(power * isaac_01());    // draw inside floor
+//   m   = w * exp(vc*lnr - vd*a);
+//   (m*cos(ang), m*sin(ang)).
+// At cpow_power=0 (parse default) the divisions by power are NaN/Inf — match
+// flam3 (no EPS guard; the chaos game's post-affine badvalue check handles NaN
+// downstream). Genomes always set a nonzero power.
+// Param order in pr[0..2] = descriptor-declared order: cpow_r, cpow_i, cpow_power.
+static inline float2 v_cpow(float2 p, float w, thread const float* pr,
+                            thread IsaacState& rng) {
+    float r     = pr[0];
+    float i     = pr[1];
+    float power = pr[2];
+    float sumsq = p.x*p.x + p.y*p.y;
+    float a = atan2(p.y, p.x);
+    float lnr = 0.5f * log(sumsq);
+    float va = 2.0f * M_PI_F / power;
+    float vc = r / power;
+    float vd = i / power;
+    float ang = vc*a + vd*lnr + va*floor(power * isaac_01(rng));   // draw inside floor
+    float m = w * exp(vc*lnr - vd*a);
+    return float2(m * cos(ang), m * sin(ang));
+}
+
+// Sum the 99 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
-// flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
-// one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
-// ordered isaac_01s; radial_blur: FOUR isaac_01s summed left-to-right; noise:
-// TWO (angle, radius) INPUT-SCALED; blur: TWO (angle, radius) NOT input-scaled;
-// gaussian_blur: FIVE (1 angle + 4-sum); arch: ONE (angle); square: TWO
-// (independent for p0, p1); rays: ONE (angle, un-guarded tan); blade: ONE
-// (r=d1*w*sqrt); twintrian: ONE (r=d1*w*sqrt; badvalue-guarded log10(sinr²)+cosr
-// → -30.0); flower: ONE (r=w*(d1-holes)*cos(petals*θ)/sqrt, NO EPS); conic:
-// ONE (ct=tx/sqrt, r=w*(d1-holes)*ecc/(1+ecc*ct)/sqrt, NO EPS); parabola: TWO
-// per-axis (draw #1 → p0 via height*sin²*r, draw #2 → p1 via width*cos*r)).
+// flower/conic/parabola/boarders/cpow consume the RNG (julian/juliascope/
+// wedge_julia: one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01;
+// pie: THREE ordered isaac_01s; radial_blur: FOUR isaac_01s summed
+// left-to-right; noise: TWO (angle, radius) INPUT-SCALED; blur: TWO (angle,
+// radius) NOT input-scaled; gaussian_blur: FIVE (1 angle + 4-sum); arch: ONE
+// (angle); square: TWO (independent for p0, p1); rays: ONE (angle, un-guarded
+// tan); blade: ONE (r=d1*w*sqrt); twintrian: ONE (r=d1*w*sqrt; badvalue-guarded
+// log10(sinr²)+cosr → -30.0); flower: ONE (r=w*(d1-holes)*cos(petals*θ)/sqrt,
+// NO EPS); conic: ONE (ct=tx/sqrt, r=w*(d1-holes)*ecc/(1+ecc*ct)/sqrt, NO EPS);
+// parabola: TWO per-axis (draw #1 → p0 via height*sin²*r, draw #2 → p1 via
+// width*cos*r); boarders: ONE (the ≥0.75 branch test); cpow: ONE inside
+// floor(power*isaac_01)). pre_blur (slot 98) is NOT in this chain — it is a
+// PRE-transform applied by `apply_xform_body` BEFORE the chain runs.
 // CRITICAL: every slot MUST be guarded by `w[i] != 0` to match CPU
 // (`Variations.evaluate` skips weight==0). Without the guard, a weight-0
 // variation whose internals overflow to Inf (cosh/sinh in `cosine` for
@@ -1375,6 +1455,25 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
 // trajectory and the RNG stream from the CPU.
 static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
     float2 pre = apply_affine(x, p);
+    // pre_blur PRE-step (var67, variations.c:2148-2150 + 1480-1496). Applied
+    // AFTER the affine but BEFORE the variation dispatch loop — a PRE-transform
+    // that mutates the input point, NOT an accumulator. 5 ordered isaac_01
+    // draws: 4 summed left-to-right into rndG = w*(d1+d2+d3+d4-2.0), then 1
+    // into rndA = d5*2π. The draws MUST happen before the dispatch chain below
+    // so they precede julia/pie/etc.'s draws in the exact flam3 stream order.
+    // Slot 98 has NO dispatch line below — this pre-step is its ONLY effect.
+    if (x.varWeights[98] != 0.0f) {
+        float wpb = x.varWeights[98];
+        float d1 = isaac_01(rng);                  // 4 draws, strict left-to-right
+        float d2 = isaac_01(rng);
+        float d3 = isaac_01(rng);
+        float d4 = isaac_01(rng);
+        float rndG = wpb * (d1 + d2 + d3 + d4 - 2.0f);
+        float d5 = isaac_01(rng);
+        float rndA = d5 * 2.0f * M_PI_F;
+        pre = float2(pre.x + rndG * cos(rndA),
+                     pre.y + rndG * sin(rndA));
+    }
     float2 acc = float2(0.0f);
     float w[NUM_XFORM_SLOTS_MS];
     for (int i = 0; i < NUM_XFORM_SLOTS_MS; i++) w[i] = x.varWeights[i];
@@ -1624,6 +1723,19 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     // oscilloscope_frequency, oscilloscope_amplitude.
     if (w[95] != 0.0f) acc += v_oscilloscope(pre, w[95], &x.varParams[95*SLOT_WIDTH_MS]);
     // ---- End batch 3b (9 variations) ----
+    // ---- Batch 4: RNG family (slots 96..97 dispatched here; slot 98 pre_blur
+    // is the PRE-step at the top of apply_xform_body, NOT in this chain). ----
+    // slot 96 — boarders (var56_boarders, paramless; 1 isaac_01 draw used as
+    //   the ≥0.75 branch test; rint = round-to-nearest-EVEN; origin → NaN,
+    //   match flam3 — chaos-game badvalue handles it downstream).
+    if (w[96] != 0.0f) acc += v_boarders(pre, w[96], rng);
+    // slot 97 — cpow (var59_cpow, parametric cpow_r/i/power default 0; 1
+    //   isaac_01 draw INSIDE floor(power * isaac_01); uses precalc_atanyx +
+    //   precalc_sumsq. cpow_power=0 → div-by-zero → NaN; genomes always set
+    //   nonzero power).
+    // Param order in pr[0..2] = descriptor-declared order: cpow_r, cpow_i, cpow_power.
+    if (w[97] != 0.0f) acc += v_cpow(pre, w[97], &x.varParams[97*SLOT_WIDTH_MS], rng);
+    // ---- End batch 4 (2 dispatched lines; pre_blur is slot 98's PRE-step at top) ----
     return apply_post(x, acc);
 }
 

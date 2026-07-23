@@ -34,8 +34,8 @@ final class VariationDescriptorTests: XCTestCase {
         for n in names { XCTAssertNotNil(VariationDescriptor.descriptor(for: n), n) }
     }
     func testCanonicalOrderIsSingleAuthority() {
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 96)
-        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 96, "duplicate canonical name")
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 99)
+        XCTAssertEqual(Set(VariationDescriptor.canonicalOrder).count, 99, "duplicate canonical name")
         // spherical/polar counted ONCE (spec's "35" double-counted them; faithful = 35).
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "spherical" }.count, 1)
         XCTAssertEqual(VariationDescriptor.canonicalOrder.filter { $0 == "polar" }.count, 1)
@@ -211,7 +211,41 @@ final class VariationDescriptorTests: XCTestCase {
         // Slot indices 55, 56 (immediately after the parametric+RNG trio at 52..54).
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "secant2"), 55)
         XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "disc2"), 56)
-        // Canonical-order authority for the full 96.
-        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 96)
+        // Canonical-order authority for the full 99.
+        XCTAssertEqual(VariationDescriptor.canonicalOrder.count, 99)
+    }
+
+    /// var56_boarders + var59_cpow + var67_pre_blur (Work A batch 4): the final
+    /// 3 RNG-consuming variations. boarders + cpow are NORMAL accumulators
+    /// (dispatched in `evaluate`'s switch + the MSL w-guarded chain with rng);
+    /// pre_blur is a PRE-transform (mutates input after the affine but BEFORE
+    /// the variation loop — applied in ChaosGame.applyXformBody + apply_xform_body's
+    /// pre-step, NOT in `evaluate`'s switch nor the MSL dispatch chain). Brings
+    /// Emberweft to 99/99 (full flam3 coverage).
+    func testBatch4RngFamilyDescriptors() {
+        // var56_boarders (paramless, 1 isaac_01 draw, branchy boarder-walk).
+        let boarders = VariationDescriptor.descriptor(for: "boarders")!
+        XCTAssertTrue(boarders.parameters.isEmpty, "boarders: must be paramless")
+        XCTAssertTrue(boarders.defaults.isEmpty, "boarders: no defaults (paramless)")
+        XCTAssertTrue(boarders.rest.isEmpty, "boarders: no special-sauce rest")
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "boarders"), 96)
+
+        // var59_cpow (3 params cpow_r/i/power default 0, 1 isaac_01 draw INSIDE
+        // floor(power * isaac_01)).
+        let cpow = VariationDescriptor.descriptor(for: "cpow")!
+        XCTAssertEqual(cpow.parameters, ["cpow_r", "cpow_i", "cpow_power"])
+        XCTAssertEqual(cpow.defaults, ["cpow_r": 0, "cpow_i": 0, "cpow_power": 0])
+        XCTAssertTrue(cpow.rest.isEmpty, "cpow has no special-sauce rest")
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "cpow"), 97)
+
+        // var67_pre_blur (paramless, 5 isaac_01 draws; PRE-transform). The
+        // descriptor exists so the parser accepts `pre_blur="..."` weights and
+        // the Metal host packer writes the weight to slot 98; the variation is
+        // applied as a pre-step (NOT in evaluate's switch nor the MSL dispatch).
+        let preBlur = VariationDescriptor.descriptor(for: "pre_blur")!
+        XCTAssertTrue(preBlur.parameters.isEmpty, "pre_blur: must be paramless")
+        XCTAssertTrue(preBlur.defaults.isEmpty, "pre_blur: no defaults (paramless)")
+        XCTAssertTrue(preBlur.rest.isEmpty, "pre_blur: no special-sauce rest")
+        XCTAssertEqual(VariationDescriptor.canonicalSlot(for: "pre_blur"), 98)
     }
 }

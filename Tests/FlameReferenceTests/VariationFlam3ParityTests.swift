@@ -181,6 +181,15 @@ final class VariationFlam3ParityTests: XCTestCase {
             ("waves2",       "linear=\"0.6\" waves2=\"0.5\" waves2_freqx=\"1\" waves2_freqy=\"1\" waves2_scalex=\"0.5\" waves2_scaley=\"0.5\" \(aff)"),
             ("wedge",        "linear=\"0.6\" wedge=\"0.5\" wedge_angle=\"0.5\" wedge_count=\"2\" wedge_hole=\"0.3\" wedge_swirl=\"0.3\" \(aff)"),
             ("oscilloscope", "linear=\"0.6\" oscilloscope=\"0.5\" oscilloscope_separation=\"0.5\" oscilloscope_frequency=\"1\" oscilloscope_amplitude=\"1\" \(aff)"),
+            // --- Work A batch 4: RNG family (var56/59/67). boarders + cpow are
+            // RNG-consuming normal accumulators; pre_blur is a PRE-transform
+            // (applied after affine before the variation loop in flam3). Each
+            // MUST clear the ≥38 dB gate (enforced below), not diagnostic. NONZERO
+            // cpow_power is REQUIRED (cpow_power=0 → div-by-zero → NaN; genomes
+            // always set a nonzero power). ---
+            ("boarders",  "linear=\"0.6\" boarders=\"0.5\" \(aff)"),
+            ("cpow",      "linear=\"0.6\" cpow=\"0.5\" cpow_r=\"1\" cpow_i=\"0.3\" cpow_power=\"3\" \(aff)"),
+            ("pre_blur",  "linear=\"0.6\" pre_blur=\"0.3\" \(aff)"),
             // --- large/non-contracting affine probe (242.00099's waves-xform
             // coefs). If linear_LRG diverges but small-affine linear passed,
             // the trigger is large-affine iteration handling (badvalue
@@ -228,6 +237,8 @@ final class VariationFlam3ParityTests: XCTestCase {
             // Work A batch 3b: parametric 3+-params non-RNG.
             "auger", "curve", "lazysusan", "mobius", "popcorn2",
             "separation", "waves2", "wedge", "oscilloscope",
+            // Work A batch 4: RNG family (final 3, → 99/99).
+            "boarders", "cpow", "pre_blur",
         ]
         var gateFailures: [String] = []
         for label in cases.map({ $0.0 }) where workA.contains(label) {

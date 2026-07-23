@@ -295,6 +295,73 @@ final class SpecialSauceParityTests: XCTestCase {
             weight: 0.4)
     }
 
+    // ---- Batch 4: RNG family (var56 boarders, var59 cpow, var67 pre_blur;
+    // Work A batch 4). The final 3 variations, → 99/99 (full flam3 coverage).
+    // boarders + cpow are RNG-consuming normal accumulators → assertParity
+    // works directly. pre_blur is a PRE-transform that needs a custom multi-
+    // variation genome (linear + pre_blur) — pre_blur alone produces no output,
+    // so the single-variation assertParity helper is not applicable. ----
+
+    // var56_boarders: paramless, 1 isaac_01 draw, branchy boarder-walk.
+    // weight=0.4 (the radial_blur precedent) keeps the orbit multiplier small —
+    // at weight=1 the affine-feedback orbit's |offsetX|≈|offsetY| near cell
+    // corners drives Float/Double orbits into different inner branches (sign-
+    // conditional p1/p0 + 0.25*offsetY/offsetX has ULP-amplification near the
+    // |offsetX|==|offsetY| decision boundary), and PSNR drops to ~36 dB.
+    // weight=0.4 keeps the orbit inside one boarders cell so the branch
+    // decision stays stable. CPU correctness pinned by VariationFlam3ParityTests
+    // (vs-flam3 ≥38 dB); this confirms Metal tracks CPU.
+    @MainActor func testBoarders() throws {
+        try assertParity("boarders", [:], weight: 0.4)
+    }
+    // var59_cpow: parametric (cpow_r/i/power) + 1 isaac_01 draw INSIDE floor.
+    // NONZERO cpow_power is mandatory (default 0 → 2π/power, r/power, i/power
+    // → ±Inf/NaN — faithful flam3 singularity). weight=0.4 (same chaos-taming
+    // as the rest of the RNG set).
+    @MainActor func testCpow() throws {
+        try assertParity("cpow",
+            ["cpow_r": 1.0, "cpow_i": 0.3, "cpow_power": 3.0], weight: 0.4)
+    }
+    // var67_pre_blur: paramless, 5 isaac_01 draws, a PRE-transform (NOT an
+    // accumulator). pre_blur alone produces no output (the variation loop
+    // accumulates nothing), so the single-variation assertParity helper is not
+    // applicable. Build a 2-variation xform [linear, pre_blur] instead: the
+    // pre-step offsets the affine point BEFORE linear runs, so CPU and Metal
+    // must agree on both the 5-draw pre-step AND the subsequent linear
+    // accumulator. The PSNR is the real RNG-parity oracle: a draw-count or
+    // draw-order mismatch collapses PSNR well below 38 (the CPU
+    // testPreBlurDrawsFiveAndShiftsPoint + testPreBlurIsSkippedByEvaluate pin
+    // count=5 and the evaluate skip, ruling that out).
+    @MainActor func testPreBlur() throws {
+        guard MetalRenderer.isAvailable else { throw XCTSkip("Metal unavailable") }
+        let flame = Flame(
+            size: SIMD2<Int>(320, 200),
+            camera: Camera(scale: 200),
+            xforms: [
+                Xform(
+                    affine: AffineTransform(a: 0.6, b: 0.2, c: -0.3, d: 0.5, e: 0.5, f: 0.3),
+                    color: 0, colorSpeed: 0.5,
+                    variations: [
+                        Variation(name: "linear", weight: 0.6),
+                        Variation(name: "pre_blur", weight: 0.3),
+                    ]
+                ),
+            ],
+            palette: Palette(colors: (0..<256).map {
+                SIMD3<Double>(Double($0) / 255, sin(Double($0) / 40) * 0.5 + 0.5, 1 - Double($0) / 255)
+            })
+        )
+        let p = RenderParams(seed: 7, width: 320, height: 200, oversample: 1, samplesPerPixel: 1000)
+        let cpu = ReferenceRenderer.render(flame: flame, params: p)
+        let gpu = MetalRenderer.render(flame: flame, params: p)
+        let psnr = ImageComparison.psnr(cpu, gpu)
+        let ssim = ImageComparison.ssim(cpu, gpu)
+        print("[Parity] linear_pre_blur @1000spp: PSNR=\(psnr.isInfinite ? "inf" : String(format: "%.2f", psnr)) dB, SSIM=\(String(format: "%.4f", ssim))")
+        XCTAssertGreaterThanOrEqual(psnr, 38.0, "linear_pre_blur: \(psnr) dB < 38")
+        XCTAssertGreaterThanOrEqual(ssim, 0.95, "linear_pre_blur: SSIM \(ssim) < 0.95")
+        XCTAssertEqual(gpu.pixels.count, gpu.width * gpu.height * 4, "linear_pre_blur: incomplete buffer")
+    }
+
     // ---- corpus-variations RNG simple set (slots 44..48).
     // All paramless but RNG-consuming (1..5 isaac_01 draws each). The PSNR is the
     // real RNG-parity oracle: a draw-count or draw-order mismatch collapses PSNR
