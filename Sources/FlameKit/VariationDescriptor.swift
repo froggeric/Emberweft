@@ -1,6 +1,6 @@
 import Foundation
 
-/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 57-slot
+/// SINGLE SOURCE OF TRUTH for all variation metadata: the canonical 71-slot
 /// order (M1's 19 + the 14 NEW special-sauce + bubble + eyefish + pie +
 /// radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
 /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
@@ -11,7 +11,7 @@ import Foundation
 /// packer, and `apply_xform_body` dispatch. `Variations.canonicalOrder` IS a
 /// one-line re-export of this array (landed in Task 5, which also grew
 /// `GPUXform.varWeights` to `[36]` and the MSL if-chain, so the widening was
-/// atomic). `VariationDescriptor.canonicalOrder` is the 57-name authority
+/// atomic). `VariationDescriptor.canonicalOrder` is the 71-name authority
 /// used by all code paths, and `Variations.canonicalOrder` simply re-exports
 /// it. Pinned to the spec's "Param-channel layout" + "Special-sauce padding"
 /// tables.
@@ -21,8 +21,8 @@ public struct VariationDescriptor: Sendable {
     public let defaults: [String: Double]
     public let rest: [String: Double]               // special-sauce rest; key absent => stays at default
 
-    // ---- canonical slot order (the 57-device-slot layout) ----
-    /// Fixed 57-name order. First 19 == the M1 set (in its existing order, so the
+    // ---- canonical slot order (the 71-device-slot layout) ----
+    /// Fixed 71-name order. First 19 == the M1 set (in its existing order, so the
     /// M1 Metal host `idxMap`/CPU `evaluate` stay slot-stable); then the 14 NEW
     /// special-sauce names in documented order; then `bubble` (var28) and
     /// `eyefish` (var27), both paramless/RNG-free, appended at slots 33/34 to
@@ -45,8 +45,9 @@ public struct VariationDescriptor: Sendable {
     /// 52..54; then the corpus-variations final pair: `secant2` (var46,
     /// paramless, un-guarded 1/cos), `disc2` (var49, parametric disc2_rot/
     /// disc2_twist default 0, precalc inlined) at slots 55..56. The 2 final
-    /// slots bring Emberweft to 57/99 — 100% of the variations that appear
-    /// in the 23k-genome corpus survey.
+    /// slots brought Emberweft to 57/99 (100% of the variations that appear
+    /// in the 23k-genome corpus survey); the trig family var82–95 (slots
+    /// 57..70) extends Emberweft to 71/99 for full flam3 coverage.
     /// spherical/polar appear ONCE.
     public static let canonicalOrder: [String] = [
         // --- M1's 19 (do not reorder: existing slots 0..18) ---
@@ -140,8 +141,40 @@ public struct VariationDescriptor: Sendable {
         // var49_disc2: parametric (disc2_rot, disc2_twist, default 0);
         // disc2_precalc (timespi/cosadd/sinadd) inlined into the closure.
         "disc2",
+        // --- Trig family (Z+ variations): var82_exp .. var95_coth (slots 57..70) ---
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /private/tmp/flam3-build/variations.c L1747-1897. Brings Emberweft to
+        // 71/99 variations.
+        // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+        "exp",
+        // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+        "log",
+        // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+        "sin",
+        // var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
+        "cos",
+        // var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
+        "tan",
+        // var87_sec: secden = 2/(cos(2*tx) + cosh(2*ty))
+        "sec",
+        // var88_csc: cscden = 2/(cosh(2*ty) - cos(2*tx))
+        "csc",
+        // var89_cot: cotden = 1/(cotcosh - cotcos)
+        "cot",
+        // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+        "sinh",
+        // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+        "cosh",
+        // var92_tanh: tanhden = 1/(tanhcos + tanhcosh)
+        "tanh",
+        // var93_sech: sechden = 2/(cos(2*ty) + cosh(2*tx))
+        "sech",
+        // var94_csch: cschden = 2/(cosh(2*tx) - cos(2*ty))
+        "csch",
+        // var95_coth: cothden = 1/(cothcosh - cothcos)
+        "coth",
     ]
-    /// Canonical device-slot index for a variation name (0..<57), or nil if unknown.
+    /// Canonical device-slot index for a variation name (0..<71), or nil if unknown.
     public static func canonicalSlot(for name: String) -> Int? {
         canonicalOrder.firstIndex(of: name)
     }
@@ -274,6 +307,38 @@ public struct VariationDescriptor: Sendable {
         // var49_disc2 (parametric: disc2_rot, disc2_twist, default 0)
         d("disc2", ["disc2_rot","disc2_twist"],
           ["disc2_rot":0,"disc2_twist":0])
+        // --- Trig family (Z+ variations): var82_exp .. var95_coth (slots 57..70) ---
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /private/tmp/flam3-build/variations.c L1747-1897.
+        // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+        d("exp", [], [:])
+        // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+        d("log", [], [:])
+        // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+        d("sin", [], [:])
+        // var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
+        d("cos", [], [:])
+        // var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
+        d("tan", [], [:])
+        // var87_sec: secden = 2/(cos(2*tx) + cosh(2*ty))
+        d("sec", [], [:])
+        // var88_csc: cscden = 2/(cosh(2*ty) - cos(2*tx))
+        d("csc", [], [:])
+        // var89_cot: cotden = 1/(cotcosh - cotcos)
+        d("cot", [], [:])
+        // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+        d("sinh", [], [:])
+        // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+        d("cosh", [], [:])
+        // var92_tanh: tanhden = 1/(tanhcos + tanhcosh)
+        d("tanh", [], [:])
+        // var93_sech: sechden = 2/(cos(2*ty) + cosh(2*tx))
+        d("sech", [], [:])
+        // var94_csch: cschden = 2/(cosh(2*tx) - cos(2*ty))
+        d("csch", [], [:])
+        // var95_coth: cothden = 1/(cothcosh - cothcos)
+        d("coth", [], [:])
+        // --- End trig family (14 variations) ---
         // --- 14 NEW special-sauce ---
         d("rings", [], [:])                            // Group C (swap-affine, no params)
         d("fan", [], [:])                              // Group C

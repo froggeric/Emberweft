@@ -90,7 +90,38 @@ public enum Variations {
         "secant2",
         // var49_disc2: parametric (disc2_rot, disc2_twist, default 0); 0 RNG
         // draws. disc2_precalc (timespi/sinadd/cosadd) inlined into the closure.
-        "disc2"
+        "disc2",
+        // ---- Trig family (Z+ variations): var82_exp .. var95_coth ----
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /private/tmp/flam3-build/variations.c L1747-1897.
+        // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+        "exp",
+        // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+        "log",
+        // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+        "sin",
+        // var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
+        "cos",
+        // var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
+        "tan",
+        // var87_sec: secden = 2/(cos(2*tx) + cosh(2*ty))
+        "sec",
+        // var88_csc: cscden = 2/(cosh(2*ty) - cos(2*tx))
+        "csc",
+        // var89_cot: cotden = 1/(cotcosh - cotcos)
+        "cot",
+        // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+        "sinh",
+        // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+        "cosh",
+        // var92_tanh: tanhden = 1/(tanhcos + tanhcosh)
+        "tanh",
+        // var93_sech: sechden = 2/(cos(2*ty) + cosh(2*tx))
+        "sech",
+        // var94_csch: cschden = 2/(cosh(2*tx) - cos(2*ty))
+        "csch",
+        // var95_coth: cothden = 1/(cothcosh - cothcos)
+        "coth",
     ]
 
     public static var warnings: Set<String> { lock.withLock { _warnings } }
@@ -797,6 +828,146 @@ public enum Variations {
             let r = w * (1.0 / (s*s + eps)).squareRoot()
             return SIMD2(p.x * r, p.y * r)
         }
+        // ---- Trig family (Z+ variations): var82_exp .. var95_coth ----
+        // All paramless; 0 RNG draws. Formulas ported verbatim from
+        // /private/tmp/flam3-build/variations.c L1747-1897.
+        // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+        //   (w * expe * expcos, w * expe * expsin)
+        t["exp"]         = { p, w, _, _ in
+            let expe = exp(p.x)
+            let (expsin, expcos) = (sin(p.y), cos(p.y))
+            return SIMD2(w * expe * expcos, w * expe * expsin)
+        }
+        // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+        //   uses precalc_atanyx = atan2(ty, tx) = atan2(y, x)
+        t["log"]         = { p, w, _, _ in
+            let sumsq = p.x*p.x + p.y*p.y
+            return SIMD2(w * 0.5 * log(sumsq), w * atan2(p.y, p.x))
+        }
+        // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+        //   (w * sinsin * sincosh, w * sinacos * sinsinh)
+        t["sin"]         = { p, w, _, _ in
+            let sinsin = sin(p.x)
+            let sinacos = cos(p.x)
+            let sinsinh = sinh(p.y)
+            let sincosh = cosh(p.y)
+            return SIMD2(w * sinsin * sincosh, w * sinacos * sinsinh)
+        }
+        // var85_cos: sincos(tx, &cossin, &coscos); cossinh = sinh(ty); coscosh = cosh(ty)
+        //   (w * coscos * coscosh, -w * cossin * cossinh)
+        t["cos"]         = { p, w, _, _ in
+            let cossin = sin(p.x)
+            let coscos = cos(p.x)
+            let cossinh = sinh(p.y)
+            let coscosh = cosh(p.y)
+            return SIMD2(w * coscos * coscosh, -w * cossin * cossinh)
+        }
+        // var86_tan: sincos(2*tx, &tansin, &tancos); tansinh = sinh(2*ty); tancosh = cosh(2*ty)
+        //   tanden = 1/(tancos + tancosh); (w * tanden * tansin, w * tanden * tansinh)
+        t["tan"]         = { p, w, _, _ in
+            let tansin = sin(2.0 * p.x)
+            let tancos = cos(2.0 * p.x)
+            let tansinh = sinh(2.0 * p.y)
+            let tancosh = cosh(2.0 * p.y)
+            let tanden = 1.0 / (tancos + tancosh)
+            return SIMD2(w * tanden * tansin, w * tanden * tansinh)
+        }
+        // var87_sec: sincos(tx, &secsin, &seccos); secsinh = sinh(ty); seccosh = cosh(ty)
+        //   secden = 2/(cos(2*tx) + cosh(2*ty))
+        //   (w * secden * seccos * seccosh, w * secden * secsin * secsinh)
+        t["sec"]         = { p, w, _, _ in
+            let secsin = sin(p.x)
+            let seccos = cos(p.x)
+            let secsinh = sinh(p.y)
+            let seccosh = cosh(p.y)
+            let secden = 2.0 / (cos(2.0 * p.x) + cosh(2.0 * p.y))
+            return SIMD2(w * secden * seccos * seccosh, w * secden * secsin * secsinh)
+        }
+        // var88_csc: sincos(tx, &cscsin, &csccos); cscsinh = sinh(ty); csccosh = cosh(ty)
+        //   cscden = 2/(cosh(2*ty) - cos(2*tx))
+        //   (w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh)
+        t["csc"]         = { p, w, _, _ in
+            let cscsin = sin(p.x)
+            let csccos = cos(p.x)
+            let cscsinh = sinh(p.y)
+            let csccosh = cosh(p.y)
+            let cscden = 2.0 / (cosh(2.0 * p.y) - cos(2.0 * p.x))
+            return SIMD2(w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh)
+        }
+        // var89_cot: sincos(2*tx, &cotsin, &cotcos); cotsinh = sinh(2*ty); cotcosh = cosh(2*ty)
+        //   cotden = 1/(cotcosh - cotcos)
+        //   (w * cotden * cotsin, w * cotden * -1 * cotsinh)
+        t["cot"]         = { p, w, _, _ in
+            let cotsin = sin(2.0 * p.x)
+            let cotcos = cos(2.0 * p.x)
+            let cotsinh = sinh(2.0 * p.y)
+            let cotcosh = cosh(2.0 * p.y)
+            let cotden = 1.0 / (cotcosh - cotcos)
+            return SIMD2(w * cotden * cotsin, w * cotden * -1.0 * cotsinh)
+        }
+        // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+        //   (w * sinhsinh * sinhcos, w * sinhcosh * sinhsin)
+        t["sinh"]        = { p, w, _, _ in
+            let sinhsin = sin(p.y)
+            let sinhcos = cos(p.y)
+            let sinhsinh = sinh(p.x)
+            let sinhcosh = cosh(p.x)
+            return SIMD2(w * sinhsinh * sinhcos, w * sinhcosh * sinhsin)
+        }
+        // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+        //   (w * coshcosh * coshcos, w * coshsinh * coshsin)
+        t["cosh"]        = { p, w, _, _ in
+            let coshsin = sin(p.y)
+            let coshcos = cos(p.y)
+            let coshsinh = sinh(p.x)
+            let coshcosh = cosh(p.x)
+            return SIMD2(w * coshcosh * coshcos, w * coshsinh * coshsin)
+        }
+        // var92_tanh: sincos(2*ty, &tanhsin, &tanhcos); tanhsinh = sinh(2*tx); tanhcosh = cosh(2*tx)
+        //   tanhden = 1/(tanhcos + tanhcosh)
+        //   (w * tanhden * tanhsinh, w * tanhden * tanhsin)
+        t["tanh"]        = { p, w, _, _ in
+            let tanhsin = sin(2.0 * p.y)
+            let tanhcos = cos(2.0 * p.y)
+            let tanhsinh = sinh(2.0 * p.x)
+            let tanhcosh = cosh(2.0 * p.x)
+            let tanhden = 1.0 / (tanhcos + tanhcosh)
+            return SIMD2(w * tanhden * tanhsinh, w * tanhden * tanhsin)
+        }
+        // var93_sech: sincos(ty, &sechsin, &sechcos); sechsinh = sinh(tx); sechcosh = cosh(tx)
+        //   sechden = 2/(cos(2*ty) + cosh(2*tx))
+        //   (w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh)
+        t["sech"]        = { p, w, _, _ in
+            let sechsin = sin(p.y)
+            let sechcos = cos(p.y)
+            let sechsinh = sinh(p.x)
+            let sechcosh = cosh(p.x)
+            let sechden = 2.0 / (cos(2.0 * p.y) + cosh(2.0 * p.x))
+            return SIMD2(w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh)
+        }
+        // var94_csch: sincos(ty, &cschsin, &cschcos); cschsinh = sinh(tx); cschcosh = cosh(tx)
+        //   cschden = 2/(cosh(2*tx) - cos(2*ty))
+        //   (w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin)
+        t["csch"]        = { p, w, _, _ in
+            let cschsin = sin(p.y)
+            let cschcos = cos(p.y)
+            let cschsinh = sinh(p.x)
+            let cschcosh = cosh(p.x)
+            let cschden = 2.0 / (cosh(2.0 * p.x) - cos(2.0 * p.y))
+            return SIMD2(w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin)
+        }
+        // var95_coth: sincos(2*ty, &cothsin, &cothcos); cothsinh = sinh(2*tx); cothcosh = cosh(2*tx)
+        //   cothden = 1/(cothcosh - cothcos)
+        //   (w * cothden * cothsinh, w * cothden * cothsin)
+        t["coth"]        = { p, w, _, _ in
+            let cothsin = sin(2.0 * p.y)
+            let cothcos = cos(2.0 * p.y)
+            let cothsinh = sinh(2.0 * p.x)
+            let cothcosh = cosh(2.0 * p.x)
+            let cothden = 1.0 / (cothcosh - cothcos)
+            return SIMD2(w * cothden * cothsinh, w * cothden * cothsin)
+        }
+        // ---- End trig family (14 variations, slots 57..70) ----
         // var24_pdj (variations.c:579-596). 4 params, all default 0. Parametric;
         // 0 RNG draws. Bounded trig of params·tx/ty (no poles).
         //   nx1 = cos(pdj_b * tx); nx2 = sin(pdj_c * tx);
@@ -1021,7 +1192,7 @@ public enum Variations {
 public extension Variations {
     /// Fixed canonical slot order for the Metal kernel's variation table and the
     /// CPU `evaluate` name→slot map. Re-exports `VariationDescriptor.canonicalOrder`
-    /// (the 57-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
+    /// (the 71-name authority: M1's 19 + the 14 special-sauce + bubble + eyefish
     /// + pie + radial_blur + waves/popcorn/power/tangent/cross + pdj/split +
     /// noise/blur/gaussian_blur/arch/square + rays/blade/twintrian +
     /// flower/conic/parabola + secant2/disc2).
@@ -1123,6 +1294,7 @@ public extension Variations {
     /// non-RNG → live in the table closures / w-guarded MSL dispatch chain.
     /// `apply_xform_body` reads them positionally and pulls
     /// their params from `varParams[slot*8 + idx]`. The MSL if-chain is now
-    /// 57 lines (`Kernels.metal`) and the 14 `v_<name>` functions landed in Task 6.
+    /// 57 lines (`Kernels.metal`); the trig family var82–95 (slots 57..70) grew
+    /// it to 71 lines + 14 more `v_<name>` functions (Work A batch 1).
     static let canonicalOrder: [String] = VariationDescriptor.canonicalOrder
 }

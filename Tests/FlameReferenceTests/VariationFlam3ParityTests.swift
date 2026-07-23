@@ -129,6 +129,22 @@ final class VariationFlam3ParityTests: XCTestCase {
             ("noise",          "linear=\"0.6\" noise=\"0.5\" \(aff)"),
             ("gaussian_blur",  "linear=\"0.6\" gaussian_blur=\"0.5\" \(aff)"),
             ("flower",         "linear=\"0.6\" flower=\"0.5\" flower_holes=\"0.3\" flower_petals=\"3\" \(aff)"),
+            // --- Work A batch 1: trig family (var82–var95), paramless. Each MUST
+            // clear the ≥38 dB gate (enforced below), not diagnostic. ---
+            ("exp",  "linear=\"0.6\" exp=\"0.5\" \(aff)"),
+            ("log",  "linear=\"0.6\" log=\"0.5\" \(aff)"),
+            ("sin",  "linear=\"0.6\" sin=\"0.5\" \(aff)"),
+            ("cos",  "linear=\"0.6\" cos=\"0.5\" \(aff)"),
+            ("tan",  "linear=\"0.6\" tan=\"0.5\" \(aff)"),
+            ("sec",  "linear=\"0.6\" sec=\"0.5\" \(aff)"),
+            ("csc",  "linear=\"0.6\" csc=\"0.5\" \(aff)"),
+            ("cot",  "linear=\"0.6\" cot=\"0.5\" \(aff)"),
+            ("sinh", "linear=\"0.6\" sinh=\"0.5\" \(aff)"),
+            ("cosh", "linear=\"0.6\" cosh=\"0.5\" \(aff)"),
+            ("tanh", "linear=\"0.6\" tanh=\"0.5\" \(aff)"),
+            ("sech", "linear=\"0.6\" sech=\"0.5\" \(aff)"),
+            ("csch", "linear=\"0.6\" csch=\"0.5\" \(aff)"),
+            ("coth", "linear=\"0.6\" coth=\"0.5\" \(aff)"),
             // --- large/non-contracting affine probe (242.00099's waves-xform
             // coefs). If linear_LRG diverges but small-affine linear passed,
             // the trigger is large-affine iteration handling (badvalue
@@ -139,8 +155,10 @@ final class VariationFlam3ParityTests: XCTestCase {
 
         var report: [String] = []
         var controlFailures: [String] = []
+        var results: [String: Float] = [:]
         for (label, xform1) in cases {
             let r = try parity(xform1: xform1, name: label)
+            results[label] = r.psnr
             let psnrStr = r.psnr.isInfinite ? "inf" : String(format: "%.2f", r.psnr)
             let isControl = ["linear", "spherical", "julia"].contains(label)
             let tag = isControl ? "[CONTROL]" : (r.psnr >= Self.gate ? "[ok]" : "[DIVERGES]")
@@ -158,7 +176,26 @@ final class VariationFlam3ParityTests: XCTestCase {
                 + "synthetic template is pathological; fix it before trusting suspect "
                 + "results:\n  " + controlFailures.joined(separator: "\n  "))
         }
-        // No assertion on suspects — this run is diagnostic. (Work A will assert
-        // ≥38 dB per variation as ports land.)
+        // No assertion on suspects — this run is diagnostic.
+        //
+        // Work A enforcement: each newly-ported variation MUST clear the ≥38 dB
+        // gate vs flam3 (not diagnostic — a real faithfulness gate). Controls
+        // already enforce ≥40 above; the Work B suspects stay diagnostic.
+        let workA: Set<String> = [
+            "exp", "log", "sin", "cos", "tan", "sec", "csc", "cot",
+            "sinh", "cosh", "tanh", "sech", "csch", "coth",
+        ]
+        var gateFailures: [String] = []
+        for label in cases.map({ $0.0 }) where workA.contains(label) {
+            let p = results[label] ?? -1
+            if p < Self.gate {
+                gateFailures.append("\(label): \(p.isInfinite ? "inf" : String(format: "%.2f", p)) dB < \(Self.gate)")
+            }
+        }
+        if !gateFailures.isEmpty {
+            XCTFail("Work A variation failed the vs-flam3 ≥\(Int(Self.gate)) dB gate "
+                + "(formula/affine/RNG-order divergence from flam3):\n  "
+                + gateFailures.joined(separator: "\n  "))
+        }
     }
 }

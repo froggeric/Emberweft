@@ -152,6 +152,176 @@ final class VariationsTests: XCTestCase {
         XCTAssertEqual(out, SIMD2<Double>(p.x*r, p.y*r), accuracy: 1e-9)
     }
 
+    // MARK: - Trig family (Z+ variations): var82_exp .. var95_coth (slots 57..70).
+    // All paramless; 0 RNG draws. Formulas ported verbatim from
+    // /private/tmp/flam3-build/variations.c L1747-1897.
+
+    // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+    //   (w * expe * expcos, w * expe * expsin)
+    func testExp() {
+        let p = SIMD2<Double>(0.5, 0.3)
+        let out = eval("exp", p, 1.0)
+        let expe = exp(p.x)
+        let expcos = cos(p.y)
+        let expsin = sin(p.y)
+        XCTAssertEqual(out, SIMD2<Double>(expe * expcos, expe * expsin), accuracy: 1e-9)
+    }
+    // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+    func testLog() {
+        let p = SIMD2<Double>(0.6, 0.8)
+        let out = eval("log", p, 1.0)
+        let sumsq = p.x*p.x + p.y*p.y
+        XCTAssertEqual(out.x, 0.5 * log(sumsq), accuracy: 1e-9)
+        XCTAssertEqual(out.y, atan2(p.y, p.x), accuracy: 1e-9)
+    }
+    // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+    //   (w * sinsin * sincosh, w * sinacos * sinhsinh)
+    func testSin() {
+        let p = SIMD2<Double>(0.5, 0.3)
+        let out = eval("sin", p, 1.0)
+        let sinsin = sin(p.x)
+        let sinacos = cos(p.x)
+        let sinhsinh = sinh(p.y)
+        let sincosh = cosh(p.y)
+        XCTAssertEqual(out, SIMD2<Double>(sinsin * sincosh, sinacos * sinhsinh), accuracy: 1e-9)
+    }
+    // var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
+    //   (w * coscos * coshcosh, -w * cossin * coshsinh)
+    func testCos() {
+        let p = SIMD2<Double>(0.5, 0.3)
+        let out = eval("cos", p, 1.0)
+        let cossin = sin(p.x)
+        let coscos = cos(p.x)
+        let coshsinh = sinh(p.y)
+        let coshcosh = cosh(p.y)
+        XCTAssertEqual(out, SIMD2<Double>(coscos * coshcosh, -cossin * coshsinh), accuracy: 1e-9)
+    }
+    // var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
+    //   tanden = 1/(tancos + tanhcosh); (w * tanden * tansin, w * tanden * tanhsinh)
+    func testTan() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("tan", p, 1.0)
+        let tansin = sin(2.0 * p.x)
+        let tancos = cos(2.0 * p.x)
+        let tanhsinh = sinh(2.0 * p.y)
+        let tanhcosh = cosh(2.0 * p.y)
+        let tanden = 1.0 / (tancos + tanhcosh)
+        XCTAssertEqual(out, SIMD2<Double>(tanden * tansin, tanden * tanhsinh), accuracy: 1e-9)
+    }
+    // var87_sec: sincos(tx, &secsin, &seccos); secsinh = sinh(ty); seccosh = cosh(ty)
+    //   secden = 2/(cos(2*tx) + cosh(2*ty))
+    //   (w * secden * seccos * seccosh, w * secden * secsin * secsinh)
+    func testSec() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("sec", p, 1.0)
+        let secsin = sin(p.x)
+        let seccos = cos(p.x)
+        let secsinh = sinh(p.y)
+        let seccosh = cosh(p.y)
+        let secden = 2.0 / (cos(2.0 * p.x) + cosh(2.0 * p.y))
+        XCTAssertEqual(out, SIMD2<Double>(secden * seccos * seccosh, secden * secsin * secsinh), accuracy: 1e-9)
+    }
+    // var88_csc: sincos(tx, &cscsin, &csccos); cscsinh = sinh(ty); csccosh = cosh(ty)
+    //   cscden = 2/(cosh(2*ty) - cos(2*tx))
+    //   (w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh)
+    func testCsc() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("csc", p, 1.0)
+        let cscsin = sin(p.x)
+        let csccos = cos(p.x)
+        let cscsinh = sinh(p.y)
+        let csccosh = cosh(p.y)
+        let cscden = 2.0 / (cosh(2.0 * p.y) - cos(2.0 * p.x))
+        XCTAssertEqual(out, SIMD2<Double>(cscden * cscsin * csccosh, -cscden * csccos * cscsinh), accuracy: 1e-9)
+    }
+    // var89_cot: sincos(2*tx, &cotsin, &cotcos); cotsinh = sinh(2*ty); cotcosh = cosh(2*ty)
+    //   cotden = 1/(cotcosh - cotcos)
+    //   (w * cotden * cotsin, w * cotden * -1 * cotsinh)
+    func testCot() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("cot", p, 1.0)
+        let cotsin = sin(2.0 * p.x)
+        let cotcos = cos(2.0 * p.x)
+        let cotsinh = sinh(2.0 * p.y)
+        let cotcosh = cosh(2.0 * p.y)
+        let cotden = 1.0 / (cotcosh - cotcos)
+        XCTAssertEqual(out, SIMD2<Double>(cotden * cotsin, cotden * -1.0 * cotsinh), accuracy: 1e-9)
+    }
+    // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+    //   (w * sinhsinh * sinhcos, w * sinhcosh * sinhsin)
+    func testSinh() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("sinh", p, 1.0)
+        let sinhsin = sin(p.y)
+        let sinhcos = cos(p.y)
+        let sinhsinh = sinh(p.x)
+        let sinhcosh = cosh(p.x)
+        XCTAssertEqual(out, SIMD2<Double>(sinhsinh * sinhcos, sinhcosh * sinhsin), accuracy: 1e-9)
+    }
+    // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+    //   (w * coshcosh * coshcos, w * coshsinh * coshsin)
+    func testCosh() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("cosh", p, 1.0)
+        let coshsin = sin(p.y)
+        let coshcos = cos(p.y)
+        let coshsinh = sinh(p.x)
+        let coshcosh = cosh(p.x)
+        XCTAssertEqual(out, SIMD2<Double>(coshcosh * coshcos, coshsinh * coshsin), accuracy: 1e-9)
+    }
+    // var92_tanh: sincos(2*ty, &tanhsin, &tanhcos); tanhsinh = sinh(2*tx); tanhcosh = cosh(2*tx)
+    //   tanhden = 1/(tanhcos + tanhcosh)
+    //   (w * tanhden * tanhsinh, w * tanhden * tanhsin)
+    func testTanh() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("tanh", p, 1.0)
+        let tanhsin = sin(2.0 * p.y)
+        let tanhcos = cos(2.0 * p.y)
+        let tanhsinh = sinh(2.0 * p.x)
+        let tanhcosh = cosh(2.0 * p.x)
+        let tanhden = 1.0 / (tanhcos + tanhcosh)
+        XCTAssertEqual(out, SIMD2<Double>(tanhden * tanhsinh, tanhden * tanhsin), accuracy: 1e-9)
+    }
+    // var93_sech: sincos(ty, &sechsin, &sechcos); sechsinh = sinh(tx); sechcosh = cosh(tx)
+    //   sechden = 2/(cos(2*ty) + cosh(2*tx))
+    //   (w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh)
+    func testSech() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("sech", p, 1.0)
+        let sechsin = sin(p.y)
+        let sechcos = cos(p.y)
+        let sechsinh = sinh(p.x)
+        let sechcosh = cosh(p.x)
+        let sechden = 2.0 / (cos(2.0 * p.y) + cosh(2.0 * p.x))
+        XCTAssertEqual(out, SIMD2<Double>(sechden * sechcos * sechcosh, -sechden * sechsin * sechsinh), accuracy: 1e-9)
+    }
+    // var94_csch: sincos(ty, &cschsin, &cschcos); cschsinh = sinh(tx); cschcosh = cosh(tx)
+    //   cschden = 2/(cosh(2*tx) - cos(2*ty))
+    //   (w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin)
+    func testCsch() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("csch", p, 1.0)
+        let cschsin = sin(p.y)
+        let cschcos = cos(p.y)
+        let cschsinh = sinh(p.x)
+        let cschcosh = cosh(p.x)
+        let cschden = 2.0 / (cosh(2.0 * p.x) - cos(2.0 * p.y))
+        XCTAssertEqual(out, SIMD2<Double>(cschden * cschsinh * cschcos, -cschden * cschcosh * cschsin), accuracy: 1e-9)
+    }
+    // var95_coth: sincos(2*ty, &cothsin, &cothcos); cothsinh = sinh(2*tx); cothcosh = cosh(2*tx)
+    //   cothden = 1/(cothcosh - cothcos)
+    //   (w * cothden * cothsinh, w * cothden * cothsin)
+    func testCoth() {
+        let p = SIMD2<Double>(0.4, 0.25)
+        let out = eval("coth", p, 1.0)
+        let cothsin = sin(2.0 * p.y)
+        let cothcos = cos(2.0 * p.y)
+        let cothsinh = sinh(2.0 * p.x)
+        let cothcosh = cosh(2.0 * p.x)
+        let cothden = 1.0 / (cothcosh - cothcos)
+        XCTAssertEqual(out, SIMD2<Double>(cothden * cothsinh, cothden * cothsin), accuracy: 1e-9)
+    }
+
     // MARK: - corpus-variations parametric non-RNG set (slots 42..43).
     // Hand-traced closed forms against flam3 variations.c.
 

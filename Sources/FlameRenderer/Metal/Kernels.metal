@@ -133,18 +133,18 @@ kernel void isaac_check(constant const ulong* seed16 [[buffer(0)]],
 // These cross the Swift→MSL boundary as raw bytes (a flat [Float] pack on the
 // Swift side), so field order, types, and sizes MUST match the layout constants
 // in MetalHost.swift exactly. Both sides are all-`float`/`uint` (4-byte aligned).
-// GPUXform is 6+6+3+57+(57*8) = 528 floats = 2112 B. MSL arrays are inline (no
+// GPUXform is 6+6+3+71+(71*8) = 654 floats = 2616 B. MSL arrays are inline (no
 // heap indirection), so varWeights/varParams land contiguously inside the struct.
 
-#define NUM_XFORM_SLOTS_MS 57
+#define NUM_XFORM_SLOTS_MS 71
 #define SLOT_WIDTH_MS      8
 
 struct GPUXform {
     float a, b, c, d, e, f;
     float pa, pb, pc, pd, pe, pf;
     float color, colorSpeed, opacity;
-    float varWeights[NUM_XFORM_SLOTS_MS];                       // 57
-    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 57*8 = 456
+    float varWeights[NUM_XFORM_SLOTS_MS];                       // 71
+    float varParams[NUM_XFORM_SLOTS_MS * SLOT_WIDTH_MS];        // 71*8 = 568
 };
 
 struct GPUFrameParams {
@@ -159,7 +159,7 @@ struct GPUFrameParams {
 
 // MARK: - Stage-1 chaos-game kernel
 //
-// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 57 variation
+// Faithful GPU mirror of `FlameReference.ChaosGame.iterate`. The 71 variation
 // formulas are line-for-line ports of `FlameKit.Variations` (which itself ports
 // flam3 variations.c). The affine convention, `precalc_atan = atan2(x,y)` (x
 // first — flam3's swapped angle), EPS, badvalue threshold, palette interp,
@@ -188,7 +188,7 @@ static inline float blend_color(GPUXform x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
-// 57 variation terms (canonical slot order). Each returns the term that CPU
+// 71 variation terms (canonical slot order). Each returns the term that CPU
 // `Variations.evaluate` would add to f.p0/p1, weight folded at flam3's exact
 // position. Float (not Double) — accepted by the statistical-parity model.
 static inline float2 v_bent(float2 p, float w) {
@@ -254,6 +254,146 @@ static inline float2 v_cross(float2 p, float w) {
     float r = w * sqrt(1.0f / (s*s + EPS_MS));
     return float2(p.x * r, p.y * r);
 }
+// ---- Trig family (Z+ variations): var82_exp .. var95_coth ----
+// All paramless; 0 RNG draws. Formulas ported verbatim from
+// /private/tmp/flam3-build/variations.c L1747-1897.
+// var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
+//   (w * expe * expcos, w * expe * expsin)
+static inline float2 v_exp(float2 p, float w) {
+    float expe = exp(p.x);
+    float expcos = cos(p.y);
+    float expsin = sin(p.y);
+    return float2(w * expe * expcos, w * expe * expsin);
+}
+// var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+static inline float2 v_log(float2 p, float w) {
+    float sumsq = p.x*p.x + p.y*p.y;
+    return float2(w * 0.5f * log(sumsq), w * atan2(p.y, p.x));
+}
+// var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
+//   (w * sinsin * sincosh, w * sinacos * sinhsinh)
+static inline float2 v_sin(float2 p, float w) {
+    float sinsin = sin(p.x);
+    float sinacos = cos(p.x);
+    float sinhsinh = sinh(p.y);
+    float sincosh = cosh(p.y);
+    return float2(w * sinsin * sincosh, w * sinacos * sinhsinh);
+}
+// var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
+//   (w * coscos * coshcosh, -w * cossin * coshsinh)
+static inline float2 v_cos(float2 p, float w) {
+    float cossin = sin(p.x);
+    float coscos = cos(p.x);
+    float coshsinh = sinh(p.y);
+    float coshcosh = cosh(p.y);
+    return float2(w * coscos * coshcosh, -w * cossin * coshsinh);
+}
+// var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
+//   tanden = 1/(tancos + tanhcosh); (w * tanden * tansin, w * tanden * tanhsinh)
+static inline float2 v_tan(float2 p, float w) {
+    float tansin = sin(2.0f * p.x);
+    float tancos = cos(2.0f * p.x);
+    float tanhsinh = sinh(2.0f * p.y);
+    float tanhcosh = cosh(2.0f * p.y);
+    float tanden = 1.0f / (tancos + tanhcosh);
+    return float2(w * tanden * tansin, w * tanden * tanhsinh);
+}
+// var87_sec: sincos(tx, &secsin, &seccos); secsinh = sinh(ty); seccosh = cosh(ty)
+//   secden = 2/(cos(2*tx) + cosh(2*ty))
+//   (w * secden * seccos * seccosh, w * secden * secsin * secsinh)
+static inline float2 v_sec(float2 p, float w) {
+    float secsin = sin(p.x);
+    float seccos = cos(p.x);
+    float secsinh = sinh(p.y);
+    float seccosh = cosh(p.y);
+    float secden = 2.0f / (cos(2.0f * p.x) + cosh(2.0f * p.y));
+    return float2(w * secden * seccos * seccosh, w * secden * secsin * secsinh);
+}
+// var88_csc: sincos(tx, &cscsin, &csccos); cscsinh = sinh(ty); csccosh = cosh(ty)
+//   cscden = 2/(cosh(2*ty) - cos(2*tx))
+//   (w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh)
+static inline float2 v_csc(float2 p, float w) {
+    float cscsin = sin(p.x);
+    float csccos = cos(p.x);
+    float cscsinh = sinh(p.y);
+    float csccosh = cosh(p.y);
+    float cscden = 2.0f / (cosh(2.0f * p.y) - cos(2.0f * p.x));
+    return float2(w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh);
+}
+// var89_cot: sincos(2*tx, &cotsin, &cotcos); cotsinh = sinh(2*ty); cotcosh = cosh(2*ty)
+//   cotden = 1/(cotcosh - cotcos)
+//   (w * cotden * cotsin, w * cotden * -1 * cotsinh)
+static inline float2 v_cot(float2 p, float w) {
+    float cotsin = sin(2.0f * p.x);
+    float cotcos = cos(2.0f * p.x);
+    float cotsinh = sinh(2.0f * p.y);
+    float cotcosh = cosh(2.0f * p.y);
+    float cotden = 1.0f / (cotcosh - cotcos);
+    return float2(w * cotden * cotsin, w * cotden * -1.0f * cotsinh);
+}
+// var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
+//   (w * sinhsinh * sinhcos, w * sinhcosh * sinhsin)
+static inline float2 v_sinh(float2 p, float w) {
+    float sinhsin = sin(p.y);
+    float sinhcos = cos(p.y);
+    float sinhsinh = sinh(p.x);
+    float sinhcosh = cosh(p.x);
+    return float2(w * sinhsinh * sinhcos, w * sinhcosh * sinhsin);
+}
+// var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
+//   (w * coshcosh * coshcos, w * coshsinh * coshsin)
+static inline float2 v_cosh(float2 p, float w) {
+    float coshsin = sin(p.y);
+    float coshcos = cos(p.y);
+    float coshsinh = sinh(p.x);
+    float coshcosh = cosh(p.x);
+    return float2(w * coshcosh * coshcos, w * coshsinh * coshsin);
+}
+// var92_tanh: sincos(2*ty, &tanhsin, &tanhcos); tanhsinh = sinh(2*tx); tanhcosh = cosh(2*tx)
+//   tanhden = 1/(tanhcos + tanhcosh)
+//   (w * tanhden * tanhsinh, w * tanhden * tanhsin)
+static inline float2 v_tanh(float2 p, float w) {
+    float tanhsin = sin(2.0f * p.y);
+    float tanhcos = cos(2.0f * p.y);
+    float tanhsinh = sinh(2.0f * p.x);
+    float tanhcosh = cosh(2.0f * p.x);
+    float tanhden = 1.0f / (tanhcos + tanhcosh);
+    return float2(w * tanhden * tanhsinh, w * tanhden * tanhsin);
+}
+// var93_sech: sincos(ty, &sechsin, &sechcos); sechsinh = sinh(tx); sechcosh = cosh(tx)
+//   sechden = 2/(cos(2*ty) + cosh(2*tx))
+//   (w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh)
+static inline float2 v_sech(float2 p, float w) {
+    float sechsin = sin(p.y);
+    float sechcos = cos(p.y);
+    float sechsinh = sinh(p.x);
+    float sechcosh = cosh(p.x);
+    float sechden = 2.0f / (cos(2.0f * p.y) + cosh(2.0f * p.x));
+    return float2(w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh);
+}
+// var94_csch: sincos(ty, &cschsin, &cschcos); cschsinh = sinh(tx); cschcosh = cosh(tx)
+//   cschden = 2/(cosh(2*tx) - cos(2*ty))
+//   (w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin)
+static inline float2 v_csch(float2 p, float w) {
+    float cschsin = sin(p.y);
+    float cschcos = cos(p.y);
+    float cschsinh = sinh(p.x);
+    float cschcosh = cosh(p.x);
+    float cschden = 2.0f / (cosh(2.0f * p.x) - cos(2.0f * p.y));
+    return float2(w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin);
+}
+// var95_coth: sincos(2*ty, &cothsin, &cothcos); cothsinh = sinh(2*tx); cothcosh = cosh(2*tx)
+//   cothden = 1/(cothcosh - cothcos)
+//   (w * cothden * cothsinh, w * cothden * cothsin)
+static inline float2 v_coth(float2 p, float w) {
+    float cothsin = sin(2.0f * p.y);
+    float cothcos = cos(2.0f * p.y);
+    float cothsinh = sinh(2.0f * p.x);
+    float cothcosh = cosh(2.0f * p.x);
+    float cothden = 1.0f / (cothcosh - cothcos);
+    return float2(w * cothden * cothsinh, w * cothden * cothsin);
+}
+// ---- End trig family (14 variations, slots 57..70) ----
 // var24_pdj (variations.c:579-596). 4 params (pdj_a/b/c/d), all default 0.
 //   nx1 = cos(pdj_b*tx); nx2 = sin(pdj_c*tx);
 //   ny1 = sin(pdj_a*ty); ny2 = cos(pdj_d*ty);
@@ -789,7 +929,7 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
 }
 
-// Sum the 57 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
+// Sum the 71 canonical slots. julian/juliascope/super_shape/wedge_julia/pie/
 // radial_blur/noise/blur/gaussian_blur/arch/square/rays/blade/twintrian/
 // flower/conic/parabola also consume the RNG (julian/juliascope/wedge_julia:
 // one isaac_01 each; super_shape: one UNCONDITIONAL isaac_01; pie: THREE
@@ -870,6 +1010,38 @@ static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& r
     if (w[40] != 0.0f) acc += v_tangent(pre, w[40]);
     // slot 41 — cross (var48_cross, paramless).
     if (w[41] != 0.0f) acc += v_cross(pre, w[41]);
+    // ---- Trig family (Z+ variations): var82_exp .. var95_coth (slots 57..70) ----
+    // All paramless; 0 RNG draws. Formulas ported verbatim from
+    // /private/tmp/flam3-build/variations.c L1747-1897.
+    // slot 57 — exp (var82_exp, paramless).
+    if (w[57] != 0.0f) acc += v_exp(pre, w[57]);
+    // slot 58 — log (var83_log, paramless; uses atan2(y,x) = precalc_atanyx).
+    if (w[58] != 0.0f) acc += v_log(pre, w[58]);
+    // slot 59 — sin (var84_sin, paramless).
+    if (w[59] != 0.0f) acc += v_sin(pre, w[59]);
+    // slot 60 — cos (var85_cos, paramless).
+    if (w[60] != 0.0f) acc += v_cos(pre, w[60]);
+    // slot 61 — tan (var86_tan, paramless).
+    if (w[61] != 0.0f) acc += v_tan(pre, w[61]);
+    // slot 62 — sec (var87_sec, paramless).
+    if (w[62] != 0.0f) acc += v_sec(pre, w[62]);
+    // slot 63 — csc (var88_csc, paramless).
+    if (w[63] != 0.0f) acc += v_csc(pre, w[63]);
+    // slot 64 — cot (var89_cot, paramless).
+    if (w[64] != 0.0f) acc += v_cot(pre, w[64]);
+    // slot 65 — sinh (var90_sinh, paramless).
+    if (w[65] != 0.0f) acc += v_sinh(pre, w[65]);
+    // slot 66 — cosh (var91_cosh, paramless).
+    if (w[66] != 0.0f) acc += v_cosh(pre, w[66]);
+    // slot 67 — tanh (var92_tanh, paramless).
+    if (w[67] != 0.0f) acc += v_tanh(pre, w[67]);
+    // slot 68 — sech (var93_sech, paramless).
+    if (w[68] != 0.0f) acc += v_sech(pre, w[68]);
+    // slot 69 — csch (var94_csch, paramless).
+    if (w[69] != 0.0f) acc += v_csch(pre, w[69]);
+    // slot 70 — coth (var95_coth, paramless).
+    if (w[70] != 0.0f) acc += v_coth(pre, w[70]);
+    // ---- End trig family (14 variations) ----
     // ---- corpus-variations parametric non-RNG set (slots 42..43). ----
     // slot 42 — pdj (var24_pdj, parametric: 4 params all default 0; 0 RNG draws).
     // Param order in pr[0..3] = descriptor-declared order: pdj_a, pdj_b, pdj_c, pdj_d.

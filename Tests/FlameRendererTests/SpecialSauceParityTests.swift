@@ -347,6 +347,28 @@ final class SpecialSauceParityTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(ssim, 0.95, "rng-alignment: SSIM \(ssim) < 0.95")
     }
 
+    // MARK: - Trig family (var82–var95; Work A batch 1). Paramless, 0 RNG draws.
+    // Several carry trig/hyperbolic denominators (tan/sec/csc/cot/tanh/csch/coth)
+    // or fast growth (exp/cosh/sinh) that amplifies Float-vs-Double ULP noise at
+    // weight=1, so all are gated at weight 0.4 — the established pole-chaos
+    // precedent (radial_blur/tangent/noise/blur all use 0.2–0.4). CPU correctness
+    // is pinned by VariationFlam3ParityTests (vs-flam3 ≥38 dB); these confirm
+    // Metal tracks CPU within the statistical gate.
+    @MainActor func testExp()  throws { try assertParity("exp",  [:], weight: 0.4) }
+    @MainActor func testLog()  throws { try assertParity("log",  [:], weight: 0.4) }
+    @MainActor func testSin()  throws { try assertParity("sin",  [:], weight: 0.4) }
+    @MainActor func testCos()  throws { try assertParity("cos",  [:], weight: 0.4) }
+    @MainActor func testTan()  throws { try assertParity("tan",  [:], weight: 0.4) }
+    @MainActor func testSec()  throws { try assertParity("sec",  [:], weight: 0.4) }
+    @MainActor func testCsc()  throws { try assertParity("csc",  [:], weight: 0.4) }
+    @MainActor func testCot()  throws { try assertParity("cot",  [:], weight: 0.4) }
+    @MainActor func testSinh() throws { try assertParity("sinh", [:], weight: 0.4) }
+    @MainActor func testCosh() throws { try assertParity("cosh", [:], weight: 0.4) }
+    @MainActor func testTanh() throws { try assertParity("tanh", [:], weight: 0.4) }
+    @MainActor func testSech() throws { try assertParity("sech", [:], weight: 0.4) }
+    @MainActor func testCsch() throws { try assertParity("csch", [:], weight: 0.4) }
+    @MainActor func testCoth() throws { try assertParity("coth", [:], weight: 0.4) }
+
     /// RNG-ORDER INVARIANT (pinned): the canonical-slot indices of the RNG-
     /// consuming set {julia, julian, juliascope, super_shape, wedge_julia} are
     /// strictly ascending. This ascending order is what makes the RNG-alignment
