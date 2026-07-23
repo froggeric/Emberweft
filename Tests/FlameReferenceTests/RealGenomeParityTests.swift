@@ -164,12 +164,15 @@ final class RealGenomeParityTests: XCTestCase {
         // not a faithfulness bug (palette_mode closed the real gaps). Run at
         // the stress op-point via `opPointOverrides` so it clears the gate.
         ("electricsheep.244.00788", .gate),
-        // flower + disc + linear + spherical + rings2 (gen-244 sheep, rotate=-178).
-        // 34.23 dB (fast op-point) / 37.65 dB (stress) — a genuine MARGINAL
-        // residual (~0.35 dB under gate at max quality); centroids + total light
-        // match → subtle density-distribution difference, not camera/palette/
-        // variation (all proven correct). The last real Work-B residual.
-        ("electricsheep.244.28122", .knownGap(reason: "marginal residual — 37.65 dB at stress (0.35 dB under gate); centroids/light match; subtle density difference, all variation/pipeline proven correct")),
+        // flower + disc + linear + spherical + rings2 (gen-244 sheep, rotate=-178,
+        // native 800×592). 34.23 dB (fast op-point) / 37.65 dB (stress) — a genuine
+        // MARGINAL residual (~0.35 dB under gate at max quality). density_diff
+        // (works here, native 800×592) confirms EVERYTHING matches: total light
+        // +1.4%, centroid (393.85 vs 394.34), histogram deltas ≤0.6 pp, active
+        // fraction 95.26% vs 95.67%. No actionable root cause — a tiny density-
+        // distribution difference, not camera/palette/variation (all proven
+        // correct). The last Work-B residual; accepted, not a faithfulness bug.
+        ("electricsheep.244.28122", .knownGap(reason: "marginal residual — 37.65 dB at stress (0.35 dB under gate); density_diff-confirmed: total light +1.4%, centroid/histogram match; subtle density diff, all pipeline proven correct")),
     ]
 
     private func repoRoot() -> URL {
