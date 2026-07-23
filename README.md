@@ -26,7 +26,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 - Realtime playback engine — adaptive-quality `PlaybackDispatcher` + `FlameUI` (≥ 58 fps @ 1080p, M2 Max)
 - Animation: seamless sheep **loops** (pure affine rotation) + smooth **transitions** between genomes, alternating endlessly — the Electric Sheep sequence
 - **Motion blur** — faithful `temporal_samples` port (`--temporal-samples N`); box / gaussian / exp temporal filters
-- Wide variation coverage — the classic set plus the 16 special-sauce variations and `bubble` / `eyefish` / `pie` / `radial_blur`
+- Complete flam3 variation coverage — all **99 of 99** variations ported to CPU + Metal and validated ≥38 dB vs `flam3` (the classic set, the 16 special-sauce variations, the trig family, and the parametric/RNG remainder through `pre_blur`)
 
 **Planned (M4+):**
 - SwiftUI app with library browser, search, and playback controls
@@ -51,6 +51,8 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | M2 | ✅ Done | Metal compute renderer + Metal↔CPU parity |
 | M3 | ✅ Done | Animation (loops + transitions) + realtime adaptive pipeline |
 | **v0.1.0** | ✅ Done | Real-genome parity (`highlight_power` / `filter`), motion blur, 4 more variations |
+| **v0.1.1** | ✅ Done | Corpus-variation coverage (57/99 — 100% of ES-corpus-used variations) |
+| **v0.1.2** | ✅ Done | **Full flam3 variation coverage (99/99)** — all validated ≥38 dB vs `flam3` + Metal↔CPU |
 | M4 | **Current** | SwiftUI app + player + library browser |
 | M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |

@@ -7,6 +7,33 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.2] — Full flam3 Variation Coverage (99/99)
+
+Completes the faithful flam3 variation set: ports the remaining **42 variations** that v0.1.0/v0.1.1 lacked, taking Emberweft from **57 → 99 of 99** flam3 variations — every variation in `scottdraves/flam3`. All 42 are validated against the live flam3 oracle at **≥38 dB PSNR** (the vs-flam3 gate, now *enforced* per-variation in `VariationFlam3ParityTests`) and at **≥38 dB Metal↔CPU** (`SpecialSauceParityTests`); frozen goldens stay byte-identical (new slots appended at the end of `canonicalOrder`, so existing slots 0..56 are untouched). Lowest vs-flam3 PSNR across all 42: `exp` at 41.34 dB (the rest 52–75 dB).
+
+### Variations ported (CPU + Metal, Reference-then-Optimize)
+- **Trig family (14, var82–95):** `exp log sin cos tan sec csc cot sinh cosh tanh sech csch coth` — paramless.
+- **Paramless non-trig (7):** `butterfly edisc elliptic foci loonie polar2 scry`.
+- **Parametric (18):** `bent2 bipolar cell escher flux modulus splits stripes whorl` (≤2 params) + `auger curve lazysusan mobius popcorn2 separation waves2 wedge oscilloscope` (3+ params; `mobius` uses all 8 slot params — `slotWidth=8`).
+- **RNG-consuming (3):** `boarders` (1 draw), `cpow` (1 draw + `cpow_r/i/power`), `pre_blur` (**5 draws — a PRE-transform**: applied after the affine, before precalcs + the variation loop, mutating the input point; new `applyXformBody` pre-step on CPU + a matching pre-step in the Metal chaos kernel, skipped in `Variations.evaluate` and the dispatch chain).
+
+### Faithful-port care (parity-critical disambiguations)
+- `log` uses `precalc_atanyx = atan2(ty,tx)`; `polar2` uses the swapped `atan2(tx,ty)`.
+- `EPS = 1e-10` (`private.h:47`), not 1e-6; `curve` uniquely uses `1e-20` (matched verbatim).
+- `cell`/`modulus`/`mobius`/`cpow` are singular at their default-0 params (division by zero / `Int(inf)`) — faithful to flam3 (no explicit guard in source); real genomes set nonzero params. Excluded from the finiteness smoke test alongside the pre-existing `perspective` precedent.
+- `lazysusan` has an asymmetric `+lazysusan_y` on input / `−lazysusan_y` on output (load-bearing).
+- `oscilloscope` exposes its 3 documented params (`separation/frequency/amplitude`); the 4th (`damping`, defaults 0) is intentionally not exposed — the damping=0 branch is ported verbatim.
+- New **Work A enforcement**: each newly-ported variation must clear ≥38 dB vs-flam3 (asserted, not diagnostic) before it ships.
+
+### Tooling
+- `VariationFlam3ParityTests` enforces ≥38 dB per Work-A variation (was diagnostic-only).
+- Slot budget: `NUM_XFORM_SLOTS_MS` 57→99; `GPUXform` now 906 floats (3624 B) per xform.
+- Per-variation vs-flam3 harness (`VariationFlam3ParityTests`) added — the test gap that hid variation-integration bugs through M2/M3/CV.
+
+### Known gaps (unchanged from v0.1.1, documented in `docs/superpowers/plans/2026-07-22-remaining-work.md`)
+- 2 edge-genome `.knownGap` fixtures (244.00788 sampling-noise at the fast op-point — passes at stress; 244.28122 marginal 37.65 dB) — not variation bugs.
+- Metal renderer still uses LINEAR palette sampling (Float can't match CPU-Double STEP on spiky real palettes — a pre-existing Metal-Float limitation, not a regression). CPU-vs-flam3 (the primary gate) uses STEP and is correct.
+
 ## [v0.1.1] — Corpus-Variation Coverage (100% of ES-corpus-used variations)
 
 Ports the 20 flam3 variations the archived Electric Sheep corpus uses that v0.1.0 lacked — **100% coverage of every variation appearing in a 23k-genome corpus survey** (Emberweft now **57 of 99** flam3 variations). Real-genome parity holds (49–52 dB on the original 7 fixtures; 5 new `.gate` fixtures at 38–52 dB). Two pre-existing parse bugs found + fixed.

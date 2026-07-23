@@ -6,7 +6,7 @@
 
 ## Current Status
 
-**Current milestone:** M4 — SwiftUI App and Library Browser · **M0, M1, M2, and M3 complete** (see [CHANGELOG.md](../../CHANGELOG.md)). A post-M3 **v0.1.0** patch landed on `main` after M3: real-genome faithfulness (`highlight_power` / spatial-filter radius wired in), motion blur (faithful `temporal_samples` port), and four more variations (`bubble`, `eyefish`, `pie`, `radial_blur`) — real gen-248 genomes now render at 49–52 dB vs `flam3`. v0.1.0 does not advance the milestone map (no new slices); M4 remains next.
+**Current milestone:** M4 — SwiftUI App and Library Browser · **M0, M1, M2, and M3 complete** (see [CHANGELOG.md](../../CHANGELOG.md)). Post-M3 patches landed on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), and **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**, each validated ≥38 dB vs `flam3` + Metal↔CPU; goldens byte-identical). These do not advance the milestone map (no new slices); M4 remains next.
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
 
