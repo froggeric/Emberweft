@@ -1,5 +1,7 @@
 # Metal STEP Palette Port — Implementation Plan
 
+> **⚠️ UPDATE 2026-07-24 — a SEPARATE, more severe Metal bug (empty-frame regression) was found and FIXED in v0.1.3 (commit `938a855a2`).** v0.1.2's batch-4 variation port (`b707a0429`) grew `GPUXform` to 3624 B and passed it by value to four Metal inline helpers, destabilizing FP codegen → empty `RGBA(0,0,0,0)` frames on fragile multi-xform **rotated animation** frames (broke m3_mb-style renders) + nondeterminism. Fixed by passing `GPUXform` by `thread const GPUXform&`. This is **distinct** from the still-parity Float gap analyzed below — stills (rotation 0) were never affected by the regression, and the `244.00788` still figure (~33.68 dB) is unchanged by the fix. Do not conflate the two: the empty-frame regression was an actionable bug (fixed); the still Float gap below is the genuine Metal-Float floor.
+
 > **❌ DEAD 2026-07-24 — the premise was wrong; the gap is NOT palette/color.** Two approaches failed AND the root cause was re-diagnosed:
 > 1. **MSL has no `double`** (Metal is half/float-only) — the planned Double-colorT fix is impossible.
 > 2. **Double-single doesn't help** — implemented + tested. Python sim (true fma): df gives only ~2.9e-8 vs float's 5.7e-8 (barely 2× better — the colorT blend toward color∈{0,1} flushes the df low part), and the **same** palette bin-mismatch rate as float. In Metal it *regressed* to **3.82 dB** (likely fast-math `fma` breaking the error-free transforms). Reverted.

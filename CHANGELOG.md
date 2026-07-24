@@ -7,6 +7,24 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.3] — Fix Metal Empty-Frame Regression on Fragile Animations
+
+Fixes a regression **introduced by v0.1.2's batch-4 variation port (`b707a0429`)**: growing `GPUXform` to 906 floats (3624 B) and passing it **by value** to four inline Metal helpers (`apply_affine`, `apply_post`, `blend_color`, `apply_xform_body`) destabilized the Metal compiler's FP instruction scheduling for the chaos-game kernel. On fragile multi-xform real attractors (e.g. `248.05739`, `248.31943`, `244.00788`) at certain rotations, the re-scheduled Float trajectory diverged past the out-of-bounds/NaN tipping point → zero in-bounds samples → empty histograms → `RGBA(0,0,0,0)` frames (white in a PNG viewer, black in an alpha-flattened video). It also broke run-to-run determinism (rule #2) — which frames tipped varied per Metal-library compilation. Stable single-variation genomes and stills (rotation 0) were unaffected, which is why `SpecialSauceParityTests` stayed green but real multi-xform animations broke, and the regression escaped the v0.1.2 gate.
+
+Root cause verified by `git bisect` (`b707a0429` is the first-bad commit) and ruled out: Swift↔MSL struct-layout mismatch (they match; `ParamChannelParityTests` green), the `pre_blur` PRE-step (disabled — empty frames persisted), and fast-math (`mathMode = .safe` didn't help). It is a compiler-codegen-stability issue from oversized by-value struct passing.
+
+### Fix
+Pass `GPUXform` by **const-reference** (`thread const GPUXform&`) to the four helpers — idiomatic for a large read-only struct; the call sites (`xf`, `fin` — thread-local lvalues) bind unchanged. 4 signature lines in `Sources/FlameRenderer/Metal/Kernels.metal`, no logic change, no features disabled.
+
+### Verified
+- Empty frames on a `248.05739` single-loop (Metal): **0 / 40** (was ~13, nondeterministic across runs).
+- Run-to-run determinism restored — frames are byte-identical across Metal-library compilations (rule #2).
+- `SpecialSauceParityTests` **84/84** (Metal↔CPU ≥38 dB); `ParamChannelParityTests` **3/3** incl. `testFrozenGenomesByteIdenticalToBaseline` (stable genomes byte-unchanged); `make test-fast` **317/0** (+1 skipped).
+- m3_mb recipe (`05739→31943`, `--temporal-samples 32`, `--backend metal`) re-rendered: **0 empty frames**, seamless loop↔edge boundaries (previously full of empty frames / broken transitions).
+
+### Note on the separate Metal Float gap (unchanged)
+The **`244.00788` still** Metal↔CPU gap (~33.68 dB, under the 38 gate) is a *genuine* Float-vs-Double limitation on spiky stills — **not** this regression (stills at rotation 0 were never affected, and the figure is unchanged by this fix). It remains a documented Metal-Float floor; the CPU oracle is faithful (41 dB vs flam3). See `docs/superpowers/plans/2026-07-23-metal-step-port.md`.
+
 ## [v0.1.2] — Full flam3 Variation Coverage (99/99)
 
 Completes the faithful flam3 variation set: ports the remaining **42 variations** that v0.1.0/v0.1.1 lacked, taking Emberweft from **57 → 99 of 99** flam3 variations — every variation in `scottdraves/flam3`. All 42 are validated against the live flam3 oracle at **≥38 dB PSNR** (the vs-flam3 gate, now *enforced* per-variation in `VariationFlam3ParityTests`) and at **≥38 dB Metal↔CPU** (`SpecialSauceParityTests`); frozen goldens stay byte-identical (new slots appended at the end of `canonicalOrder`, so existing slots 0..56 are untouched). Lowest vs-flam3 PSNR across all 42: `exp` at 41.34 dB (the rest 52–75 dB).
