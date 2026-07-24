@@ -178,13 +178,13 @@ struct AtomicBin {
 
 static inline bool badvalue_ms(float x) { return (x != x) || (x > BAD_MS) || (x < -BAD_MS); }
 
-static inline float2 apply_affine(GPUXform x, float2 p) {
+static inline float2 apply_affine(thread const GPUXform& x, float2 p) {
     return float2(x.a*p.x + x.c*p.y + x.e, x.b*p.x + x.d*p.y + x.f);
 }
-static inline float2 apply_post(GPUXform x, float2 p) {
+static inline float2 apply_post(thread const GPUXform& x, float2 p) {
     return float2(x.pa*p.x + x.pc*p.y + x.pe, x.pb*p.x + x.pd*p.y + x.pf);
 }
-static inline float blend_color(GPUXform x, float ct) {
+static inline float blend_color(thread const GPUXform& x, float ct) {
     return (1.0f - x.colorSpeed) * ct + x.colorSpeed * x.color;
 }
 
@@ -1453,7 +1453,7 @@ static inline float2 v_cpow(float2 p, float w, thread const float* pr,
 // |p.y|>710, exp in `exponential` for |p.x|>710) yields `0.0f * Inf == NaN`,
 // which contaminates `acc`, trips `badvalue_ms`, and diverges both the
 // trajectory and the RNG stream from the CPU.
-static inline float2 apply_xform_body(GPUXform x, float2 p, thread IsaacState& rng) {
+static inline float2 apply_xform_body(thread const GPUXform& x, float2 p, thread IsaacState& rng) {
     float2 pre = apply_affine(x, p);
     // pre_blur PRE-step (var67, variations.c:2148-2150 + 1480-1496). Applied
     // AFTER the affine but BEFORE the variation dispatch loop — a PRE-transform
