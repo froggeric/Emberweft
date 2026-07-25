@@ -7,6 +7,19 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.4] — Fix Metal Float-Overflow Collapses in Hyperbolic/Trig/Exp Variations
+
+Metal kernels use `float`; `flam3` and the CPU reference use `double`. For variations that compute `cosh`/`sinh`/`exp` on a potentially-large argument, Metal overflows to `+Inf` (Float `cosh` overflows at arg ≈ 89, `exp` at ≈ 88.7) where `double` is finite, producing `0.0f * Inf == NaN` that contaminates the chaos-game accumulator, trips `badvalue_ms`, and **collapses the rendered trajectory to near-black + desyncs from CPU**. This was the root cause of the abrupt "missing transition" seam at the 16636→17491 edge (frame lum 3.6, collapsed; `flam3` renders it bright at ~95 → Emberweft-Metal bug, not faithful): 16636's huge xform-0 affine (`a=34.67`) pushes `pre.x` past 44, and a tiny interpolated `coth` weight (from 17491) triggers the overflow.
+
+### Fix
+Clamp the overflow-prone argument to `[-88, 88]` before each `cosh`/`sinh`/`exp` call across **all 15 affected variations**: `coth cot sinh cosh tanh sech csch csc sec exponential cosine exp sin cos tan`. **Faithful:** bit-identical for normal-magnitude args (parity tests unchanged); for large args it captures exactly the saturated `±w` / `0` limit that CPU `double` produces. CPU formulae untouched (no overflow in `double`). 15 small clamp edits in `Sources/FlameRenderer/Metal/Kernels.metal`, no logic change.
+
+### Verified
+- Per-variation `SpecialSauceParityTests` (Metal↔CPU, 1000spp, normal affine): all ≥38 dB / **inf** — the clamp never fires for normal args.
+- Stress check (large pre-affine `a=34`/`b=60` + small weight): `exp`/`sin`/`cos`/`exponential`/`cosine`/`sinh`/`cosh`/`coth` collapses **fixed** (Metal lum 0 → matching CPU). The ratio-family (`cot`/`csc`/`sec`/`csch`/`sech`/`tanh`) saturate to ~0 on both backends by analysis — correct by direct analogy to the real-world `coth` case.
+- The real 16636→17491 edge at 1080p/q1000/temporal-32: the `coth` frame lum **3.6 → 66.4** (bright; collapse gone), boundaries smooth.
+- Broad gate: `SpecialSauceParityTests` **84/84**, `ParamChannelParityTests` frozen-goldens **byte-identical**, `make test-fast` **317/0**. (Investigation + hardening by subagent; root cause confirmed via `git bisect`-style isolation + a `flam3` oracle comparison.)
+
 ## [v0.1.3] — Fix Metal Empty-Frame Regression on Fragile Animations
 
 Fixes a regression **introduced by v0.1.2's batch-4 variation port (`b707a0429`)**: growing `GPUXform` to 906 floats (3624 B) and passing it **by value** to four inline Metal helpers (`apply_affine`, `apply_post`, `blend_color`, `apply_xform_body`) destabilized the Metal compiler's FP instruction scheduling for the chaos-game kernel. On fragile multi-xform real attractors (e.g. `248.05739`, `248.31943`, `244.00788`) at certain rotations, the re-scheduled Float trajectory diverged past the out-of-bounds/NaN tipping point → zero in-bounds samples → empty histograms → `RGBA(0,0,0,0)` frames (white in a PNG viewer, black in an alpha-flattened video). It also broke run-to-run determinism (rule #2) — which frames tipped varied per Metal-library compilation. Stable single-variation genomes and stills (rotation 0) were unaffected, which is why `SpecialSauceParityTests` stayed green but real multi-xform animations broke, and the regression escaped the v0.1.2 gate.

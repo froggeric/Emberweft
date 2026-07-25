@@ -194,8 +194,18 @@ static inline float blend_color(thread const GPUXform& x, float ct) {
 static inline float2 v_bent(float2 p, float w) {
     return float2(w * (p.x < 0 ? 2.0f*p.x : p.x), w * (p.y < 0 ? 0.5f*p.y : p.y));
 }
+// var20_cosine: (cos(pi*tx)*cosh(ty), -sin(pi*tx)*sinh(ty))
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same shape as
+//   v_sinh/v_cosh — no division, but Metal `float` sinh/cosh(ty) overflow to
+//   ±Inf for |y|>~89.4 and the paired trig factor `cos(π·x)` or `sin(π·x)`
+//   can be exactly 0, giving `bounded·Inf·0.0f == NaN` (Metal-only; CPU
+//   Double yields a finite 0). Clamp `y` to ±88 (cosh(88)≈8.96e37 fits);
+//   for non-trivial trig factors the result is still ≫1e10 → badvalue_ms,
+//   matching CPU's Float-cast of its huge Double. Recipe mirrors v_coth.
 static inline float2 v_cosine(float2 p, float w) {
-    return float2(w * cos(p.x * M_PI_F) * cosh(p.y), w * (-sin(p.x * M_PI_F)) * sinh(p.y));
+    float py_clamped = clamp(p.y, -88.0f, 88.0f);
+    return float2(w * cos(p.x * M_PI_F) * cosh(py_clamped),
+                  w * (-sin(p.x * M_PI_F)) * sinh(py_clamped));
 }
 static inline float2 v_cylinder(float2 p, float w) { return float2(w * sin(p.x), w * p.y); }
 // var28_bubble (variations.c:671-678): r = w/(0.25*sumsq + 1); (r*p.x, r*p.y).
@@ -259,8 +269,17 @@ static inline float2 v_cross(float2 p, float w) {
 // /private/tmp/flam3-build/variations.c L1747-1897.
 // var82_exp: expe = exp(tx); sincos(ty, &expsin, &expcos)
 //   (w * expe * expcos, w * expe * expsin)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same shape
+//   as v_exponential — Metal `float` `exp(x)` overflows to +Inf for x > ~88.7.
+//   No division; Inf propagates directly to the variation output (badvalue_ms
+//   catches it identically on both backends when trig is non-zero) EXCEPT
+//   when cos(y) or sin(y) is exactly 0: `bounded·Inf·0.0f == NaN` (Metal-only;
+//   CPU Double gives a finite 0). Clamp `x` to ±88 (exp(88)≈1.65e37 fits);
+//   for non-trivial trig the result is still ≫1e10 → badvalue, matching CPU's
+//   Float-cast of its huge Double. Recipe mirrors v_coth.
 static inline float2 v_exp(float2 p, float w) {
-    float expe = exp(p.x);
+    float px_clamped = clamp(p.x, -88.0f, 88.0f);
+    float expe = exp(px_clamped);
     float expcos = cos(p.y);
     float expsin = sin(p.y);
     return float2(w * expe * expcos, w * expe * expsin);
@@ -272,124 +291,221 @@ static inline float2 v_log(float2 p, float w) {
 }
 // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
 //   (w * sinsin * sincosh, w * sinacos * sinhsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same shape
+//   as v_cosine — Metal `sinh(y)`/`cosh(y)` overflow to ±Inf for |y|>~89.4;
+//   the paired trig factor `sin(x)` or `cos(x)` can be exactly 0, giving
+//   `bounded·Inf·0.0f == NaN` (Metal-only; CPU Double yields a finite 0).
+//   Clamp `y` to ±88 (cosh(88)≈8.96e37 fits); for non-trivial trig the
+//   result is still ≫1e10 → badvalue_ms, matching CPU's Float-cast of its
+//   huge Double. Recipe mirrors v_coth.
 static inline float2 v_sin(float2 p, float w) {
+    float py_clamped = clamp(p.y, -88.0f, 88.0f);
     float sinsin = sin(p.x);
     float sinacos = cos(p.x);
-    float sinhsinh = sinh(p.y);
-    float sincosh = cosh(p.y);
+    float sinhsinh = sinh(py_clamped);
+    float sincosh = cosh(py_clamped);
     return float2(w * sinsin * sincosh, w * sinacos * sinhsinh);
 }
 // var85_cos: sincos(tx, &cossin, &coscos); coshsinh = sinh(ty); coshcosh = cosh(ty)
 //   (w * coscos * coshcosh, -w * cossin * coshsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same hazard
+//   and same recipe as v_sin — clamp `y` to ±88 to keep sinh/cosh finite;
+//   prevents `bounded·Inf·0.0f == NaN` when the paired trig factor is 0.
+//   Saturated limit (large |y|): result ≫1e10 → badvalue_ms (matches CPU's
+//   Float-cast of its huge Double).
 static inline float2 v_cos(float2 p, float w) {
+    float py_clamped = clamp(p.y, -88.0f, 88.0f);
     float cossin = sin(p.x);
     float coscos = cos(p.x);
-    float coshsinh = sinh(p.y);
-    float coshcosh = cosh(p.y);
+    float coshsinh = sinh(py_clamped);
+    float coshcosh = cosh(py_clamped);
     return float2(w * coscos * coshcosh, -w * cossin * coshsinh);
 }
 // var86_tan: sincos(2*tx, &tansin, &tancos); tanhsinh = sinh(2*ty); tanhcosh = cosh(2*ty)
 //   tanden = 1/(tancos + tanhcosh); (w * tanden * tansin, w * tanden * tanhsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): Metal `float`
+//   `cosh(2y)` overflows to +Inf for |y| > ~44.7. The naive `tanden*tanhsinh`
+//   then becomes `0.0f * Inf == NaN`, tripping badvalue_ms and diverging the
+//   chaos game from CPU. Clamp `2y` to ±88 (cosh(88)≈8.96e37 fits). For
+//   |2y|>~30 sinh/cosh already saturates, so the clamp reproduces CPU Double's
+//   saturated limit (tanden·tanhsinh → sign(y)·w) bit-for-bit. Same recipe
+//   as v_coth/v_cot (with `+` denom instead of `-`).
 static inline float2 v_tan(float2 p, float w) {
     float tansin = sin(2.0f * p.x);
     float tancos = cos(2.0f * p.x);
-    float tanhsinh = sinh(2.0f * p.y);
-    float tanhcosh = cosh(2.0f * p.y);
+    float two_y_clamped = clamp(2.0f * p.y, -88.0f, 88.0f);
+    float tanhsinh = sinh(two_y_clamped);
+    float tanhcosh = cosh(two_y_clamped);
     float tanden = 1.0f / (tancos + tanhcosh);
     return float2(w * tanden * tansin, w * tanden * tanhsinh);
 }
 // var87_sec: sincos(tx, &secsin, &seccos); secsinh = sinh(ty); seccosh = cosh(ty)
 //   secden = 2/(cos(2*tx) + cosh(2*ty))
 //   (w * secden * seccos * seccosh, w * secden * secsin * secsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same hazard
+//   and same recipe as v_csc — clamp `y` to ±88 for sinh/cosh(ty) AND let
+//   cosh(2*ty) overflow benignly (secden=0, result=0). Prevents
+//   `0·bounded·Inf = NaN` when |y|>~89. CPU saturated limit: result → 0.
 static inline float2 v_sec(float2 p, float w) {
+    float py_clamped = clamp(p.y, -88.0f, 88.0f);
     float secsin = sin(p.x);
     float seccos = cos(p.x);
-    float secsinh = sinh(p.y);
-    float seccosh = cosh(p.y);
-    float secden = 2.0f / (cos(2.0f * p.x) + cosh(2.0f * p.y));
+    float secsinh = sinh(py_clamped);
+    float seccosh = cosh(py_clamped);
+    float secden = 2.0f / (cos(2.0f * p.x) + cosh(2.0f * py_clamped));
     return float2(w * secden * seccos * seccosh, w * secden * secsin * secsinh);
 }
 // var88_csc: sincos(tx, &cscsin, &csccos); cscsinh = sinh(ty); csccosh = cosh(ty)
 //   cscden = 2/(cosh(2*ty) - cos(2*tx))
 //   (w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): mirror of
+//   v_sech/v_csch in `y`. Clamp `y` to ±88 (cosh(88)≈8.96e37 fits) for the
+//   sinh/cosh(ty) calls AND let cosh(2*ty) overflow benignly: when |y|>~44.7,
+//   cosh(2y)→Inf makes cscden=0, so the result is `0·bounded·finite = 0`,
+//   matching CPU Double's saturated limit (result → 0). Without the clamp,
+//   csccosh overflows for |y|>~89 and `0·bounded·Inf = NaN` trips badvalue_ms.
 static inline float2 v_csc(float2 p, float w) {
+    float py_clamped = clamp(p.y, -88.0f, 88.0f);
     float cscsin = sin(p.x);
     float csccos = cos(p.x);
-    float cscsinh = sinh(p.y);
-    float csccosh = cosh(p.y);
-    float cscden = 2.0f / (cosh(2.0f * p.y) - cos(2.0f * p.x));
+    float cscsinh = sinh(py_clamped);
+    float csccosh = cosh(py_clamped);
+    float cscden = 2.0f / (cosh(2.0f * py_clamped) - cos(2.0f * p.x));
     return float2(w * cscden * cscsin * csccosh, -w * cscden * csccos * cscsinh);
 }
 // var89_cot: sincos(2*tx, &cotsin, &cotcos); cotsinh = sinh(2*ty); cotcosh = cosh(2*ty)
 //   cotden = 1/(cotcosh - cotcos)
 //   (w * cotden * cotsin, w * cotden * -1 * cotsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): Metal `float`
+//   `cosh(2y)` overflows to +Inf for |y| > ~44.7. The naive `cotden*cotsinh`
+//   then becomes `0.0f * Inf == NaN`, tripping badvalue_ms and diverging the
+//   chaos game from CPU. Clamp `2y` to ±88 (just below Float cosh's overflow
+//   threshold ~89.4; cosh(88)≈8.96e37 fits). For |2y|>~30 sinh/cosh already
+//   saturates, so the clamp reproduces CPU Double's saturated limit
+//   (cotden·cotsinh → -sign(y)·w) bit-for-bit. Same recipe as v_coth.
 static inline float2 v_cot(float2 p, float w) {
     float cotsin = sin(2.0f * p.x);
     float cotcos = cos(2.0f * p.x);
-    float cotsinh = sinh(2.0f * p.y);
-    float cotcosh = cosh(2.0f * p.y);
+    float two_y_clamped = clamp(2.0f * p.y, -88.0f, 88.0f);
+    float cotsinh = sinh(two_y_clamped);
+    float cotcosh = cosh(two_y_clamped);
     float cotden = 1.0f / (cotcosh - cotcos);
     return float2(w * cotden * cotsin, w * cotden * -1.0f * cotsinh);
 }
 // var90_sinh: sincos(ty, &sinhsin, &sinhcos); sinhsinh = sinh(tx); sinhcosh = cosh(tx)
 //   (w * sinhsinh * sinhcos, w * sinhcosh * sinhsin)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): Metal `float`
+//   `sinh(x)`/`cosh(x)` overflow to ±Inf for |x| > ~89.4. There is no
+//   division — Inf propagates directly to the variation output (badvalue_ms
+//   catches it on both backends identically) EXCEPT when the paired trig
+//   factor is exactly 0: `bounded·Inf·0.0f == NaN`, which trips badvalue_ms
+//   on Metal only (CPU Double gives a finite 0). Clamp `x` to ±88 (cosh(88)
+//   ≈8.96e37 fits) to extinguish the NaN path; for non-trivial trig factors
+//   the result is still ≫1e10 → badvalue, identical to CPU's Float-cast of
+//   its huge Double. Recipe mirrors v_coth.
 static inline float2 v_sinh(float2 p, float w) {
+    float px_clamped = clamp(p.x, -88.0f, 88.0f);
     float sinhsin = sin(p.y);
     float sinhcos = cos(p.y);
-    float sinhsinh = sinh(p.x);
-    float sinhcosh = cosh(p.x);
+    float sinhsinh = sinh(px_clamped);
+    float sinhcosh = cosh(px_clamped);
     return float2(w * sinhsinh * sinhcos, w * sinhcosh * sinhsin);
 }
 // var91_cosh: sincos(ty, &coshsin, &coshcos); coshsinh = sinh(tx); coshcosh = cosh(tx)
 //   (w * coshcosh * coshcos, w * coshsinh * coshsin)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same hazard
+//   and same recipe as v_sinh — clamp `x` to ±88 to keep sinh/cosh finite;
+//   prevents `bounded·Inf·0.0f == NaN` when the paired trig factor is 0.
+//   Saturated limit (large |x|): result ≫1e10 → badvalue_ms (matches CPU's
+//   Float-cast of its huge Double, which also exceeds BAD_MS=1e10).
 static inline float2 v_cosh(float2 p, float w) {
+    float px_clamped = clamp(p.x, -88.0f, 88.0f);
     float coshsin = sin(p.y);
     float coshcos = cos(p.y);
-    float coshsinh = sinh(p.x);
-    float coshcosh = cosh(p.x);
+    float coshsinh = sinh(px_clamped);
+    float coshcosh = cosh(px_clamped);
     return float2(w * coshcosh * coshcos, w * coshsinh * coshsin);
 }
 // var92_tanh: sincos(2*ty, &tanhsin, &tanhcos); tanhsinh = sinh(2*tx); tanhcosh = cosh(2*tx)
 //   tanhden = 1/(tanhcos + tanhcosh)
 //   (w * tanhden * tanhsinh, w * tanhden * tanhsin)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): Metal `float`
+//   `cosh(2x)` overflows to +Inf for |x| > ~44.7. The naive `tanhden*tanhsinh`
+//   then becomes `0.0f * Inf == NaN`, tripping badvalue_ms and diverging the
+//   chaos game from CPU. Clamp `2x` to ±88 (just below Float cosh's overflow
+//   threshold ~89.4; cosh(88)≈8.96e37 fits). For |2x|>~30 sinh/cosh already
+//   saturates, so the clamp reproduces CPU Double's saturated limit
+//   (tanhden·tanhsinh → sign(x)·w) bit-for-bit. Same recipe as v_coth.
 static inline float2 v_tanh(float2 p, float w) {
     float tanhsin = sin(2.0f * p.y);
     float tanhcos = cos(2.0f * p.y);
-    float tanhsinh = sinh(2.0f * p.x);
-    float tanhcosh = cosh(2.0f * p.x);
+    float two_x_clamped = clamp(2.0f * p.x, -88.0f, 88.0f);
+    float tanhsinh = sinh(two_x_clamped);
+    float tanhcosh = cosh(two_x_clamped);
     float tanhden = 1.0f / (tanhcos + tanhcosh);
     return float2(w * tanhden * tanhsinh, w * tanhden * tanhsin);
 }
 // var93_sech: sincos(ty, &sechsin, &sechcos); sechsinh = sinh(tx); sechcosh = cosh(tx)
 //   sechden = 2/(cos(2*ty) + cosh(2*tx))
 //   (w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): clamp `x` to
+//   ±88 (cosh(88)≈8.96e37 fits) for the sinh/cosh(tx) calls AND let the
+//   cosh(2*tx) call overflow benignly: when |x|>~44.7, cosh(2x)→Inf makes
+//   sechden=0, so the result is `0·bounded·finite_cosh = 0`, matching CPU
+//   Double's saturated limit (result → 0). Without the clamp, sechcosh also
+//   overflows for |x|>~89 and `0·bounded·Inf = NaN` contaminates the
+//   accumulator. Same recipe as v_coth.
 static inline float2 v_sech(float2 p, float w) {
+    float px_clamped = clamp(p.x, -88.0f, 88.0f);
     float sechsin = sin(p.y);
     float sechcos = cos(p.y);
-    float sechsinh = sinh(p.x);
-    float sechcosh = cosh(p.x);
-    float sechden = 2.0f / (cos(2.0f * p.y) + cosh(2.0f * p.x));
+    float sechsinh = sinh(px_clamped);
+    float sechcosh = cosh(px_clamped);
+    float sechden = 2.0f / (cos(2.0f * p.y) + cosh(2.0f * px_clamped));
     return float2(w * sechden * sechcos * sechcosh, -w * sechden * sechsin * sechsinh);
 }
 // var94_csch: sincos(ty, &cschsin, &cschcos); cschsinh = sinh(tx); cschcosh = cosh(tx)
 //   cschden = 2/(cosh(2*tx) - cos(2*ty))
 //   (w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same hazard
+//   and same recipe as v_sech — clamp `x` to ±88 for sinh/cosh(tx) AND let
+//   cosh(2*tx) overflow benignly to Inf (cschden=0, result=0). Prevents
+//   `0·bounded·Inf = NaN` when |x|>~89. CPU saturated limit: result → 0.
 static inline float2 v_csch(float2 p, float w) {
+    float px_clamped = clamp(p.x, -88.0f, 88.0f);
     float cschsin = sin(p.y);
     float cschcos = cos(p.y);
-    float cschsinh = sinh(p.x);
-    float cschcosh = cosh(p.x);
-    float cschden = 2.0f / (cosh(2.0f * p.x) - cos(2.0f * p.y));
+    float cschsinh = sinh(px_clamped);
+    float cschcosh = cosh(px_clamped);
+    float cschden = 2.0f / (cosh(2.0f * px_clamped) - cos(2.0f * p.y));
     return float2(w * cschden * cschsinh * cschcos, -w * cschden * cschcosh * cschsin);
 }
 // var95_coth: sincos(2*ty, &cothsin, &cothcos); cothsinh = sinh(2*tx); cothcosh = cosh(2*tx)
 //   cothden = 1/(cothcosh - cothcos)
 //   (w * cothden * cothsinh, w * cothden * cothsin)
+//
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`):
+// Metal `float` `cosh(2x)` overflows to +Inf for |x| > ~44 (Float max ≈ 3.4e38,
+// cosh(89) ≈ 1.7e38 fits, cosh(90) ≈ 6e38 overflows). The naive
+// `cothden * cothsinh` then becomes `0.0f * Inf == NaN`, which trips
+// `badvalue_ms` and diverges the chaos game from CPU. flam3 and Emberweft
+// CPU use `double`, where cosh(89) ≈ 1.7e38 is finite, giving the saturated
+// limit `coth_result → ±w` for large |x|.
+//
+// Fix: clamp the argument to ±88 (just below Float cosh's overflow threshold).
+// For |2x| > ~30 the math already saturates (`sinh(x)/cosh(x)` rounds to ±1.0
+// in Float), so clamping at ±88 is exact for the saturated regime and
+// unchanged for the linear regime — matching CPU Double's finite result up to
+// the final float cast. Same pattern affects cot/sinh/cosh/tanh/sech/csch/
+// csc/sec/exp/cosine — flagged as follow-up; only coth is patched here
+// (the confirmed cause of the 16636→17491 transition seam bug).
 static inline float2 v_coth(float2 p, float w) {
-    float cothsin = sin(2.0f * p.y);
-    float cothcos = cos(2.0f * p.y);
-    float cothsinh = sinh(2.0f * p.x);
-    float cothcosh = cosh(2.0f * p.x);
+    float two_x_clamped = clamp(2.0f * p.x, -88.0f, 88.0f);
+    float two_y = 2.0f * p.y;
+    float cothsin = sin(two_y);
+    float cothcos = cos(two_y);
+    float cothsinh = sinh(two_x_clamped);
+    float cothcosh = cosh(two_x_clamped);
     float cothden = 1.0f / (cothcosh - cothcos);
     return float2(w * cothden * cothsinh, w * cothden * cothsin);
 }
@@ -1088,8 +1204,21 @@ static inline float2 v_ex(float2 p, float w) {
     float m0 = n0*n0*n0 * r; float m1 = n1*n1*n1 * r;
     return float2(w * (m0 + m1), w * (m0 - m1));
 }
+// var18_exponential: e = exp(tx-1); (w*e*cos(pi*ty), w*e*sin(pi*ty))
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): Metal `float`
+//   `exp(x-1)` overflows to +Inf for x > ~89.7 (Float exp overflow at arg
+//   ≈88.7). There is no division — Inf propagates directly to the variation
+//   output (badvalue_ms catches it identically on both backends when the
+//   trig factor is non-zero) EXCEPT when cos(π·y) or sin(π·y) is exactly 0:
+//   `bounded·Inf·0.0f == NaN`, tripping badvalue_ms on Metal only (CPU Double
+//   gives a finite 0). Clamp the `exp` argument to ±88 (exp(88)≈1.65e37
+//   fits); for non-trivial trig factors the clamped result is still
+//   ≫1e10 → badvalue, matching CPU's Float-cast of its huge Double.
+//   CRITICAL for real sheep 16636/31943 (whose xforms carry exponential
+//   under large pre-affines, historically collapsing the trajectory).
 static inline float2 v_exponential(float2 p, float w) {
-    float e = exp(p.x - 1.0f);
+    float arg_clamped = clamp(p.x - 1.0f, -88.0f, 88.0f);
+    float e = exp(arg_clamped);
     return float2(w * e * cos(M_PI_F * p.y), w * e * sin(M_PI_F * p.y));
 }
 static inline float2 v_fisheye(float2 p, float w) {
