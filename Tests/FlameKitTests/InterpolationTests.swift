@@ -158,8 +158,11 @@ final class InterpolationTests: XCTestCase {
     }
 
     /// Merge split: `.log` unions variations by name, preserves zero-weight slots,
-    /// and carries per-name parameters from whichever side defines them.
-    func testLogMergeUnionPreservesZeroAndCarriesParams() {
+    /// and **linearly interpolates** per-name parameters (faithful to flam3's
+    /// `INTERP(x)` macro applied per parametric field in `flam3_interpolate_n`).
+    /// When one side lacks a parameter, the descriptor default is used; for
+    /// unknown/synthetic parameters the default is 0.
+    func testLogMergeUnionPreservesZeroAndInterpolatesParams() {
         let a = Flame(xforms: [Xform(variations: [
             Variation(name: "linear",    weight: 1, parameters: ["x": 5]),
             Variation(name: "spherical", weight: 0, parameters: ["q": 9]),
@@ -172,11 +175,34 @@ final class InterpolationTests: XCTestCase {
         XCTAssertEqual(vs.count, 2)                         // union, both kept
         XCTAssertEqual(vs[0].name, "linear")                // sorted by name
         XCTAssertEqual(vs[0].weight, 0.5, accuracy: 1e-12)
-        XCTAssertEqual(vs[0].parameters["x"], 5)            // carried from a
+        // x: a has 5, b lacks it → default 0 → linear interp 0.5*5 + 0.5*0 = 2.5
+        XCTAssertEqual(vs[0].parameters["x"] ?? .nan, 2.5, accuracy: 1e-12)
         XCTAssertEqual(vs[1].name, "spherical")
         XCTAssertEqual(vs[1].weight, 0.0, accuracy: 1e-12)  // zero-weight preserved
-        XCTAssertEqual(vs[1].parameters["q"], 9)            // carried from a
-        XCTAssertEqual(vs[1].parameters["y"], 7)            // carried from b
+        // q: a has 9, b lacks it → 0.5*9 + 0.5*0 = 4.5
+        XCTAssertEqual(vs[1].parameters["q"] ?? .nan, 4.5, accuracy: 1e-12)
+        // y: a lacks it (0), b has 7 → 0.5*0 + 0.5*7 = 3.5
+        XCTAssertEqual(vs[1].parameters["y"] ?? .nan, 3.5, accuracy: 1e-12)
+    }
+
+    /// `.log` per-param interpolation: at t=1 the result carries B's parametric
+    /// values, not A's (regression test for the transition-endpoint bug where
+    /// A's `curl_c1` bled into the result and produced an active curl final
+    /// endpoint when raw B had no final xform).
+    func testLogMergeAtOneReturnsBParams() {
+        let a = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl", weight: 1, parameters: ["curl_c1": 0.5, "curl_c2": 0.0]),
+        ])])
+        let b = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl", weight: 1, parameters: ["curl_c1": 0.0, "curl_c2": 0.0]),
+        ])])
+        let m = GenomeInterpolator.interpolate(a, b, t: 1.0, type: .log)
+        let vs = m.xforms[0].variations
+        XCTAssertEqual(vs.count, 1)
+        XCTAssertEqual(vs[0].name, "curl")
+        XCTAssertEqual(vs[0].weight, 1.0, accuracy: 1e-12)
+        XCTAssertEqual(vs[0].parameters["curl_c1"] ?? .nan, 0.0, accuracy: 1e-12)   // B's value, not A's 0.5
+        XCTAssertEqual(vs[0].parameters["curl_c2"] ?? .nan, 0.0, accuracy: 1e-12)
     }
 
     /// Merge split: `.linear` uses the legacy merge (drop-zero-weight + sort-by-name)

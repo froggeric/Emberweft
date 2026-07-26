@@ -101,7 +101,14 @@ public enum SpecialSauce {
             arr.append(makePaddingXform())
         }
         if maxFx == 1 {
-            arr.append(f.finalXform ?? makePaddingXform())
+            // flam3's `flam3_copyx` (flam3.c:1255-1266) differentiates the two
+            // padding-final cases: if the source has a real final, copy it; else
+            // synthesize a padding final with animate=0 and color_speed=0 (the
+            // "Interpolated-against final xforms need animate & color_speed set
+            // to 0.0" branch). The animate/color_speed overrides are final-only
+            // — regular padding keeps `initialize_xforms` defaults (animate=1,
+            // color_speed=0.5).
+            arr.append(f.finalXform ?? makePaddingFinalXform(at: arr.count))
         }
         return arr
     }
@@ -131,6 +138,35 @@ public enum SpecialSauce {
         Xform(affine: .identity,
               weight: 0.0,
               variations: [Variation(name: "linear", weight: 1.0)],
+              padding: 1)
+    }
+
+    /// A flam3 default padding **final** xform. Same structural skeleton as
+    /// `makePaddingXform` (weight 0, identity, padding 1, linear=1), but with
+    /// `animate = 0` and `colorSpeed = 0` per flam3's `flam3_copyx`
+    /// (flam3.c:1262-1266: "Interpolated-against final xforms need animate &
+    /// color_speed set to 0.0"). The `color` field follows
+    /// `initialize_xforms`'s `color = i & 1` rule (variations.c:2407) — the
+    /// padding final's color is set to match what flam3 leaves on the slot at
+    /// `dest->num_xforms - 1` after `flam3_add_xforms` runs `initialize_xforms`
+    /// from `old_num` upward.
+    ///
+    /// `colorSpeed = 0` is the load-bearing override for transition-endpoint
+    /// seamlessness: it makes `ChaosGame.blendColor(fin, …)` a no-op
+    /// (`(1-0)*colorT + 0*fin.color = colorT`), so the padding final — which is
+    /// geometrically identity once `applyLogic` rest-positions its variations to
+    /// defaults (e.g. `curl_c1=0, curl_c2=0` is identity curl) — neither
+    /// transforms points nor shifts their palette index. With the default
+    /// `colorSpeed = 0.5`, the bin color was being half-mixed with the padding
+    /// final's `color`, dimming the entire frame.
+    private static func makePaddingFinalXform(at index: Int) -> Xform {
+        Xform(affine: .identity,
+              weight: 0.0,
+              color: Double(index & 1),   // flam3 initialize_xforms: `color = i & 1`
+              colorSpeed: 0.0,            // flam3_copyx padding-final override (flam3.c:1265)
+              variations: [Variation(name: "linear", weight: 1.0)],
+              opacity: 1.0,
+              animate: 0.0,               // flam3_copyx padding-final override (flam3.c:1266)
               padding: 1)
     }
 

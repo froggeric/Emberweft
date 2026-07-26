@@ -62,6 +62,20 @@ public enum GenomeInterpolator {
         f.hueShift = (1 - t) * a.hueShift + t * b.hueShift
         f.time = (1 - t) * a.time + t * b.time
         f.palette = blendPalette(a.palette, b.palette, t)
+        // flam3 `flam3_interpolate_n` copies these enum/scalar genome fields from
+        // cpi[0] (interpolation.c:466-468: `result->{palette_mode, interpolation,
+        // interpolation_type, palette_interpolation} = cpi[0].<field>`). `f = Flame()`
+        // above zero-initializes them to defaults, so without these copies the
+        // transition result silently reverts to `.step` palette_mode even when both
+        // parents are `.linear` — a rendering-affecting bug for the chaos game's
+        // dmap sampler (ChaosGame.swift branches on `flame.paletteMode`).
+        // `hsv_rgb_palette_blend` likewise copies from cpi[0] (it's a single
+        // per-genome scalar, not interpolated).
+        f.paletteMode = a.paletteMode
+        f.interpolation = a.interpolation
+        f.interpolationType = a.interpolationType
+        f.paletteInterpolation = a.paletteInterpolation
+        f.hsvRgbPaletteBlend = a.hsvRgbPaletteBlend
 
         let n = max(a.xforms.count, b.xforms.count)
         // stagger: nx = standard (non-final) xform count. After align both genomes share
@@ -115,6 +129,7 @@ public enum GenomeInterpolator {
         x.color = (1 - t) * a.color + t * b.color
         x.colorSpeed = (1 - t) * a.colorSpeed + t * b.colorSpeed
         x.opacity = (1 - t) * a.opacity + t * b.opacity
+        x.animate = (1 - t) * a.animate + t * b.animate   // flam3 INTERP(xform[i].animate) (interpolation.c:542)
         x.affine = lerpAffine(a.affine, b.affine, t)
         x.postAffine = lerpAffine(a.postAffine, b.postAffine, t)
         x.variations = mergeLinear(a.variations, b.variations, t)
@@ -146,6 +161,7 @@ public enum GenomeInterpolator {
         x.color = (1 - t) * a.color + t * b.color
         x.colorSpeed = (1 - t) * a.colorSpeed + t * b.colorSpeed
         x.opacity = (1 - t) * a.opacity + t * b.opacity
+        x.animate = (1 - t) * a.animate + t * b.animate   // flam3 INTERP(xform[i].animate) (interpolation.c:542)
 
         // affine part: polar (cflag=0 => wind-anchored unwrap applies).
         x.affine = interpolateAffineLog(a.affine, b.affine, windB: b.wind, cflag: false, t: t)
@@ -166,26 +182,64 @@ public enum GenomeInterpolator {
     }
 
     /// `.log` variation merge: union by name (zero-weight slots preserved, so
-    /// align-created padding entries survive), sorted by name, with per-name
-    /// parameters carried from whichever side defines them. For each variation
-    /// name, side `a`'s parameters always win (the `where p[k] == nil` guard
-    /// means any key both sides define keeps `a`'s value); side `b` fills only
-    /// the keys `a` lacks. Only the variation WEIGHT interpolates linearly
-    /// (`(1-t)*a + t*b`). This matches flam3's `merge_log` behavior exactly.
+    /// align-created padding entries survive), sorted by name, with **per-param
+    /// linear interpolation** of every parameter (variation weight AND each
+    /// parameter value). This is a faithful port of flam3's `INTERP(x)` macro
+    /// (interpolation.h:24) as applied per parametric field in
+    /// `flam3_interpolate_n` (interpolation.c:543-700 — `INTERP(xform[i].blob_low)`,
+    /// `INTERP(xform[i].curl_c1)`, etc.): the result for each parameter is
+    /// `(1-t)*cp[0].param + t*cp[1].param`. When a side lacks the parameter,
+    /// the variation's descriptor default is used (`initialize_xforms`
+    /// defaults, variations.c:2424-2700); for unknown parameters the default
+    /// is 0.
+    ///
+    /// This rule supersedes an earlier "side `a`'s params always win" carry
+    /// (which misread flam3 as having a `merge_log` function — flam3 has no
+    /// such function; its variations are stored as a fixed `var[N]` array
+    /// `INTERP`'d slot-by-slot). The carry rule was a faithfulness bug: at
+    /// t=1.0 it kept source-A's parametric values instead of returning
+    /// destination-B's, which broke transition endpoints whenever A's xform
+    /// had a parametric variation that B's padding slot also acquired via
+    /// `SpecialSauce.align` rest-positioning (e.g. A's `curl_c1=0.51979`
+    /// bled into the result instead of B's rest value 0, producing an
+    /// active curl final at the endpoint where raw B had none).
     private static func mergeLog(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
         var weight = [String: Double]()
-        var params = [String: [String: Double]]()
+        var aParams = [String: [String: Double]]()
+        var bParams = [String: [String: Double]]()
         for v in a {
             weight[v.name, default: 0] += (1 - t) * v.weight
-            var p = params[v.name] ?? [:]
-            for (k, val) in v.parameters where p[k] == nil { p[k] = val }
-            params[v.name] = p
+            var p = aParams[v.name] ?? [:]
+            for (k, val) in v.parameters { p[k] = val }
+            aParams[v.name] = p
         }
         for v in b {
             weight[v.name, default: 0] += t * v.weight
-            var p = params[v.name] ?? [:]
-            for (k, val) in v.parameters where p[k] == nil { p[k] = val }
-            params[v.name] = p
+            var p = bParams[v.name] ?? [:]
+            for (k, val) in v.parameters { p[k] = val }
+            bParams[v.name] = p
+        }
+        // Per-param linear interp using descriptor defaults when a side lacks
+        // the parameter (flam3 INTERP + initialize_xforms defaults).
+        var params = [String: [String: Double]]()
+        for name in weight.keys {
+            let ap = aParams[name] ?? [:]
+            let bp = bParams[name] ?? [:]
+            let descriptor = VariationDescriptor.descriptor(for: name)
+            // Use the descriptor's canonical param list + defaults when this is
+            // a known variation; otherwise fall back to the union of both sides'
+            // keys (preserves round-trip for unknown/synthetic params).
+            let keys = (descriptor?.parameters.isEmpty == false)
+                ? descriptor!.parameters
+                : Array(Set(ap.keys).union(bp.keys)).sorted()
+            let defs = descriptor?.defaults ?? [:]
+            var merged: [String: Double] = [:]
+            for k in keys {
+                let av = ap[k] ?? defs[k] ?? 0
+                let bv = bp[k] ?? defs[k] ?? 0
+                merged[k] = (1 - t) * av + t * bv
+            }
+            params[name] = merged
         }
         return weight
             .sorted { $0.key < $1.key }

@@ -7,6 +7,19 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.5] — Fix Transition Endpoint Faithfulness (`Transition(A,B,1.0)` now = B)
+
+The end of a `sheep_edge` transition did not reach the destination genome: `Transition(A,B,t=1.0)` rendered at only **16.8 dB** vs `Loop(B)` (and vs `flam3`'s 49.77 dB) — an Emberweft-only faithfulness bug, not flam3 behavior. It caused an abrupt "missing transition" jump at edge→loop boundaries for pairs where A has a final xform and B doesn't (e.g. 16636→17491). Three independent deviations from flam3's interpolation source, all fixed:
+
+- **`mergeLog` parameter bleed** (`GenomeInterpolator.swift`): used "A's params win, B fills gaps" — but flam3 `INTERP`s each parametric field linearly (`result.p = (1−t)·A.p + t·B.p`). At t=1.0 A's `curl_c1` bled into a padding-final xform instead of B's `0`. Rewritten to per-param linear interp (descriptor defaults when a side lacks the param). The old "matches flam3's `merge_log`" comment was wrong — flam3 has no such function.
+- **Padding-final fields** (`SpecialSauce.swift`): `makePaddingXform` left `colorSpeed=0.5`, but flam3's `flam3_copyx` forces `colorSpeed=0, animate=0` for padding-finals — so Emberweft's padding-final halved every bin's color. New `makePaddingFinalXform` mirrors flam3.c:1262-1266; regular padding unchanged.
+- **Dropped scalar fields** (`GenomeInterpolator.swift`): `blend` started from `Flame()` defaults, never copying `paletteMode`/`interpolationType`/`paletteInterpolation`/`hsvRgbPaletteBlend` from `cpi[0]` (flam3 interpolation.c:466-468) — silently reverting `.linear` inputs to `.step`. Now propagated from `a`.
+- **`animate` interpolation**: added `x.animate = (1−t)·a.animate + t·b.animate` (flam3 interpolation.c:542) to both xform callbacks — closes a faithfulness gap (no render effect today).
+
+### Verified
+- Endpoint `Transition(16636,17491,1.0)` vs `Loop(17491)`: **7.7 dB → ∞ dB (byte-identical, MD5 match)** at q1000/1080p/Metal.
+- All gates green: `AnimationParityTests.testSheepEdgeVsFlam3Inter` (`.log` transition vs flam3) **improved to 59.04 dB**; `AnimatedFrameParityTests` 4/4; `SpecialSauceParityTests` 84/84; `ParamChannelParityTests` + `GoldenParityTests` frozen goldens **byte-identical** (frozen genomes are param-free/final-free → don't exercise the fixes); `make test-fast` 320/0. New regression test `testLogMergeAtOneReturnsBParams`.
+
 ## [v0.1.4] — Fix Metal Float-Overflow Collapses in Hyperbolic/Trig/Exp Variations
 
 Metal kernels use `float`; `flam3` and the CPU reference use `double`. For variations that compute `cosh`/`sinh`/`exp` on a potentially-large argument, Metal overflows to `+Inf` (Float `cosh` overflows at arg ≈ 89, `exp` at ≈ 88.7) where `double` is finite, producing `0.0f * Inf == NaN` that contaminates the chaos-game accumulator, trips `badvalue_ms`, and **collapses the rendered trajectory to near-black + desyncs from CPU**. This was the root cause of the abrupt "missing transition" seam at the 16636→17491 edge (frame lum 3.6, collapsed; `flam3` renders it bright at ~95 → Emberweft-Metal bug, not faithful): 16636's huge xform-0 affine (`a=34.67`) pushes `pre.x` past 44, and a tiny interpolated `coth` weight (from 17491) triggers the overflow.
