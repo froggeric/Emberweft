@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.1.3 — CPU + Metal renderers, animation + realtime playback, and motion-blurred real-genome parity are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.1.5 — CPU + Metal renderers, animation + realtime playback, and motion-blurred real-genome parity are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -54,6 +54,8 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.1.1** | ✅ Done | Corpus-variation coverage (57/99 — 100% of ES-corpus-used variations) |
 | **v0.1.2** | ✅ Done | **Full flam3 variation coverage (99/99)** — all validated ≥38 dB vs `flam3` + Metal↔CPU |
 | **v0.1.3** | ✅ Done | **Fix:** Metal empty-frame regression on fragile multi-xform animations (const-ref `GPUXform` in kernels) |
+| **v0.1.4** | ✅ Done | **Fix:** Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations (clamp args to ±88) |
+| **v0.1.5** | ✅ Done | **Fix:** transition endpoint faithfulness — `Transition(A,B,1.0)` now = B (mergeLog per-param INTERP + padding-final fields + propagate `paletteMode`) |
 | M4 | **Current** | SwiftUI app + player + library browser |
 | M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
