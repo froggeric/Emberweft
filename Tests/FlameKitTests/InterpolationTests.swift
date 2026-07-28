@@ -66,7 +66,12 @@ final class InterpolationTests: XCTestCase {
 
     // MARK: - GenomeInterpolator
 
-    /// `.linear` must reproduce the legacy `Interpolation.interpolate` output exactly.
+    /// `.linear` must reproduce the legacy `Interpolation.interpolate` output
+    /// exactly. NOTE: `Interpolation.interpolate` is a shim that delegates to
+    /// `GenomeInterpolator.interpolate(..., type: .linear)`, so this is a smoke
+    /// test that the shim + the no-param `flame()` factory stay stable — it is
+    /// NOT a flam3 faithfulness proof (the `.linear` merge is exercised directly
+    /// by `testLinearMergeInterpolatesParams` / `testLinearMergeAtOneReturnsBParams`).
     func testLinearParityWithLegacyShim() {
         let a = flame(0, 200, xformCount: 2)
         let b = flame(10, 400, xformCount: 2)
@@ -205,9 +210,15 @@ final class InterpolationTests: XCTestCase {
         XCTAssertEqual(vs[0].parameters["curl_c2"] ?? .nan, 0.0, accuracy: 1e-12)
     }
 
-    /// Merge split: `.linear` uses the legacy merge (drop-zero-weight + sort-by-name)
-    /// and does NOT carry parameters.
-    func testLinearMergeDropsZeroAndIgnoresParams() {
+    /// Merge: `.linear` now uses the SAME variation merge as `.log` (union by
+    /// name, zero-weight slots preserved, per-param linear interpolation).
+    /// Faithful to flam3 — in `flam3_interpolate_n` (interpolation.c:543-655)
+    /// the parametric INTERPs and the `INTERP(xform[i].var[j])` loop execute
+    /// BEFORE the `.log`/`.linear` matrix branch (line 657), so variation
+    /// handling is identical for both types. Regression coverage for the
+    /// pre-fix `mergeLinear`, which dropped ALL parameters and filtered
+    /// zero-weight entries (no flam3 basis).
+    func testLinearMergeInterpolatesParams() {
         let a = Flame(xforms: [Xform(variations: [
             Variation(name: "linear",    weight: 1, parameters: ["x": 5]),
             Variation(name: "spherical", weight: 0, parameters: ["q": 9]),
@@ -217,9 +228,64 @@ final class InterpolationTests: XCTestCase {
         ])])
         let m = GenomeInterpolator.interpolate(a, b, t: 0.5, type: .linear)
         let vs = m.xforms[0].variations
-        XCTAssertEqual(vs.count, 1)                         // zero-weight dropped
-        XCTAssertEqual(vs[0].name, "linear")
+        XCTAssertEqual(vs.count, 2)                         // union, both kept
+        XCTAssertEqual(vs[0].name, "linear")                // sorted by name
         XCTAssertEqual(vs[0].weight, 0.5, accuracy: 1e-12)
-        XCTAssertTrue(vs[0].parameters.isEmpty)             // legacy: no param carry
+        // x: a has 5, b lacks it → default 0 → 0.5*5 + 0.5*0 = 2.5
+        XCTAssertEqual(vs[0].parameters["x"] ?? .nan, 2.5, accuracy: 1e-12)
+        XCTAssertEqual(vs[1].name, "spherical")
+        XCTAssertEqual(vs[1].weight, 0.0, accuracy: 1e-12)  // zero-weight preserved
+        // q: a has 9, b lacks it → 0.5*9 + 0.5*0 = 4.5
+        XCTAssertEqual(vs[1].parameters["q"] ?? .nan, 4.5, accuracy: 1e-12)
+        // y: a lacks it (0), b has 7 → 0.5*0 + 0.5*7 = 3.5
+        XCTAssertEqual(vs[1].parameters["y"] ?? .nan, 3.5, accuracy: 1e-12)
+    }
+
+    /// `.linear` per-param interpolation: at t=1 the result carries B's
+    /// parametric values, not A's. Mirrors `testLogMergeAtOneReturnsBParams`
+    /// — regression for the pre-fix `mergeLinear`, which dropped params
+    /// entirely so a `.linear` transition into a parametric-variation
+    /// endpoint lost the endpoint's params at the renderer.
+    func testLinearMergeAtOneReturnsBParams() {
+        let a = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl", weight: 1, parameters: ["curl_c1": 0.5, "curl_c2": 0.0]),
+        ])])
+        let b = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl", weight: 1, parameters: ["curl_c1": 0.25, "curl_c2": 0.1]),
+        ])])
+        let m = GenomeInterpolator.interpolate(a, b, t: 1.0, type: .linear)
+        let vs = m.xforms[0].variations
+        XCTAssertEqual(vs.count, 1)
+        XCTAssertEqual(vs[0].name, "curl")
+        XCTAssertEqual(vs[0].weight, 1.0, accuracy: 1e-12)
+        XCTAssertEqual(vs[0].parameters["curl_c1"] ?? .nan, 0.25, accuracy: 1e-12)  // B's value
+        XCTAssertEqual(vs[0].parameters["curl_c2"] ?? .nan, 0.1,  accuracy: 1e-12)  // B's value
+    }
+
+    /// `.linear` and `.log` produce IDENTICAL variation merges on the same
+    /// inputs — direct evidence the consolidation is faithful (flam3's param
+    /// INTERPs at interpolation.c:543-655 precede the type branch at 657).
+    /// Only the affine/post matrices may differ between the two modes.
+    func testLinearAndLogMergeIdentically() {
+        let a = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl",    weight: 0.7, parameters: ["curl_c1": 0.3, "curl_c2": 0.4]),
+            Variation(name: "julian",  weight: 0.3, parameters: ["julian_power": 4, "julian_dist": 1.0]),
+        ])])
+        let b = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl",    weight: 0.4, parameters: ["curl_c1": 0.9, "curl_c2": 0.1]),
+            Variation(name: "spherical", weight: 0.6),
+        ])])
+        let lin = GenomeInterpolator.interpolate(a, b, t: 0.35, type: .linear).xforms[0].variations
+        let log = GenomeInterpolator.interpolate(a, b, t: 0.35, type: .log).xforms[0].variations
+        XCTAssertEqual(lin.count, log.count, "linear and log must union the same names")
+        for (l, g) in zip(lin, log) {
+            XCTAssertEqual(l.name, g.name)
+            XCTAssertEqual(l.weight, g.weight, accuracy: 1e-12)
+            XCTAssertEqual(l.parameters.count, g.parameters.count)
+            for (k, v) in l.parameters {
+                XCTAssertEqual(g.parameters[k] ?? .nan, v, accuracy: 1e-12,
+                               "param \(k) drift between .linear and .log")
+            }
+        }
     }
 }

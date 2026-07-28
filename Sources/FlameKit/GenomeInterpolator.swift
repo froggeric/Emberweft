@@ -4,18 +4,23 @@ import Foundation
 /// `interpolation.c`. Switches on `MatrixInterpolationType`:
 ///
 /// - `.linear` (and `.compat`/`.older`): per-field linear blend of every xform
-///   field, matching the legacy `Interpolation.interpolate` output bit-for-bit.
-///   Uses `mergeLinear` (drop-zero-weight + sort-by-name, no parameter carry).
+///   field (matrices via `lerpAffine`, porting flam3's `sum_matrix`).
 /// - `.log`: polar decomposition of each xform's 2×2 matrix
 ///   (`convert_linear_to_polar` + `interp_and_convert_back`), with the
 ///   wind-anchored angle unwrap, the per-column magnitude guard, the
-///   zero-column angle copy, and the post-identity special case. Uses
-///   `mergeLog` (union by name, zero-weight slots preserved, per-name
-///   parameter carry-over).
+///   zero-column angle copy, and the post-identity special case.
 ///
-/// All scalar fields (weight, color, camera, palette, …) interpolate linearly
-/// in both modes — only the 2×2 matrices and the variation merge branch on type,
-/// exactly as in `flam3_interpolate_n` (interpolation.c:515-699).
+/// Both modes share ONE variation merge (`mergeVariations`): union by name
+/// (zero-weight slots preserved), sorted by name, with per-name per-parameter
+/// linear interpolation using descriptor defaults when a side lacks a param.
+/// This is faithful to flam3: in `flam3_interpolate_n` the
+/// `INTERP(xform[i].var[j])` loop and ALL parametric `INTERP`s
+/// (interpolation.c:543-655) execute BEFORE the `.log`/`.linear` matrix branch
+/// (line 657), so variation + parameter interpolation is IDENTICAL for both
+/// types — only the 2×2 matrices differ. An earlier split (`mergeLinear`
+/// dropping params + zero-weight vs `mergeLog` carrying them) was an
+/// unfaithful asymmetry: the `.linear` path silently lost every parametric
+/// variation's parameters at interpolate time.
 public enum GenomeInterpolator {
 
     /// Interpolate two keyframe genomes at parameter `t ∈ [0,1]`.
@@ -119,10 +124,11 @@ public enum GenomeInterpolator {
         return 1.0 - staggeredC0
     }
 
-    // MARK: - .linear xform (BYTE-IDENTICAL with legacy Interpolation.interpolate)
+    // MARK: - .linear xform
 
-    /// Per-xform linear blend — the verbatim legacy path. `mergeLinear` is the
-    /// original drop-zero-weight + sort-by-name merge (no parameter carry).
+    /// Per-xform linear blend: matrices via `lerpAffine` (flam3 `sum_matrix`),
+    /// variations + parameters via the shared `mergeVariations`. Identical to
+    /// the `.log` path except for the matrix interpolation.
     private static func interpolateLinearXform(_ a: Xform, _ b: Xform, _ t: Double) -> Xform {
         var x = Xform()
         x.weight = (1 - t) * a.weight + t * b.weight
@@ -132,29 +138,17 @@ public enum GenomeInterpolator {
         x.animate = (1 - t) * a.animate + t * b.animate   // flam3 INTERP(xform[i].animate) (interpolation.c:542)
         x.affine = lerpAffine(a.affine, b.affine, t)
         x.postAffine = lerpAffine(a.postAffine, b.postAffine, t)
-        x.variations = mergeLinear(a.variations, b.variations, t)
+        x.variations = mergeVariations(a.variations, b.variations, t)
         x.chaos = (a.chaos != nil && b.chaos != nil)
             ? zip(a.chaos!, b.chaos!).map { (1 - t) * $0 + t * $1 } : (a.chaos ?? b.chaos)
         return x
     }
 
-    /// Legacy variation merge: accumulate weights by name, DROP zero-weight
-    /// entries, sort by name, no parameter carry. Byte-identical to the original
-    /// `Interpolation.mergeVariations` — do not route `.linear` through `mergeLog`.
-    private static func mergeLinear(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
-        var byName = [String: Double]()
-        for v in a { byName[v.name, default: 0] += (1 - t) * v.weight }
-        for v in b { byName[v.name, default: 0] += t * v.weight }
-        return byName
-            .filter { $0.value != 0 }
-            .sorted { $0.key < $1.key }
-            .map { Variation(name: $0.key, weight: $0.value) }
-    }
-
     // MARK: - .log xform (polar matrix decomposition)
 
     /// Per-xform `.log` blend: affine + post via polar decomposition, variations
-    /// via `mergeLog` (union + parameter carry, zero-weight slots preserved).
+    /// via the shared `mergeVariations` (union + parameter carry, zero-weight
+    /// slots preserved).
     private static func interpolateLogXform(_ a: Xform, _ b: Xform, _ t: Double) -> Xform {
         var x = Xform()
         x.weight = (1 - t) * a.weight + t * b.weight
@@ -175,35 +169,41 @@ public enum GenomeInterpolator {
                 a.postAffine, b.postAffine, windB: b.wind, cflag: true, t: t)
         }
 
-        x.variations = mergeLog(a.variations, b.variations, t)
+        x.variations = mergeVariations(a.variations, b.variations, t)
         x.chaos = (a.chaos != nil && b.chaos != nil)
             ? zip(a.chaos!, b.chaos!).map { (1 - t) * $0 + t * $1 } : (a.chaos ?? b.chaos)
         return x
     }
 
-    /// `.log` variation merge: union by name (zero-weight slots preserved, so
-    /// align-created padding entries survive), sorted by name, with **per-param
-    /// linear interpolation** of every parameter (variation weight AND each
-    /// parameter value). This is a faithful port of flam3's `INTERP(x)` macro
-    /// (interpolation.h:24) as applied per parametric field in
-    /// `flam3_interpolate_n` (interpolation.c:543-700 — `INTERP(xform[i].blob_low)`,
-    /// `INTERP(xform[i].curl_c1)`, etc.): the result for each parameter is
-    /// `(1-t)*cp[0].param + t*cp[1].param`. When a side lacks the parameter,
-    /// the variation's descriptor default is used (`initialize_xforms`
-    /// defaults, variations.c:2424-2700); for unknown parameters the default
-    /// is 0.
+    /// Shared variation merge for BOTH `.linear` and `.log` (the per-mode
+    /// split is matrix-only in flam3 — see the file header). Union by name
+    /// (zero-weight slots preserved, so align-created padding entries survive),
+    /// sorted by name, with **per-param linear interpolation** of every
+    /// parameter (variation weight AND each parameter value). This is a
+    /// faithful port of flam3's `INTERP(x)` macro (interpolation.h:24) as
+    /// applied per parametric field in `flam3_interpolate_n`
+    /// (interpolation.c:543-655 — `INTERP(xform[i].blob_low)`,
+    /// `INTERP(xform[i].curl_c1)`, …, then the `INTERP(xform[i].var[j])` loop):
+    /// the result for each field is `(1-t)*cp[0].field + t*cp[1].field`. When
+    /// a side lacks the parameter, the variation's descriptor default is used
+    /// (`initialize_xforms` defaults, variations.c:2424-2700); for unknown
+    /// parameters the default is 0.
     ///
-    /// This rule supersedes an earlier "side `a`'s params always win" carry
-    /// (which misread flam3 as having a `merge_log` function — flam3 has no
-    /// such function; its variations are stored as a fixed `var[N]` array
-    /// `INTERP`'d slot-by-slot). The carry rule was a faithfulness bug: at
-    /// t=1.0 it kept source-A's parametric values instead of returning
-    /// destination-B's, which broke transition endpoints whenever A's xform
-    /// had a parametric variation that B's padding slot also acquired via
-    /// `SpecialSauce.align` rest-positioning (e.g. A's `curl_c1=0.51979`
-    /// bled into the result instead of B's rest value 0, producing an
-    /// active curl final at the endpoint where raw B had none).
-    private static func mergeLog(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
+    /// History: this rule supersedes TWO earlier faithfulness gaps.
+    /// (1) `mergeLog` v0.1.4 used an "A's params win, B fills gaps" carry,
+    /// which at t=1.0 kept source-A's parametric values instead of returning
+    /// destination-B's (broke transition endpoints; fixed v0.1.5, 052dcceaf).
+    /// (2) `mergeLinear` (the `.linear`/`.compat`/`.older` path) dropped ALL
+    /// parameters via `Variation(name:weight:)` and filtered zero-weight
+    /// entries — an asymmetry with no flam3 basis (flam3 INTERPs every
+    /// parametric field identically for both types). For `.linear`
+    /// transitions involving any parametric variation (curl, blob, julian, …)
+    /// the merged xform arrived at the renderer with empty `parameters`, so
+    /// the variation executed at descriptor-default instead of the
+    /// interpolated value — a rendering-affecting divergence from flam3.
+    /// Consolidated into this single shared merge (both paths now identical,
+    /// matching flam3's pre-branch INTERP block).
+    private static func mergeVariations(_ a: [Variation], _ b: [Variation], _ t: Double) -> [Variation] {
         var weight = [String: Double]()
         var aParams = [String: [String: Double]]()
         var bParams = [String: [String: Double]]()
