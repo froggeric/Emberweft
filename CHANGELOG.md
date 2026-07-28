@@ -7,6 +7,19 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.6] — Transition Smoothness: Quality Interpolation + Singularity Guard + Endpoint Final
+
+Three fixes for mid-transition and endpoint discontinuities found in the 8-sheep coverage video. One is a strict faithfulness fix; two are intentional seamless divergences from flam3 (per the owner's directive: "fix for seamless even where flam3 does the same").
+
+- **Quality hard-cut at blend 0.5** (faithful fix — `GenomeInterpolator.swift`): `f.quality = t < 0.5 ? a.quality : b.quality` hard-cut the entire display pipeline (brightness, gamma, vibrancy, highlight_power, etc.) at the transition midpoint, causing a brightness/colour pop when adjacent sheep had different display params. flam3 `INTERP`s all 12 Quality scalars linearly (interpolation.c:473-501). Replaced with `interpolateQuality(a,b,t)` — linear blend of numeric fields, enum/int fields copied from `cpi[0]`. Verified: midpoint Δlum −42→−0.13.
+- **`.log` midpoint matrix singularity** (seamless divergence — `GenomeInterpolator.swift`): opposite-handedness xform pairs (det −1↔+1) cross det=0 at the polar-log midpoint → columns coincide → rank-1 density spike → uniform brightening. flam3 has no determinant guard (verbatim port, same singularity). Added a `det(A)·det(B) < 0` check: opposite-handedness pairs fall back to `.linear` matrix interp (`lerpAffine`) which avoids the coincident-column collapse. Same-handedness pairs are byte-identical to flam3 (unaffected). Verified: worst coverage Δlum +58→−1.2 at the coverage's exact settings.
+- **Padding-final at endpoint** (seamless divergence — `Transition.swift`): when A has a final xform and B doesn't, `align` synthesizes a padding final (rest-positioned to e.g. `rings2=1`), creating a discontinuity at `Transition(A,B,1.0)` vs `Loop(B)` (no final). flam3's `align` does the same (faithful). Added: if B had no native final, drop the padding final at `t=1.0` so the endpoint matches the loop. Diverges from flam3 only at the exact endpoint. Verified: boundary Δlum −23→+0.17.
+
+### Verified
+- All four problem regions smooth (midpoint + endpoint, before/after measured).
+- Gates: InterpolationTests + TransitionTests 32/32 (incl. 4 new regression tests), SpecialSauceParityTests 84/84, ParamChannel + GoldenParity frozen goldens **byte-identical** (no shift — fixes are transition-only, don't affect single-frame rendering), AnimationParityTests 4/4 (vs flam3), AnimatedFrameParityTests 4/4, RealGenomeParityTests pass, test-fast 324/0.
+- The A2/B1 divergences are scoped tightly (A2: only opposite-handedness pairs; B1: only the t=1.0 endpoint where B had no native final) — they don't fire on the parity fixtures.
+
 ## [v0.1.5] — Fix Transition Endpoint Faithfulness (`Transition(A,B,1.0)` now = B)
 
 The end of a `sheep_edge` transition did not reach the destination genome: `Transition(A,B,t=1.0)` rendered at only **16.8 dB** vs `Loop(B)` (and vs `flam3`'s 49.77 dB) — an Emberweft-only faithfulness bug, not flam3 behavior. It caused an abrupt "missing transition" jump at edge→loop boundaries for pairs where A has a final xform and B doesn't (e.g. 16636→17491). Three independent deviations from flam3's interpolation source, all fixed:

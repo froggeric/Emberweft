@@ -303,6 +303,52 @@ final class TransitionTests: XCTestCase {
         }
     }
 
+    // MARK: - 8. B1 seamless divergence: endpoint padding-final drop
+
+    /// When A has a real final xform and B has none, SpecialSauce.align pads B
+    /// with a padding final (so the blend has two final-xform slots to
+    /// interpolate between). At t=1.0 the result is left carrying B's padding
+    /// final, which — after Group A/B/C rest-positioning — is generally NOT
+    /// identity (e.g. seg3 02632→15729: A's real final has rings2 → padding
+    /// final becomes rings2=1.0). That distorts `Transition(A,B,1.0)` relative
+    /// to `Loop(B, 0)` (which has no final). The B1 divergence drops the
+    /// padding final at exactly t==1.0 so the transition endpoint matches the
+    /// loop start. flam3 has the same discontinuity (sheep_edge pads; sheep_loop
+    /// doesn't) — this is a deliberate seamless divergence scoped to the
+    /// endpoint.
+    func testBFinalAbsentPaddingFinalDroppedAtEndpoint() {
+        var a = Self.sampleGenome([Self.x0, Self.x1], palette: Self.rampPalette(0.0))
+        // A has a real final; B does not.
+        a.finalXform = Xform(
+            affine: AffineTransform(a: 2, b: 0, c: 0, d: 2, e: 0, f: 0),
+            variations: [Variation(name: "rings2", weight: 1.0,
+                                   parameters: ["rings2_val": 0.3])])
+        let b = Self.sampleGenome([Self.x1, Self.x0], palette: Self.rampPalette(0.3))
+        XCTAssertNil(b.finalXform, "precondition: B has no final")
+
+        // Sanity: at interior t (0.9), the padding final IS present (flam3
+        // semantics — only the endpoint is the seamless divergence).
+        let interior = Transition.blend(a, b, t: 0.9, stagger: 0)
+        XCTAssertNotNil(interior.finalXform,
+            "interior t keeps the padding final (flam3 semantics)")
+
+        // The divergence: at t==1.0 the padding final is dropped.
+        let endpoint = Transition.blend(a, b, t: 1.0, stagger: 0)
+        XCTAssertNil(endpoint.finalXform,
+            "t==1.0 drops the padding final so Transition(A,B,1.0) matches Loop(B,0)")
+
+        // Both-A-and-B-have-finals is NOT the B1 path — the real B final is
+        // preserved at the endpoint.
+        var bWithFinal = b
+        bWithFinal.finalXform = Xform(
+            affine: AffineTransform(a: 1, b: 0, c: 0, d: 1, e: 0, f: 0),
+            variations: [Variation(name: "linear", weight: 1)])
+        let endpointBothFinals = Transition.blend(a, bWithFinal, t: 1.0, stagger: 0)
+        XCTAssertNotNil(endpointBothFinals,
+            "both-have-finals: endpoint keeps B's real final (B1 is padding-only)")
+    }
+
+
     // MARK: - coefficient-vector helpers (for the continuity test)
 
     /// Flatten a genome's blend-relevant coefficients into a vector (affine 6 per xform

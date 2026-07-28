@@ -58,6 +58,10 @@ public enum Transition {
         // --- Step 1: clone both parents (value-typing makes assignment a clone). ---
         // --- Step 2: motion fold — no-op (Emberweft has no motion elements). ---
 
+        // Record B's native final-xform presence BEFORE align pads it (used by
+        // the endpoint seamlessness divergence near the end of this function).
+        let bHadFinal = (b.finalXform != nil)
+
         // --- Step 3: flam3_align (SpecialSauce.align) → padded, rest-positioned genomes. ---
         // flam3_align writes into `spun`; Emberweft returns the aligned pair. `a`/`b`
         // are value types so passing them by value is the clone (step 1).
@@ -103,6 +107,28 @@ public enum Transition {
         // hue_rotation interpolates linearly (INTERP(hue_rotation), interpolation.c:478).
         result.hueRotation = PaletteBlend.interpolateHueRotation(
             spun0Rotated.hueRotation, spun1Rotated.hueRotation, at: easedT)
+
+        // SEAMLESSNESS DIVERGENCE (per owner): endpoint padding-final drop.
+        // If B had NO final xform (`b.finalXform == nil` before align), the
+        // result inherits a SpecialSauce padding final (align's `maxFx`
+        // OR-rule, SpecialSauce.swift:65). After Group A/B/C rest-positioning
+        // that padding final is NOT identity — e.g. seg3 02632→15729: A's real
+        // final has rings2, so the padding final becomes `rings2=1.0` and
+        // transforms every iterated point. flam3's sheep_edge has the same
+        // align+pad behavior (interpolation.c:779-806 + 846 rest-position loop
+        // runs over the final slot too), while sheep_loop does not — so flam3
+        // exhibits the same Transition→Loop endpoint discontinuity. This is a
+        // deliberate divergence for endpoint seamlessness: at t==1.0 drop the
+        // padding final so `Transition(A,B,1.0)` matches `Loop(B,0)` (no
+        // final). Same-handedness pairs where B has a real final are
+        // unaffected (the `!bHadFinal` gate). The near-endpoint (t<1) keeps
+        // flam3 semantics. Note: the `Xform.padding` field is not propagated
+        // by the interpolator (it constructs a fresh `Xform()` per slot), so
+        // we gate on `!bHadFinal` alone — at t==1.0 any non-nil final in the
+        // result must be the align-synthesized padding final (B had none).
+        if !bHadFinal, t >= 1.0, result.finalXform != nil {
+            result.finalXform = nil
+        }
 
         // --- Step 8: strip motion elements — no-op (Emberweft has no motion elements). ---
 

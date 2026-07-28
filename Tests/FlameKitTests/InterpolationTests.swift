@@ -52,6 +52,129 @@ final class InterpolationTests: XCTestCase {
         XCTAssertEqual(Interpolation.interpolate(a, b, at: 1).size, b.size)
         XCTAssertEqual(Interpolation.interpolate(a, b, at: 1).quality, b.quality)
     }
+
+    /// Quality display-pipeline fields (brightness/gamma/vibrancy/etc.) must
+    /// be linearly interpolated across the blend, matching flam3's
+    /// `INTERP(brightness)`, `INTERP(gamma)`, … block (interpolation.c:473-501).
+    /// Previously the whole `Quality` struct was hard-cut at `t < 0.5`, which
+    /// made brightness jump discontinuously at the midpoint whenever two
+    /// keyframes carried different values (real ES genomes do: e.g. seg3
+    /// 02632 brightness=19.13 → 15729 brightness=4) — a uniform colour pop
+    /// with no shape change (Class A "mid-transition colour/intensity jump").
+    /// This test pins the faithful interpolation.
+    func testQualityFieldsInterpolatedNotHardCut() {
+        var a = flame(1, 200)
+        var b = flame(2, 400)
+        a.quality.brightness = 19.0
+        b.quality.brightness = 4.0
+        a.quality.gamma = 3.0
+        b.quality.gamma = 4.0
+        a.quality.vibrancy = 0.5
+        b.quality.vibrancy = 1.0
+        a.quality.highlightPower = -1.0
+        b.quality.highlightPower = 1.0
+        a.quality.gammaThreshold = 0.0
+        b.quality.gammaThreshold = 0.05
+        a.quality.filterRadius = 0.5
+        b.quality.filterRadius = 1.5
+        a.quality.estimatorRadius = 9.0
+        b.quality.estimatorRadius = 11.0
+        a.quality.samplesPerPixel = 100
+        b.quality.samplesPerPixel = 200
+
+        // Endpoints reproduce the parents exactly (interpolation reduces to a/b).
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 0).quality, a.quality)
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 1).quality, b.quality)
+
+        // Midpoint is the linear average — NOT a's, NOT b's (the old hard-cut
+        // returned a.quality for all t < 0.5, so midpoint brightness was 19.0).
+        let mid = Interpolation.interpolate(a, b, at: 0.5).quality
+        XCTAssertEqual(mid.brightness, 11.5, accuracy: 1e-12)
+        XCTAssertEqual(mid.gamma, 3.5, accuracy: 1e-12)
+        XCTAssertEqual(mid.vibrancy, 0.75, accuracy: 1e-12)
+        XCTAssertEqual(mid.highlightPower, 0.0, accuracy: 1e-12)
+        XCTAssertEqual(mid.gammaThreshold, 0.025, accuracy: 1e-12)
+        XCTAssertEqual(mid.filterRadius, 1.0, accuracy: 1e-12)
+        XCTAssertEqual(mid.estimatorRadius, 10.0, accuracy: 1e-12)
+        XCTAssertEqual(mid.samplesPerPixel, 150)   // (100+200)/2, rounded
+
+        // Quarter-point skews toward a (faithful linear interp).
+        let q = Interpolation.interpolate(a, b, at: 0.25).quality
+        XCTAssertEqual(q.brightness, 15.25, accuracy: 1e-12)   // 19*0.75 + 4*0.25
+        XCTAssertEqual(q.gamma, 3.25, accuracy: 1e-12)
+
+        // Enum / structural fields stay copied from a (flam3 cpi[0] rule).
+        a.quality.temporalSamples = 7
+        b.quality.temporalSamples = 13
+        a.quality.oversample = 2
+        b.quality.oversample = 4
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 0.5).quality.temporalSamples, 7)
+        XCTAssertEqual(Interpolation.interpolate(a, b, at: 0.5).quality.oversample, 2)
+    }
+
+    /// A2 seamless divergence: when A and B affines have opposite handedness
+    /// (`det(A)·det(B) < 0`), the `.log` polar interp would cross det=0 at
+    /// the midpoint (collapsing 2D→1D for that xform). The fix falls back to
+    /// `.linear` (`lerpAffine`) for opposite-handedness pairs. This test
+    /// pins the divergence using the exact seg9 xform[5] matrices (a
+    /// det=−1 reflection and a det=+1 rotation that previously produced
+    /// det=2.2e−16 at t=0.5).
+    ///
+    /// Note: `Interpolation.interpolate` is a `.linear`-only shim, so to
+    /// exercise the `.log` path we must call `GenomeInterpolator.interpolate`
+    /// with `type: .log` directly.
+    func testLogAffineOppositeHandednessFallsBackToLinear() {
+        // A xform[5] of 08031: coefs="-1 0 0 1 0 0" — det = -1.
+        let a = AffineTransform(a: -1, b: 0, c: 0, d: 1, e: 0, f: 0)
+        // B xform[5] of 21790: coefs="0.935016 0.354605 -0.354605 0.935016 0 0" — det ≈ +1.
+        let b = AffineTransform(a: 0.935016, b: 0.354605, c: -0.354605, d: 0.935016, e: 0, f: 0)
+        let xa = Xform(affine: a, variations: [Variation(name: "linear", weight: 1)])
+        let xb = Xform(affine: b, variations: [Variation(name: "linear", weight: 1)])
+        let fa = Flame(xforms: [xa], interpolationType: .log)
+        let fb = Flame(xforms: [xb], interpolationType: .log)
+        // Use the .log path directly (Interpolation.interpolate uses .linear).
+        let mid = GenomeInterpolator.interpolate(fa, fb, t: 0.5, type: .log)
+        let m = mid.xforms[0].affine
+        // The fallback returns lerpAffine(a, b, 0.5) exactly — pin every coef.
+        let expectedA = (1 - 0.5) * a.a + 0.5 * b.a
+        let expectedB = (1 - 0.5) * a.b + 0.5 * b.b
+        let expectedC = (1 - 0.5) * a.c + 0.5 * b.c
+        let expectedD = (1 - 0.5) * a.d + 0.5 * b.d
+        XCTAssertEqual(m.a, expectedA, accuracy: 1e-12, "fallback should use lerpAffine (a)")
+        XCTAssertEqual(m.b, expectedB, accuracy: 1e-12, "fallback should use lerpAffine (b)")
+        XCTAssertEqual(m.c, expectedC, accuracy: 1e-12, "fallback should use lerpAffine (c)")
+        XCTAssertEqual(m.d, expectedD, accuracy: 1e-12, "fallback should use lerpAffine (d)")
+        // Sanity: the result is NOT the polar midpoint (which had identical
+        // columns at t=0.5 for this pair). m.a should NOT equal m.c.
+        XCTAssertNotEqual(m.a, m.c, accuracy: 1e-9,
+            "fallback must avoid the polar path's coincident-column singularity")
+    }
+
+    /// A2 same-handedness pairs are unaffected by the determinant guard —
+    /// they still use the polar `.log` path byte-identically to flam3.
+    func testLogAffineSameHandednessUnaffectedByDetGuard() {
+        // Both det = +1 (rotations) — polar interp should be used.
+        let a = AffineTransform(a: 1, b: 0, c: 0, d: 1, e: 0, f: 0)              // det = +1
+        let b = AffineTransform(a: 0, b: 1, c: -1, d: 0, e: 0, f: 0)             // det = +1
+        let xa = Xform(affine: a, variations: [Variation(name: "linear", weight: 1)])
+        let xb = Xform(affine: b, variations: [Variation(name: "linear", weight: 1)])
+        let fa = Flame(xforms: [xa], interpolationType: .log)
+        let fb = Flame(xforms: [xb], interpolationType: .log)
+        let mid = GenomeInterpolator.interpolate(fa, fb, t: 0.5, type: .log)
+        let m = mid.xforms[0].affine
+        // The result should NOT equal lerpAffine(a, b, 0.5) (which would give
+        // a = 0.5, b = 0.5, c = -0.5, d = 0.5). Instead it's the polar interp,
+        // which for two rotations produces a rotation by the midpoint angle.
+        // Polar interp of identity (col angles 0, π/2) and 90° rotation
+        // (col angles π/2, π): midpoint angles π/4 and 3π/4.
+        //   col0 = (cos(π/4), sin(π/4)) ≈ (0.7071, 0.7071)
+        //   col1 = (cos(3π/4), sin(3π/4)) ≈ (-0.7071, 0.7071)
+        // After the per-frame rotation (Transition's step 6 rotates by t·360°;
+        // GenomeInterpolator doesn't), this is the .log-path midpoint.
+        XCTAssertNotEqual(m.a, 0.5, accuracy: 1e-9,
+            "same-handedness should NOT use lerpAffine fallback")
+    }
+
     func testFinalXformAsymmetric() {
         var a = flame(1, 200)
         a.finalXform = Xform(variations: [Variation(name: "linear", weight: 1)])

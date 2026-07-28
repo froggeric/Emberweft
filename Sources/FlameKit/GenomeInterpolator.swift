@@ -63,7 +63,7 @@ public enum GenomeInterpolator {
             scale: pow(a.camera.scale, 1 - t) * pow(b.camera.scale, t),   // log-space
             zoom: (1 - t) * a.camera.zoom + t * b.camera.zoom,
             rotation: (1 - t) * a.camera.rotation + t * b.camera.rotation)
-        f.quality = t < 0.5 ? a.quality : b.quality
+        f.quality = interpolateQuality(a.quality, b.quality, t)
         f.hueShift = (1 - t) * a.hueShift + t * b.hueShift
         f.time = (1 - t) * a.time + t * b.time
         f.palette = blendPalette(a.palette, b.palette, t)
@@ -250,10 +250,30 @@ public enum GenomeInterpolator {
 
     /// Drives `convertLinearToPolar` + `interpAndConvertBack` for the 2-parent
     /// case. `coefs = [1-t, t]` matches flam3's 2-point linear blend scalar.
+    ///
+    /// SEAMLESSNESS DIVERGENCE (per owner): when A and B have opposite
+    /// handedness (`det(A)·det(B) < 0`), the `.log` polar interpolation —
+    /// continuous in t by construction — necessarily crosses `det = 0` at some
+    /// t (typically the midpoint), collapsing 2D→1D for that xform. flam3 has
+    /// no guard here and produces the same singular matrix; at high sample
+    /// density this piles chaos-game hits on a 1D attractor and the tone
+    /// mapper amplifies it into a uniform colour/brightness pop (the Class A
+    /// seg9 midpoint symptom — xform[5] interpolates from a det=−1 reflection
+    /// `[-1,0;0,1]` to a det=+1 rotation `[0.935,0.355;-0.355,0.935]`,
+    /// landing at det=2.2e−16 with identical columns at t=0.5). Fall back to
+    /// the `.linear` matrix blend (`lerpAffine`, porting flam3's `sum_matrix`)
+    /// for opposite-handedness pairs. Same-handedness pairs are unaffected and
+    /// stay byte-identical to flam3.
     private static func interpolateAffineLog(
         _ a: AffineTransform, _ b: AffineTransform,
         windB: SIMD2<Double>, cflag: Bool, t: Double
     ) -> AffineTransform {
+        let detA = a.a * a.d - a.b * a.c
+        let detB = b.a * b.d - b.b * b.c
+        if detA * detB < 0 {
+            // Opposite-handedness pair: polar interp would cross det=0.
+            return lerpAffine(a, b, t)
+        }
         let coefs = [1 - t, t]
         let polar = convertLinearToPolar(a, b, windB: windB, cflag: cflag)
         return interpAndConvertBack(coefs, polar.ang, polar.mag, polar.trn)
@@ -406,5 +426,48 @@ public enum GenomeInterpolator {
 
     private static func blendPalette(_ a: Palette, _ b: Palette, _ t: Double) -> Palette {
         Palette(colors: zip(a.colors, b.colors).map { $0 * (1 - t) + $1 * t })
+    }
+
+    /// Faithful `Quality` field blend, porting `flam3_interpolate_n`'s
+    /// `INTERP(...)` block (interpolation.c:473-501) for the numeric display
+    /// pipeline + estimator fields. flam3 INTERP-linearly blends each of
+    /// brightness / highlight_power / gamma / vibrancy / spatial_filter_radius
+    /// / temporal_filter_exp / temporal_filter_width / sample_density /
+    /// estimator{,_minimum,_curve} / gam_lin_thresh. Emberweft previously
+    /// hard-cut the whole `Quality` struct at `t < 0.5`, which made every
+    /// display-pipeline parameter (notably `brightness`, `gamma`) jump
+    /// discontinuously at the blend midpoint whenever two keyframes carried
+    /// different values (real ES genomes do — e.g. seg3 brightness 19.13→4,
+    /// gamma 2.94→4; seg13 brightness 40→18.93, gamma 4→2.65). The jump is a
+    /// uniform brightness/colour pop with no shape change — exactly the
+    /// Class A "mid-transition colour/intensity jump" symptom, with magnitude
+    /// proportional to the brightness/gamma delta.
+    ///
+    /// Enum / structural fields (`filterShape`, `temporalFilterType`) and int
+    /// counts (`oversample`, `temporalSamples`) are NOT in flam3's INTERP
+    /// block — they're either part of the `cpi[0]` enum copy block
+    /// (interpolation.c:466-472) or left untouched by the interpolate path.
+    /// We copy them from `a` (= cpi[0]), matching flam3's cpi[0]-copy rule.
+    private static func interpolateQuality(_ a: Quality, _ b: Quality, _ t: Double) -> Quality {
+        // Inherit enum / int / structural fields from cpi[0] (flam3's copy rule).
+        var q = a
+        // Numeric fields flam3 INTERPs (interpolation.c:473-501):
+        q.brightness          = (1 - t) * a.brightness          + t * b.brightness            // INTERP(brightness) :473
+        q.highlightPower      = (1 - t) * a.highlightPower      + t * b.highlightPower        // INTERP(highlight_power) :475
+        q.gamma               = (1 - t) * a.gamma               + t * b.gamma                 // INTERP(gamma) :476
+        q.vibrancy            = (1 - t) * a.vibrancy            + t * b.vibrancy              // INTERP(vibrancy) :477
+        q.gammaThreshold      = (1 - t) * a.gammaThreshold      + t * b.gammaThreshold        // INTERP(gam_lin_thresh) :501
+        q.filterRadius        = (1 - t) * a.filterRadius        + t * b.filterRadius          // INTERP(spatial_filter_radius) :490
+        q.temporalFilterExp   = (1 - t) * a.temporalFilterExp   + t * b.temporalFilterExp     // INTERP(temporal_filter_exp) :491
+        q.temporalFilterWidth = (1 - t) * a.temporalFilterWidth + t * b.temporalFilterWidth   // INTERP(temporal_filter_width) :492
+        // sample_density is stored as double in flam3; Emberweft's is `Int`, so
+        // round the interpolated value (CLI overrides via --quality for offline
+        // animation; mainly load-bearing for the display-pipeline fields above).
+        q.samplesPerPixel     = max(1, Int(((1 - t) * Double(a.samplesPerPixel)
+                                          +        t * Double(b.samplesPerPixel)).rounded()))   // INTERP(sample_density) :493
+        q.estimatorRadius     = (1 - t) * a.estimatorRadius     + t * b.estimatorRadius       // INTERP(estimator) :498
+        q.estimatorMinimum    = (1 - t) * a.estimatorMinimum    + t * b.estimatorMinimum      // INTERP(estimator_minimum) :499
+        q.estimatorCurveRate  = (1 - t) * a.estimatorCurveRate  + t * b.estimatorCurveRate    // INTERP(estimator_curve) :500
+        return q
     }
 }
