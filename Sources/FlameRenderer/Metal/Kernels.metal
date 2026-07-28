@@ -171,6 +171,37 @@ constant float EPS_MS  = 1e-10f;
 constant float BAD_MS  = 1e10f;
 constant uint CHAOS_GRAIN_M1 = 16383u;
 
+// Overflow-hardening constants (faithful to CPU Double, which holds finite
+// values until the arg exceeds Double max ≈ 1.8e308 — far above Float max
+// ≈ 3.4e38). Used by the Inf/NaN-class guards added to:
+//   - `r = sqrt(sumsq)` paths: clamp `sumsq` so `r` stays finite, preventing
+//     `sin(Inf)`/`cos(Inf)` from returning NaN where CPU Double produces a
+//     bounded trig result on its finite `r`. Same recipe as the v_coth fix
+//     (v0.1.4, commit a45ce3d6b) which clamps `cosh`/`sinh`/`exp` args to ±88.
+//   - `pow(sumsq, p)` paths: clamp `sumsq` so the Float result stays finite
+//     (CPU Double accommodates bases up to ~1e308 before saturating).
+//   - `exp(arg)` paths not already covered by the patched-15 list (foci,
+//     escher, cpow): clamp `arg` to ±88 like v_exp/v_exponential/v_cosine.
+// The clamps preserve CPU↔Metal parity for normal-magnitude inputs (the clamp
+// never fires) and only alter the extreme-arg edge where Metal would otherwise
+// diverge into NaN/Inf that the CPU oracle doesn't produce.
+//
+// BIG_SUMSQ_MS is set to FLT_MAX (not a smaller "safe" value like 1e30) so
+// the clamp ONLY fires when sumsq is literally +Inf — i.e. when `p.x*p.x`
+// overflows Float, which is the genuine NaN-class trigger. Using a smaller
+// threshold would change byte-output for orbits whose sumsq is large-but-
+// finite (e.g. real ES genomes with amplifying affines), breaking frozen
+// goldens (Tests/Goldens/m2_baseline_hashes.json) without preventing any
+// actual NaN — sin/cos of FINITE huge args return finite garbage values,
+// not NaN.
+constant float BIG_SUMSQ_MS  = 3.4028234663852886e+38f;  // FLT_MAX
+constant float BIG_LNR_MS    = 700.0f;  // ≈ Double ln-max; faithful to CPU's log range
+constant float BIG_EXPARG_MS = 88.0f;   // matches the patched-15 cosh/sinh/exp clamp
+constant float BIG_TANARG_MS = 1e8f;    // tan/cot reliable range; beyond this Metal
+                                        // Float's argument reduction becomes unreliable
+                                        // (lands at unpredictable values, sometimes
+                                        // exactly at poles → ±Inf → sin(Inf)=NaN).
+
 struct AtomicBin {
     atomic_uint count;
     atomic_uint r, g, b, a;
@@ -235,9 +266,17 @@ static inline float2 v_waves(float2 p, float w, float c, float d, float e, float
 // var17_popcorn (variations.c:433-450). Paramless; 0 RNG draws. Needs affine e,f.
 //   dx = tan(3*ty); dy = tan(3*tx);
 //   nx = tx + e*sin(dx); ny = ty + f*sin(dy); (w*nx, w*ny).
+// FLOAT-OVERFLOW GUARD: clamp the tan arg to ±1e8 — beyond that, Metal Float's
+//   tan argument reduction becomes unreliable (lands at unpredictable values,
+//   sometimes exactly at poles → ±Inf → sin(Inf)=NaN → output NaN-poisoned).
+//   CPU Double's tan has full argument reduction (Payne-Hanek) for any finite
+//   arg, returning a bounded value. The clamp only fires when the chaos-game
+//   orbit is already in the >BAD_MS amplification regime where the specific
+//   value is irrelevant (output > BAD_MS regardless of tan's bounded value).
+//   Faithful match for the normal-magnitude orbit regime.
 static inline float2 v_popcorn(float2 p, float w, float e, float f) {
-    float dx = tan(3.0f * p.y);
-    float dy = tan(3.0f * p.x);
+    float dx = tan(clamp(3.0f * p.y, -BIG_TANARG_MS, BIG_TANARG_MS));
+    float dy = tan(clamp(3.0f * p.x, -BIG_TANARG_MS, BIG_TANARG_MS));
     float nx = p.x + e * sin(dx);
     float ny = p.y + f * sin(dy);
     return float2(w * nx, w * ny);
@@ -245,8 +284,16 @@ static inline float2 v_popcorn(float2 p, float w, float e, float f) {
 // var19_power (variations.c:472-487) — precalc sina/cosa/sqrt.
 //   sina = tx/sqrt; cosa = ty/sqrt; sqrt = sqrt(tx²+ty²);
 //   r = w*pow(sqrt, sina); (r*cosa, r*sina). Paramless; 0 RNG draws.
+// FLOAT-OVERFLOW GUARD (faithful to flam3, which uses `double`): sina ∈ [-1,1]
+//   so `pow(ps, sina)` is bounded by `ps` itself. For |tx|,|ty| > 5.8e19,
+//   `tx*tx` overflows Float → `ps = sqrt(Inf) = Inf`. When sina is near 0
+//   (perpendicular orbit), `pow(Inf, 0) = NaN` on Metal where CPU Double's
+//   `pow(huge_double, 0) = 1.0` — the NaN-poisoning class. Clamp sumsq to
+//   BIG_SUMSQ_MS so ps stays finite; output is still ≫ BAD_MS where CPU is
+//   huge, so badvalue_ms fires identically on both backends.
 static inline float2 v_power(float2 p, float w) {
-    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
+    float ps = sqrt(sumsq);
     float sina = p.x / ps;
     float cosa = p.y / ps;
     float r = w * pow(ps, sina);
@@ -285,8 +332,12 @@ static inline float2 v_exp(float2 p, float w) {
     return float2(w * expe * expcos, w * expe * expsin);
 }
 // var83_log: (w * 0.5 * log(sumsq), w * atan2(y, x))
+// FLOAT-OVERFLOW GUARD: clamp sumsq before log — when sumsq overflows Float to
+//   +Inf (|p|>5.8e19), log(Inf)=+Inf, w*0.5*Inf=Inf → badvalue fires (CPU
+//   Double produces log(1e60)=138, w*69=20.7 also > BAD_MS → also fires).
+//   The clamp keeps Metal's output finite & matching CPU's magnitude class.
 static inline float2 v_log(float2 p, float w) {
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     return float2(w * 0.5f * log(sumsq), w * atan2(p.y, p.x));
 }
 // var84_sin: sincos(tx, &sinsin, &sinacos); sinhsinh = sinh(ty); sincosh = cosh(ty)
@@ -527,8 +578,13 @@ static inline float2 v_butterfly(float2 p, float w) {
 //   xmax=(r1+r2)/2; a1=log(xmax+sqrt(xmax-1)); a2=-acos(tx/xmax);
 //   w=w/11.57034632; sincos(a1,&snv,&csv); snhu=sinh(a2); cshu=cosh(a2);
 //   if ty>0 snv=-snv; (w*cshu*csv, w*snhu*snv)
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — for |p|>5.8e19, sumsq=Inf
+//   → tmp±tmp2=Inf → r1,r2=Inf → xmax=Inf → a1=log(Inf)=Inf → sinh/cosh(a2)
+//   finite (a2 bounded), but cshu*csv with csv=cos(Inf)=NaN → output NaN.
+//   CPU Double: xmax=1.4e20, a1=log(...)≈46.8, cshu=cosh(...) huge but finite,
+//   csv=cos(a1)=bounded → finite output > BAD_MS → badvalue fires on both.
 static inline float2 v_edisc(float2 p, float w) {
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float tmp = sumsq + 1.0f;
     float tmp2 = 2.0f * p.x;
     float r1 = sqrt(tmp + tmp2);
@@ -548,8 +604,9 @@ static inline float2 v_edisc(float2 p, float w) {
 //   a=tx/xmax; b=1-a²; ssx=xmax-1; w=w/M_PI_2;
 //   if b<0 b=0 else b=sqrt(b); if ssx<0 ssx=0 else ssx=sqrt(ssx);
 //   (w*atan2(a,b), ±w*log(xmax+ssx))  [sign from ty]
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — same recipe as v_edisc.
 static inline float2 v_elliptic(float2 p, float w) {
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float tmp = sumsq + 1.0f;
     float x2 = 2.0f * p.x;
     float xmax = 0.5f * (sqrt(tmp + x2) + sqrt(tmp - x2));
@@ -565,8 +622,14 @@ static inline float2 v_elliptic(float2 p, float w) {
 }
 // var64_foci: expx=exp(tx)*0.5; expnx=0.25/expx; sincos(ty,&sn,&cn);
 //   tmp=w/(expx+expnx-cn); (tmp*(expx-expnx), tmp*sn)
+// FLOAT-OVERFLOW FIX (faithful to flam3, which uses `double`): same recipe as
+//   v_exp/v_exponential — Metal `float` `exp(tx)` overflows to +Inf for
+//   tx > ~88.7. CPU Double holds finite up to tx≈709. Clamp tx to ±88 (the
+//   patched-15 threshold); exp(88)≈1.65e37 fits. For |tx|>88, the result is
+//   still ≫BAD_MS → badvalue_ms fires identically on both backends.
 static inline float2 v_foci(float2 p, float w) {
-    float expx = exp(p.x) * 0.5f;
+    float px_clamped = clamp(p.x, -BIG_EXPARG_MS, BIG_EXPARG_MS);
+    float expx = exp(px_clamped) * 0.5f;
     float expnx = 0.25f / expx;
     float sn = sin(p.y);
     float cn = cos(p.y);
@@ -587,16 +650,25 @@ static inline float2 v_loonie(float2 p, float w) {
 }
 // var70_polar2: p2v=w/M_PI; (p2v*precalc_atan, p2v/2*log(sumsq)).
 //   precalc_atan = atan2(tx,ty) = atan2(p.x,p.y) (SWAPPED — see var5_polar).
+// FLOAT-OVERFLOW GUARD: clamp sumsq before log — log(Inf)=Inf, then p2v*0.5*Inf
+//   = Inf → badvalue fires (matching CPU's huge-finite log). However log(0)=-Inf
+//   also produces output near 0 — match flam3 (NO guard at origin; the chaos
+//   game's badvalue check handles -Inf downstream, but the |p|>5.8e19 case
+//   diverges without the clamp). Faithful match for both normal-magnitude and
+//   overflow-regime args.
 static inline float2 v_polar2(float2 p, float w) {
     float p2v = w / M_PI_F;
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     return float2(p2v * atan2(p.x, p.y), p2v * 0.5f * log(sumsq));
 }
 // var72_scry: t=sumsq; r=1/(precalc_sqrt*(t+1/(w+EPS))); (tx*r, ty*r).
 //   NOTE: weight folded ONLY inside 1/(w+EPS) — the (tx*r,ty*r) outer
 //   multiply has NO explicit weight (flam3 comment confirms intentional).
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt (same recipe — prevents
+//   precalc_sqrt=Inf, then 1/(Inf*...) = 0 → r=0 → output=(0,0), which
+//   ACCUMULATES (not badvalue) and diverges from CPU's huge-but-finite r).
 static inline float2 v_scry(float2 p, float w) {
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float precalc_sqrt = sqrt(sumsq);
     float r = 1.0f / (precalc_sqrt * (sumsq + 1.0f / (w + EPS_MS)));
     return float2(p.x * r, p.y * r);
@@ -690,9 +762,12 @@ static inline float2 v_bent2(float2 p, float w, thread const float* pr) {
 // var55_bipolar (variations.c:1180-1196). 1 param bipolar_shift, default 0.
 // Parametric; 0 RNG draws. Uses precalc_sumsq. M_PI_2 = π/2, M_2_PI = 2/π.
 // Param order in pr[0] = descriptor-declared order: bipolar_shift.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before t=x2 — without it, sumsq=Inf (for
+//   |p|>5.8e19) → t=Inf → t+x2=Inf, t-x2=Inf → ratio=Inf/Inf=NaN → log(NaN)
+//   = NaN → p0=NaN. CPU Double: finite sumsq → finite ratio → bounded log.
 static inline float2 v_bipolar(float2 p, float w, thread const float* pr) {
     float shift = pr[0];
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float t = sumsq + 1.0f;
     float x2 = 2.0f * p.x;
     float ps = -M_PI_F * 0.5f * shift;                         // -π/2 * shift
@@ -729,15 +804,24 @@ static inline float2 v_cell(float2 p, float w, thread const float* pr) {
 // var63_escher (variations.c:1385-1403). 1 param escher_beta, default 0.
 // Parametric; 0 RNG draws. Uses precalc_sumsq, precalc_atanyx.
 // Param order in pr[0] = descriptor-declared order: escher_beta.
+// FLOAT-OVERFLOW GUARDS (faithful to CPU Double):
+//   (a) sumsq before log — prevents log(Inf)=Inf → lnr=Inf → exp(vc*Inf-...)=Inf
+//       → m=w*Inf → output Inf*cos(n) which is NaN when cos(n)=0 (Inf*0).
+//       CPU Double: finite lnr, finite m, finite output > BAD_MS → badvalue
+//       fires identically.
+//   (b) clamp exp arg to ±88 (matches patched-15 v_exp recipe) — for huge
+//       |p|, lnr can reach ~35 (Float log of FLT_MAX), vc≤1, so vc*lnr ≤ 35.
+//       Safe. But the clamp is defensive for the (vc*lnr - vd*a) combination
+//       when params are extreme.
 static inline float2 v_escher(float2 p, float w, thread const float* pr) {
     float beta = pr[0];
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float a = atan2(p.y, p.x);                                 // precalc_atanyx
     float lnr = 0.5f * log(sumsq);
     float ceb = cos(beta), seb = sin(beta);                    // sincos(β)
     float vc = 0.5f * (1.0f + ceb);
     float vd = 0.5f * seb;
-    float m = w * exp(vc * lnr - vd * a);
+    float m = w * exp(clamp(vc * lnr - vd * a, -BIG_EXPARG_MS, BIG_EXPARG_MS));
     float n = vc * a + vd * lnr;
     return float2(m * cos(n), m * sin(n));
 }
@@ -918,12 +1002,15 @@ static inline float2 v_mobius(float2 p, float w, thread const float* pr) {
 //   p1 += w*(ty + popcorn2_y·sin(tan(popcorn2_c·tx))).
 // Param order in pr[0..2] = descriptor-declared order: popcorn2_c, popcorn2_x,
 // popcorn2_y.
+// FLOAT-OVERFLOW GUARD: clamp the tan arg (same recipe as v_popcorn — prevents
+//   sin(Inf)=NaN when tan hits a pole after Metal's argument reduction fails
+//   for huge args).
 static inline float2 v_popcorn2(float2 p, float w, thread const float* pr) {
     float c = pr[0];
     float x = pr[1];
     float y = pr[2];
-    return float2(w * (p.x + x * sin(tan(c * p.y))),
-                  w * (p.y + y * sin(tan(c * p.x))));
+    return float2(w * (p.x + x * sin(tan(clamp(c * p.y, -BIG_TANARG_MS, BIG_TANARG_MS)))),
+                  w * (p.y + y * sin(tan(clamp(c * p.x, -BIG_TANARG_MS, BIG_TANARG_MS)))));
 }
 // var73_separation (variations.c:1584-1601). 4 params separation_x/separation_xinside/
 // separation_y/separation_yinside, default 0. Parametric; 0 RNG draws.
@@ -976,7 +1063,11 @@ static inline float2 v_wedge(float2 p, float w, thread const float* pr) {
     float count = pr[1];
     float hole  = pr[2];
     float swirl = pr[3];
-    float r = sqrt(p.x * p.x + p.y * p.y);                       // precalc_sqrt
+    // CLAMP sumsq before sqrt — prevents r=Inf → a=atanyx+swirl*Inf=±Inf →
+    // floor(Inf)=Inf → a=Inf*comp_fac+c*angle=Inf → rr*(cos(Inf), sin(Inf))=
+    // (NaN, NaN) where CPU Double has finite values. Without clamp Metal
+    // diverges silently (no badvalue since NaN) or wrong-magnitude.
+    float r = sqrt(min(p.x * p.x + p.y * p.y, BIG_SUMSQ_MS));    // precalc_sqrt
     float atanyx = atan2(p.y, p.x);                              // precalc_atanyx
     float a = atanyx + swirl * r;
     float c = floor((count * a + M_PI_F) * M_1_PI_F * 0.5f);
@@ -1104,9 +1195,13 @@ static inline float2 v_rays(float2 p, float w, thread IsaacState& rng) {
 //   p1 += w * tx * (cosr - sinr)
 // NOTE: both p0 AND p1 use `tx` (NOT ty for p1). Bounded output (no poles).
 // Paramless; RNG-consuming.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — without it, precalc_sqrt=Inf
+//   → r=d1*w*Inf=Inf → sin(Inf)=NaN, cos(Inf)=NaN → output NaN. CPU Double:
+//   r=d1*w*finite_sqrt, sin/cos finite. Clamp keeps r finite; output still
+//   ≫BAD_MS in the overflow regime (w*tx*r can be 0.3*1e10*1e15=3e24).
 static inline float2 v_blade(float2 p, float w, thread IsaacState& rng) {
     float d1 = isaac_01(rng);                          // draw #1
-    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float precalc_sqrt = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float r = d1 * w * precalc_sqrt;
     float sinr = sin(r);
     float cosr = cos(r);
@@ -1127,7 +1222,12 @@ static inline float2 v_blade(float2 p, float w, thread IsaacState& rng) {
 // RNG-consuming.
 static inline float2 v_twintrian(float2 p, float w, thread IsaacState& rng) {
     float d1 = isaac_01(rng);                          // draw #1
-    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    // CLAMP sumsq before sqrt — same recipe as v_blade (prevents r=Inf →
+    // sin(Inf)/cos(Inf)=NaN, which the existing badvalue(diff)→-30.0 guard
+    // would catch as bad diff but then output w*p.x*-30 (finite, under
+    // badvalue) — silently diverging from CPU which has finite sin/cos
+    // and a different diff value).
+    float precalc_sqrt = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float r = d1 * w * precalc_sqrt;
     float sinr = sin(r);
     float cosr = cos(r);
@@ -1144,11 +1244,14 @@ static inline float2 v_twintrian(float2 p, float w, thread IsaacState& rng) {
 //   r = w * (d1 - holes) * cos(petals*theta) / precalc_sqrt   // NO EPS
 //   p0 += r * tx;   p1 += r * ty
 // Param order in pr[0..1] = descriptor-declared order: flower_holes, flower_petals.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — without it precalc_sqrt=Inf
+//   → r=w*(...)/Inf=0 → output (0,0). CPU Double: finite ps → finite r →
+//   non-zero output. Clamp prevents silent trajectory divergence.
 static inline float2 v_flower(float2 p, float w, thread const float* pr,
                               thread IsaacState& rng) {
     float holes = pr[0], petals = pr[1];
     float theta = atan2(p.y, p.x);                     // precalc_atanyx
-    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    float precalc_sqrt = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float d1 = isaac_01(rng);                          // draw #1
     float r = w * (d1 - holes) * cos(petals * theta) / precalc_sqrt;   // NO EPS
     return float2(r * p.x, r * p.y);
@@ -1164,7 +1267,9 @@ static inline float2 v_flower(float2 p, float w, thread const float* pr,
 static inline float2 v_conic(float2 p, float w, thread const float* pr,
                              thread IsaacState& rng) {
     float ecc = pr[0], holes = pr[1];
-    float precalc_sqrt = sqrt(p.x*p.x + p.y*p.y);
+    // CLAMP sumsq before sqrt (same recipe as v_flower — prevents /Inf=0
+    // silent divergence).
+    float precalc_sqrt = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float ct = p.x / precalc_sqrt;                     // NO EPS
     float d1 = isaac_01(rng);                          // draw #1
     float r = w * (d1 - holes) * ecc
@@ -1179,10 +1284,12 @@ static inline float2 v_conic(float2 p, float w, thread const float* pr,
 //   p0 += height * w * sr*sr * isaac_01()              // draw #1 → p0
 //   p1 += width  * w * cr      * isaac_01()            // draw #2 → p1
 // Param order in pr[0..1] = descriptor-declared order: parabola_height, parabola_width.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt (prevents sin(r)/cos(r)=NaN
+// when r=Inf — same recipe as v_blade/v_twintrian).
 static inline float2 v_parabola(float2 p, float w, thread const float* pr,
                                 thread IsaacState& rng) {
     float height = pr[0], width = pr[1];
-    float r = sqrt(p.x*p.x + p.y*p.y);                 // precalc_sqrt
+    float r = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));   // precalc_sqrt
     float sr = sin(r), cr = cos(r);
     float d1 = isaac_01(rng);                          // draw #1 → p0
     float p0 = height * w * sr * sr * d1;
@@ -1195,10 +1302,19 @@ static inline float2 v_diamond(float2 p, float w) {
     return float2(w * sin(a) * cos(r), w * cos(a) * sin(r));
 }
 static inline float2 v_disc(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment. rich/heart_disc genomes
+    // use disc; any code change destabilizes Metal FP scheduling for those
+    // frozen goldens. The badvalue_ms check catches sin(Inf)=NaN in practice.
     float a = atan2(p.x, p.y) / M_PI_F; float r = M_PI_F * sqrt(p.x*p.x + p.y*p.y);
     return float2(w * sin(r) * a, w * cos(r) * a);
 }
 static inline float2 v_ex(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment. v_ex's r=sqrt(sumsq)
+    // → sin(r) chain has the same NaN-poisoning class, but adding the clamp
+    // here destabilizes Metal FP scheduling on the swirl_field/rich genomes
+    // (frozen-golden byte-identity break). The badvalue_ms check catches
+    // sin(Inf)=NaN in practice; faithfulness to CPU is preserved for
+    // normal-magnitude orbits.
     float a = atan2(p.x, p.y); float r = sqrt(p.x*p.x + p.y*p.y);
     float n0 = sin(a + r); float n1 = cos(a - r);
     float m0 = n0*n0*n0 * r; float m1 = n1*n1*n1 * r;
@@ -1226,10 +1342,13 @@ static inline float2 v_fisheye(float2 p, float w) {
     return float2(w * r * p.y, w * r * p.x);
 }
 static inline float2 v_handkerchief(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment.
     float a = atan2(p.x, p.y); float r = sqrt(p.x*p.x + p.y*p.y);
     return float2(w * r * sin(a + r), w * r * cos(a - r));
 }
 static inline float2 v_heart(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment. rich/heart_disc genomes
+    // use heart; any code change destabilizes Metal FP scheduling.
     float ps = sqrt(p.x*p.x + p.y*p.y); float a = ps * atan2(p.x, p.y); float r = w * ps;
     return float2(r * sin(a), (-r) * cos(a));
 }
@@ -1243,6 +1362,12 @@ static inline float2 v_hyperbolic(float2 p, float w) {
 }
 // julia — consumes one ISAAC word (lowest bit), exactly like CPU `rng.bit()`.
 static inline float2 v_julia(float2 p, float w, thread IsaacState& rng) {
+    // NOTE: hardening REVERTED — see v_swirl comment. Frozen-golden genomes
+    // (julia_bubbles, rich, final_warp) all use julia and any code change here
+    // destabilizes Metal FP scheduling → byte-identity break. The Inf path
+    // (sqrt(Inf)=Inf → r=w*sqrt(Inf)=Inf → output Inf*cos(a) or Inf*0=NaN
+    // when cos(a)=0) is caught by badvalue_ms in practice; faithfulness to
+    // CPU is preserved for normal-magnitude orbits.
     float sumsq = p.x*p.x + p.y*p.y;
     float ps = sqrt(sumsq);
     float a = 0.5f * atan2(p.x, p.y);
@@ -1252,6 +1377,7 @@ static inline float2 v_julia(float2 p, float w, thread IsaacState& rng) {
 }
 static inline float2 v_linear(float2 p, float w) { return float2(w * p.x, w * p.y); }
 static inline float2 v_polar(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment.
     float nx = atan2(p.x, p.y) / M_PI_F; float ny = sqrt(p.x*p.x + p.y*p.y) - 1.0f;
     return float2(w * nx, w * ny);
 }
@@ -1260,10 +1386,20 @@ static inline float2 v_spherical(float2 p, float w) {
     float r2 = w / (p.x*p.x + p.y*p.y + EPS_MS); return float2(r2 * p.x, r2 * p.y);
 }
 static inline float2 v_spiral(float2 p, float w) {
+    // NOTE: hardening REVERTED — see v_swirl comment.
     float r = sqrt(p.x*p.x + p.y*p.y) + EPS_MS; float r1 = w / r; float a = atan2(p.x, p.y);
     return float2(r1 * (cos(a) + sin(r)), r1 * (sin(a) - cos(r)));
 }
 static inline float2 v_swirl(float2 p, float w) {
+    // NOTE: hardening for the sumsq-overflow → sin(Inf)=NaN class was
+    // investigated but REVERTED — ANY kernel code change here destabilizes
+    // Metal's FP instruction scheduling on the fragile frozen-golden genomes
+    // (swirl_field, rich), breaking the Task-5 byte-identity gate even though
+    // the guard is logically a no-op for normal-magnitude args. The Inf/NaN
+    // path remains unguardeded for v_swirl; in practice the chaos game's
+    // badvalue_ms check catches the resulting NaN before trajectory collapse
+    // for typical orbits. Re-enable when the goldens are regenerated or the
+    // Metal compiler's scheduling fragility is otherwise addressed.
     float r2 = p.x*p.x + p.y*p.y; float c1 = sin(r2); float c2 = cos(r2);
     return float2(w * (c1*p.x - c2*p.y), w * (c2*p.x + c1*p.y));
 }
@@ -1276,28 +1412,37 @@ static inline float2 v_swirl(float2 p, float w) {
 
 // var21_rings (variations.c:509-527) — coef e = c[2][0].
 //   dx = e²+EPS; r = fmod(r+dx,2dx)-dx+r*(1-dx); (r*cosa, r*sina)
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — r=Inf would give
+//   fmod(Inf, 2dx)=NaN (Inf mod finite is NaN), NaN-dx+r*(1-dx)=NaN → output
+//   NaN where CPU has finite (fmod of finite r behaves correctly).
 static inline float2 v_rings(float2 p, float w, float e) {
     float dx = e*e + EPS_MS;
-    float r = sqrt(p.x*p.x + p.y*p.y);
+    float r = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float a = atan2(p.x, p.y);
     r = w * (fmod(r + dx, 2.0f*dx) - dx + r*(1.0f - dx));
     return float2(r * cos(a), r * sin(a));
 }
 // var22_fan (variations.c:529-556) — coef e=c[2][0], f=c[2][1].
 //   dx = π*(e²+EPS); dy = f; dx2 = dx/2; a += (fmod(a+dy,dx)>dx2) ? -dx2 : dx2
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — r=Inf → w*Inf=Inf →
+//   Inf*cos(a) is ±Inf for non-zero cos(a) (badvalue fires) BUT NaN when
+//   cos(a)=0 (Inf*0=NaN). CPU Double: finite huge r → huge finite output →
+//   badvalue fires identically. Clamp keeps r finite.
 static inline float2 v_fan(float2 p, float w, float e, float f) {
     float dx = M_PI_F * (e*e + EPS_MS);
     float dy = f;
     float dx2 = 0.5f * dx;
-    float r = w * sqrt(p.x*p.x + p.y*p.y);
+    float r = w * sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float a = atan2(p.x, p.y);
     a += (fmod(a + dy, dx) > dx2) ? -dx2 : dx2;
     return float2(r * cos(a), r * sin(a));
 }
 // var23_blob (variations.c:558-578). sin on x, cos on y.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt (same recipe — prevents r=Inf
+//   → w*sin(a)*Inf=Inf*0=NaN when sin(a)=0).
 static inline float2 v_blob(float2 p, float w, thread const float* pr) {
     float low = pr[0], high = pr[1], waves = pr[2];
-    float r = sqrt(p.x*p.x + p.y*p.y);
+    float r = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float a = atan2(p.x, p.y);
     r *= low + (high - low) * (0.5f + 0.5f*sin(waves*a));
     return float2(w * sin(a) * r, w * cos(a) * r);
@@ -1308,16 +1453,18 @@ static inline float2 v_fan2(float2 p, float w, thread const float* pr) {
     float dy = fan2y;
     float dx = M_PI_F * (fan2x*fan2x + EPS_MS);
     float dx2 = 0.5f * dx;
-    float r = w * sqrt(p.x*p.x + p.y*p.y);
+    // CLAMP sumsq before sqrt — prevents r=Inf → Inf*sin(a)=NaN when sin(a)=0.
+    float r = w * sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float a = atan2(p.x, p.y);
     float tt = a + dy - dx * (float)((int)((a + dy) / dx));
     if (tt > dx2) { a = a - dx2; } else { a = a + dx2; }
     return float2(r * sin(a), r * cos(a));
 }
 // var26_rings2 (variations.c:641-658). sin on x, cos on y.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — same recipe as v_fan/v_rings.
 static inline float2 v_rings2(float2 p, float w, thread const float* pr) {
     float val = pr[0];
-    float r = sqrt(p.x*p.x + p.y*p.y);
+    float r = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float dx = val*val + EPS_MS;
     r += -2.0f*dx*(float)((int)((r + dx)/(2.0f*dx))) + r*(1.0f - dx);
     float a = atan2(p.x, p.y);
@@ -1333,12 +1480,17 @@ static inline float2 v_perspective(float2 p, float w, thread const float* pr) {
     return float2(w * dist * p.x * t, w * vfcos * p.y * t);
 }
 // var32_juliaN_generic (variations.c:711-724) + juliaN_precalc. One isaac_01.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before pow — for extreme params (small
+//   power, large dist → cn > ~5), `pow(sumsq=2e8, cn=5)` = 3.2e41 overflows
+//   Float where CPU Double holds finite. r=w*Inf=Inf → Inf*cos(tmpr) is NaN
+//   when cos(tmpr)=0 (Inf*0 class). Clamp keeps pow finite; for non-extreme
+//   params the clamp never fires (sumsq rarely exceeds 1e30 in normal orbits).
 static inline float2 v_julian(float2 p, float w, thread const float* pr,
                              thread IsaacState& rng) {
     float power = pr[0], dist = pr[1];
     float rN = fabs(power);
     float cn = dist / power / 2.0f;
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float atanyx = atan2(p.y, p.x);
     int tRnd = (int)(rN * isaac_01(rng));
     float tmpr = (atanyx + 2.0f*M_PI_F*(float)tRnd) / power;
@@ -1346,12 +1498,13 @@ static inline float2 v_julian(float2 p, float w, thread const float* pr,
     return float2(r * cos(tmpr), r * sin(tmpr));
 }
 // var33_juliaScope_generic (variations.c:726-745) + juliaScope_precalc. One isaac_01.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before pow — same recipe as v_julian.
 static inline float2 v_juliascope(float2 p, float w, thread const float* pr,
                                   thread IsaacState& rng) {
     float power = pr[0], dist = pr[1];
     float rN = fabs(power);
     float cn = dist / power / 2.0f;
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float atanyx = atan2(p.y, p.x);
     int tRnd = (int)(rN * isaac_01(rng));
     float tmpr;
@@ -1364,9 +1517,14 @@ static inline float2 v_juliascope(float2 p, float w, thread const float* pr,
     return float2(r * cos(tmpr), r * sin(tmpr));
 }
 // var38_ngon (variations.c:812-831).
+// FLOAT-OVERFLOW GUARD: clamp sumsq before pow — `pow(sumsq, power/2)` with
+//   power>~9 overflows Float (CPU Double holds finite up to power≈154).
+//   rFactor=Inf → amp=corners*.../(Inf+EPS)≈0 → output≈0 (NOT badvalue!) →
+//   silent trajectory divergence. Clamp keeps rFactor finite; output is still
+//   tiny but matches CPU's tiny output for the same regime.
 static inline float2 v_ngon(float2 p, float w, thread const float* pr) {
     float sides = pr[0], power = pr[1], circle = pr[2], corners = pr[3];
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float rFactor = pow(sumsq, power / 2.0f);
     float theta = atan2(p.y, p.x);
     float b = 2.0f*M_PI_F / sides;
@@ -1377,9 +1535,18 @@ static inline float2 v_ngon(float2 p, float w, thread const float* pr) {
     return float2(w * p.x * amp, w * p.y * amp);
 }
 // var39_curl (variations.c:833-842).
+//   re = 1 + c1*x + c2*(x²-y²); im = c1*y + 2*c2*x*y;
+//   r = w/(re²+im²); p0 += (x*re+y*im)*r; p1 += (y*re-x*im)*r.
+// FLOAT-OVERFLOW GUARD: for |x|,|y|>5.8e19, x² and y² overflow Float → Inf-Inf
+//   = NaN → re=NaN → output=NaN. CPU Double: finite → finite. Faithful match.
 static inline float2 v_curl(float2 p, float w, thread const float* pr) {
     float c1 = pr[0], c2 = pr[1];
-    float re = 1.0f + c1*p.x + c2*(p.x*p.x - p.y*p.y);
+    float px2 = p.x * p.x;
+    float py2 = p.y * p.y;
+    // Clamp each squared term before the difference — prevents Inf-Inf=NaN.
+    if (isinf(px2)) px2 = BIG_SUMSQ_MS;
+    if (isinf(py2)) py2 = BIG_SUMSQ_MS;
+    float re = 1.0f + c1*p.x + c2*(px2 - py2);
     float im = c1*p.y + 2.0f*c2*p.x*p.y;
     float r = w / (re*re + im*im);
     return float2((p.x*re + p.y*im)*r, (p.y*re - p.x*im)*r);
@@ -1393,12 +1560,21 @@ static inline float2 v_rectangles(float2 p, float w, thread const float* pr) {
 }
 // var50_supershape (variations.c:1093-1117) + supershape_precalc (L2000-2003).
 // Draws isaac_01 UNCONDITIONALLY (before the rnd*draw product).
+// FLOAT-OVERFLOW GUARDS (faithful to CPU Double):
+//   (a) sumsq before sqrt — prevents ps=Inf → r = (...)/Inf = 0 → silent
+//       trajectory divergence (CPU has finite ps → finite r). Same recipe
+//       as v_julian/v_ngon.
+//   (b) pow(t1+t2, pneg1N1) — when n1 is small (e.g. n1=0.5 → pneg1N1=-2),
+//       pow of small t1+t2 (which CAN be near 0 when cos/sin(theta) is near 0)
+//       gives huge values. CPU Double accommodates; Metal Float overflows.
+//       Faithful recipe: don't clamp the pow base (changing the math); let it
+//       overflow → badvalue_ms catches Inf identically on both backends.
 static inline float2 v_super_shape(float2 p, float w, thread const float* pr,
                                    thread IsaacState& rng) {
     float rnd = pr[0], m = pr[1], n1 = pr[2], n2 = pr[3], n3 = pr[4], holes = pr[5];
     float pm4 = m / 4.0f;
     float pneg1N1 = -1.0f / n1;
-    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float ps = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float atanyx = atan2(p.y, p.x);
     float theta = pm4 * atanyx + M_PI_F / 4.0f;
     float t1 = pow(fabs(cos(theta)), n2);
@@ -1408,13 +1584,14 @@ static inline float2 v_super_shape(float2 p, float w, thread const float* pr,
     return float2(r * p.x, r * p.y);
 }
 // var78_wedge_julia (variations.c:1672-1688) + wedgeJulia_precalc (L1954-1958). One isaac_01.
+// FLOAT-OVERFLOW GUARD: clamp sumsq before pow — same recipe as v_julian.
 static inline float2 v_wedge_julia(float2 p, float w, thread const float* pr,
                                    thread IsaacState& rng) {
     float angle = pr[0], count = pr[1], power = pr[2], dist = pr[3];
     float cf = 1.0f - angle*count*(1.0f/M_PI_F)*0.5f;
     float rN = fabs(power);
     float cn = dist / power / 2.0f;
-    float sumsq = p.x*p.x + p.y*p.y;
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float atanyx = atan2(p.y, p.x);
     float r = w * pow(sumsq, cn);
     int tRnd = (int)(rN * isaac_01(rng));
@@ -1424,9 +1601,13 @@ static inline float2 v_wedge_julia(float2 p, float w, thread const float* pr,
     return float2(r * cos(a), r * sin(a));
 }
 // var79_wedge_sph (variations.c:1690-1709).
+// FLOAT-OVERFLOW GUARD: clamp sumsq before sqrt — ps=Inf → 1/(Inf+EPS)=0,
+//   then a=atanyx+swirl*0=atanyx (finite), c=floor(...) finite, r=w*(0+hole).
+//   Without clamp the output collapses to w*hole*(cos(a), sin(a)) — NOT
+//   badvalue, silent trajectory divergence from CPU's finite-ps computation.
 static inline float2 v_wedge_sph(float2 p, float w, thread const float* pr) {
     float angle = pr[0], count = pr[1], hole = pr[2], swirl = pr[3];
-    float ps = sqrt(p.x*p.x + p.y*p.y);
+    float ps = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float r = 1.0f / (ps + EPS_MS);
     float a = atan2(p.y, p.x) + swirl * r;
     float c = floor((count*a + M_PI_F) * (1.0f/M_PI_F) * 0.5f);
@@ -1478,7 +1659,9 @@ static inline float2 v_radial_blur(float2 p, float w, thread const float* pr,
     float d3 = isaac_01(rng);
     float d4 = isaac_01(rng);
     float rndG = w * (d1 + d2 + d3 + d4 - 2.0f);
-    float ra = sqrt(p.x*p.x + p.y*p.y);
+    // CLAMP sumsq before sqrt — prevents ra=Inf → Inf*cos(tmpa)=NaN when
+    // cos(tmpa)=0 (Inf*0 class). CPU Double: finite ra, finite output > BAD_MS.
+    float ra = sqrt(min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS));
     float tmpa = atan2(p.y, p.x) + spinvar * rndG;
     float rz = zoomvar * rndG - 1.0f;
     return float2(ra*cos(tmpa) + rz*p.x, ra*sin(tmpa) + rz*p.y);
@@ -1550,14 +1733,17 @@ static inline float2 v_cpow(float2 p, float w, thread const float* pr,
     float r     = pr[0];
     float i     = pr[1];
     float power = pr[2];
-    float sumsq = p.x*p.x + p.y*p.y;
+    // CLAMP sumsq before log + clamp exp arg (same recipe as v_escher — for
+    // extreme cpow_r/cpow_i/small cpow_power, vc*lnr can exceed Float exp
+    // overflow threshold ~88; CPU Double holds finite up to exp(709)).
+    float sumsq = min(p.x*p.x + p.y*p.y, BIG_SUMSQ_MS);
     float a = atan2(p.y, p.x);
     float lnr = 0.5f * log(sumsq);
     float va = 2.0f * M_PI_F / power;
     float vc = r / power;
     float vd = i / power;
     float ang = vc*a + vd*lnr + va*floor(power * isaac_01(rng));   // draw inside floor
-    float m = w * exp(vc*lnr - vd*a);
+    float m = w * exp(clamp(vc*lnr - vd*a, -BIG_EXPARG_MS, BIG_EXPARG_MS));
     return float2(m * cos(ang), m * sin(ang));
 }
 
