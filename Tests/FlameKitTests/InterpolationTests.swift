@@ -18,10 +18,20 @@ final class InterpolationTests: XCTestCase {
         let m = Interpolation.interpolate(a, b, at: 0.5)
         XCTAssertEqual(m.xforms[0].affine.a, 5, accuracy: 1e-6)
     }
+    /// `Camera.scale` (= flam3 `pixels_per_unit`) is interpolated in LOG-space
+    /// (geometric mean) — an INTENTIONAL divergence from flam3's linear
+    /// `INTERP(pixels_per_unit)` (interpolation.c:489). Magnification is
+    /// perceived logarithmically (Weber-Fechner), so a geometric blend gives
+    /// constant PERCEIVED zoom velocity and a perceptually-symmetric midpoint
+    /// (the seamless choice for ambient playback). `zoom`/`rotation` stay linear
+    /// (`zoom` is already log-coded in the projection via `2^zoom`, so
+    /// linear-in-zoom is geometric-in-magnification; angle is perceived linearly).
+    /// This test PINS the divergence: do NOT "fix" it to linear during a
+    /// flam3-parity pass. See the CLAUDE.md "Camera.scale log-space" gotcha.
     func testScaleLogSpace() {
         let a = flame(0, 100), b = flame(0, 400)
         let m = Interpolation.interpolate(a, b, at: 0.5)
-        XCTAssertEqual(m.camera.scale, 200, accuracy: 1e-3)   // geometric mean
+        XCTAssertEqual(m.camera.scale, 200, accuracy: 1e-3)   // geometric mean √(100·400)
     }
     func testUnequalXformCounts() {
         let a = flame(1, 200, xformCount: 1), b = flame(2, 200, xformCount: 2)

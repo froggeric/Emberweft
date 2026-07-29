@@ -60,7 +60,16 @@ public enum GenomeInterpolator {
         f.size = t < 0.5 ? a.size : b.size
         f.camera = Camera(
             center: lerp(a.camera.center, b.camera.center, t),
-            scale: pow(a.camera.scale, 1 - t) * pow(b.camera.scale, t),   // log-space
+            // INTENTIONAL divergence from flam3: `INTERP(pixels_per_unit)` is
+            // linear (interpolation.c:489), but magnification is perceived
+            // logarithmically (Weber-Fechner) — a geometric/log-space blend
+            // yields constant PERCEIVED zoom velocity and a perceptually-
+            // symmetric midpoint, the seamless choice for ambient playback.
+            // `zoom`/`rotation` stay linear: `zoom` is already log-coded in the
+            // projection (`pixelsPerUnit = scale * 2^zoom`, so linear-in-zoom is
+            // geometric-in-magnification), and angle is perceived linearly.
+            // Pinned by `testCameraScaleInterpolatedLogSpace`; see CLAUDE.md.
+            scale: pow(a.camera.scale, 1 - t) * pow(b.camera.scale, t),
             zoom: (1 - t) * a.camera.zoom + t * b.camera.zoom,
             rotation: (1 - t) * a.camera.rotation + t * b.camera.rotation)
         f.quality = interpolateQuality(a.quality, b.quality, t)
