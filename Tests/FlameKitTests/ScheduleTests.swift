@@ -10,6 +10,29 @@ import XCTest
 // Total PNGs emitted over k segments = k * N (no duplicate/drop at boundaries).
 final class ScheduleTests: XCTestCase {
 
+    // MARK: - Loop→transition boundary (flam3 seqflag shortcut routing)
+
+    /// The loop→transition boundary is the first frame of each transition segment
+    /// (globalFrame % N == 0 with kind == .transition). Callers render the
+    /// fromSheep genome directly here, porting flam3's `seqflag && blend==0`
+    /// shortcut (flam3.c:476-477). For N=8: seg0 loop = frames 0..7, seg1
+    /// transition = frames 8..15 (frame 8 is a boundary), seg2 loop = 16..23,
+    /// seg3 transition = 24..31 (frame 24 is a boundary).
+    func testLoopToTransitionBoundary() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             selector: Sequential(seed: 42), seed: 42)
+        // Loop-segment first frames are NOT boundaries.
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 0), "seg0 loop start")
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 16), "seg2 loop start")
+        // Interior loop / transition frames are NOT boundaries.
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 3), "mid seg0 loop")
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 10), "mid seg1 transition")
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 15), "seg1 last frame")
+        // Transition-segment first frames ARE boundaries.
+        XCTAssertTrue(sched.isLoopToTransitionBoundary(globalFrame: 8), "seg1 transition start")
+        XCTAssertTrue(sched.isLoopToTransitionBoundary(globalFrame: 24), "seg3 transition start")
+    }
+
     // MARK: - N=8 ladder pin (the load-bearing off-by-one check)
 
     // Segment 0 emits blends {1/8, 2/8, ..., 8/8 = 1.0} over global frames 0..7.

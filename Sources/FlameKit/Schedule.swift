@@ -156,6 +156,31 @@ public struct Schedule: Sendable {
         return segmentCount * framesPerSegment
     }
 
+    /// True iff `globalFrame` is the **first frame of a transition segment** — the
+    /// loop→transition boundary.
+    ///
+    /// flam3 fires a `seqflag && blend==0` shortcut here (flam3.c:476-477:
+    /// `flam3_copy(result, &prealign[0])`) that returns A un-aligned, SKIPPING the
+    /// align+establish+rotate+interpolate chain. Emberweft's 1-indexed schedule
+    /// emits `blend = 1/N` at this frame (not 0) — already morphed ~1/N toward B —
+    /// so without routing, the boundary frame is a discontinuity vs the preceding
+    /// loop's pure-A endpoint (and the `.log` polar round-trip residual
+    /// decorrelates spiky attractors; ~21 MAD measured on 09557→21924, dropping to
+    /// the ~5 MAD rotation seam once callers render A directly here). Callers
+    /// (`AnimateCommand.blendAt`, `PlaybackDispatcher.renderOneFrame`) render the
+    /// fromSheep genome directly when this returns true, matching flam3's shortcut.
+    ///
+    /// Pure + O(1) (uses `frameToBlend`, not the lazy segment walk). `globalFrame %
+    /// N == 0` iff it is the first frame of some segment; with `kind ==
+    /// .transition` this isolates the loop→transition start. For `N == 1` every
+    /// frame is a segment start, so a transition's single frame returns A —
+    /// matching flam3's `nframes==1` `frame==0 → blend==0 → seqflag` path.
+    public func isLoopToTransitionBoundary(globalFrame: Int) -> Bool {
+        precondition(globalFrame >= 0, "globalFrame must be >= 0")
+        let m = frameToBlend(globalFrame: globalFrame)
+        return m.kind == .transition && globalFrame % framesPerSegment == 0
+    }
+
     // MARK: - Level 2: segmentId → Segment — O(1) prefix, amortized O(1) extend
 
     /// Return the `Segment` at `id`, materializing/extension the selector walk

@@ -247,7 +247,15 @@ public actor PlaybackDispatcher {
         case .loop:
             flame = Loop.blend(from, t: mapping.blend)
         case .transition:
-            flame = Transition.blend(from, to, t: mapping.blend)
+            // flam3 sheep_edge seqflag shortcut (flam3.c:476-477): at the
+            // loop→transition boundary render the fromSheep (A) directly — pure A,
+            // no morph — instead of blend=1/N already morphed toward B (Emberweft's
+            // 1-indexed schedule). See Schedule.isLoopToTransitionBoundary.
+            if schedule.isLoopToTransitionBoundary(globalFrame: globalFrame) {
+                flame = from
+            } else {
+                flame = Transition.blend(from, to, t: mapping.blend)
+            }
         }
 
         // Hand the Flame to the renderer (crosses MainActor in production via

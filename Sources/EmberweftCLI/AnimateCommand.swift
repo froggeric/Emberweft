@@ -214,6 +214,10 @@ extension EmberweftCLI {
         let flamesConst = flames
         let staggerConst = stagger
         let loopCyclesConst = loopCycles
+        // Frozen copy for the @Sendable `blendAt` closure: the original `schedule`
+        // is `var` (mutated by `segment(at:)` in the loop), but the boundary
+        // predicate below is pure/O(1) and needs no materialized segments.
+        let scheduleConst = schedule
 
         for globalFrame in 0..<totalFrames {
             let mapping = schedule.frameToBlend(globalFrame: globalFrame)
@@ -289,6 +293,14 @@ extension EmberweftCLI {
             // captures (`flamesConst`, `segment`, `mapping`, `loopCyclesConst`,
             // `staggerConst`) are Sendable value types bound to `let`s.
             let blendAt: @Sendable (Double) -> Flame = { t in
+                // flam3 sheep_edge seqflag shortcut (flam3.c:476-477): at the
+                // loop→transition boundary return the fromSheep (A) directly —
+                // pure A, un-aligned, no morph — instead of blend=1/N already
+                // morphed toward B (Emberweft's 1-indexed schedule) or the `.log`
+                // polar round-trip residual. See Schedule.isLoopToTransitionBoundary.
+                if scheduleConst.isLoopToTransitionBoundary(globalFrame: globalFrame) {
+                    return flamesConst[segment.fromSheep]
+                }
                 switch mapping.kind {
                 case .loop:
                     return Loop.blend(flamesConst[segment.fromSheep], t: t, cycles: loopCyclesConst)
