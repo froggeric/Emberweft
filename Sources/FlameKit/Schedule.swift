@@ -54,17 +54,43 @@ public struct FrameMapping: Sendable, Equatable {
 ///
 /// # Frame-counting convention (pinned — off-by-one hazard)
 ///
-/// flam3 emits `N = framesPerSegment` frames per segment at blend = frame/N for
-/// frame = 1...N (1-indexed). So blend ∈ {1/N, 2/N, …, 1.0}; **blend = 0 is
-/// never emitted**. Consecutive segments therefore tile with no duplicate
-/// boundary frame: segment k's last frame is blend = 1.0, segment k+1's first
-/// frame is blend = 1/N.
+/// Emberweft emits `N = framesPerSegment` frames per segment at
+/// `blend = (local + 1) / N` for `local = 0...N-1` (**1-indexed**):
+/// blend ∈ {1/N, 2/N, …, 1.0}; **blend = 0 is never emitted**. Consecutive
+/// segments tile with no duplicate boundary frame: segment k's last frame is
+/// blend = 1.0, segment k+1's first is blend = 1/N.
 ///
 ///     segmentId = globalFrame / N
 ///     local     = globalFrame % N
 ///     blend     = Double(local + 1) / Double(N)        // ∈ (0, 1]
 ///
 /// Total PNGs emitted over k segments = `k * N` (no boundary duplicate/drop).
+///
+/// ## Deliberate divergence from flam3 (NOT a match)
+///
+/// flam3 is **0-indexed**: `blend = frame/nframes` for `frame = 0...N-1`, i.e.
+/// blend ∈ {0, 1/N, …, (N-1)/N} (starts at 0, stops one step short of 1.0). An
+/// earlier version of this comment mis-claimed flam3 was 1-indexed — it is not.
+/// Emberweft's 1-indexing is a deliberate choice, kept because landing the last
+/// frame at exactly `blend = 1.0` makes both segment boundaries endpoint-exact:
+/// - **Loop** last frame reaches `θ = 360°` → `R(360°) = R(0°)` within FP, so the
+///   loop→transition handoff is seamless (a 0-indexed loop stops at 356.4°, a
+///   3.6° gap to the boundary's pure-A 0°).
+/// - **Transition** last frame reaches exactly B (100%), matching the next
+///   loop's B start (a 0-indexed transition stops at 99% B).
+///
+/// Tradeoffs (all sub-perceptual):
+/// - **1/N phase offset from flam3** — every Emberweft frame is one step offset
+///   from flam3's grid; AnimationParity tests still pass (43–58 dB).
+/// - **blend = 0 is never emitted** → the loop→transition `seqflag` shortcut
+///   (`flam3.c:476-477`) ports at the CALLER layer
+///   (`isLoopToTransitionBoundary`) rather than as `if t == 0` inside
+///   `Transition.blend` (whose `t == 0` is therefore never reached in playback).
+/// - **First transition morph step is ~2/N** (the boundary frame is pure A, the
+///   next is blend = 2/N) vs flam3's uniform ~1/N steps.
+///
+/// Switching to 0-indexed would regress both boundaries (3.6° start gap +
+/// 99%-B end) for no perceptual gain and shift every frame's blend — don't.
 ///
 /// # Alternation scheme
 ///
