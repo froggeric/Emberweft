@@ -7,6 +7,21 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.8] — Fix Loop→Transition Boundary Discontinuity (port flam3's seqflag shortcut)
+
+The loop→transition handoff (`loop(A) → transition(A→B)`) had a ~21 MAD-per-pixel discontinuity on spiky attractors (e.g. 09557→21924) — the largest of 10 segment boundaries in the v0.1.7 coverage sweep. Root cause: Emberweft was missing flam3's `seqflag && blend==0` shortcut (flam3.c:476-477: `flam3_copy(result, &prealign[0])`), which returns A directly at the boundary, SKIPPING the align+establish+rotate+interpolate chain. Emberweft ran that full chain at the boundary, where (a) the 1-indexed schedule emits `blend=1/N` (already morphed ~1/N toward B, not pure A) and (b) the `.log` polar round-trip drops ~1e-15 affine residual that the chaos game amplifies (Lyapunov instability) into a decorrelated sample distribution. (`SpecialSauce.align` itself is faithful — it does not touch A's existing xforms, only invisible padding slots.)
+
+### Fix (faithful correction — ports the missing shortcut, at the caller layer)
+- `Schedule.isLoopToTransitionBoundary(globalFrame:)` — pure O(1) predicate identifying the boundary frame (first frame of a transition segment). Unit-tested (`testLoopToTransitionBoundary`).
+- `AnimateCommand.blendAt` + `PlaybackDispatcher.renderOneFrame` — at that one boundary frame per transition, render the fromSheep genome directly (pure A, un-aligned) instead of `Transition.blend(..., t: 1/N)`. Covers both the offline video path and the realtime screensaver path. `Transition.blend`'s contract is unchanged (its endpoint tests pass unmodified — they use matching-xform-count genomes where `alignedA == A`).
+
+### Verified
+- Boundary MAD (09557→21924, 480×360/q150/ts4/metal): **21.0 → 5.2** — now at the within-loop rotation-seam level (~5.6), i.e. the cross-segment handoff is seamless; the morph then proceeds normally within the transition.
+- `make test-fast`: **325/0** (was 324; +1 `testLoopToTransitionBoundary`), 1 skipped perf gate. Single-frame goldens unchanged (the fix is one transition-boundary frame only; no schedule-grid or `Transition.blend` change).
+
+### Note (separate, not addressed here)
+Emberweft's whole schedule is 1-indexed (`blend=(local+1)/N`, never 0) vs flam3's 0-indexed (`blend=local/N`) — which is why the shortcut ports at the caller layer rather than as `if t==0` inside `Transition.blend` (the schedule never reaches t=0). A residual side-effect: the transition's first morph step is ~2/N (the boundary frame is pure A, then frame 1 jumps to `blend=2/N`), slightly larger than flam3's ~1/N steps. Full 0-indexed schedule alignment is a larger, riskier change (shifts every frame's blend) and is left as a separate item.
+
 ## [v0.1.7] — Transition-Faithfulness Audit + Camera.scale Divergence Formalized
 
 A field-by-field audit of `GenomeInterpolator.blend` / `Transition.blend` / `Loop.blend` vs flam3 `interpolation.c:464-708` (the `INTERP` block), looking for any remaining gap in the v0.1.5/v0.1.6 class (missing/dropped/hard-cut INTERP field, param handling, endpoint issue) across all 99 variations and real gen-248 genomes. An independent fresh-context subagent re-ran the audit and confirmed the conclusion.
