@@ -7,6 +7,33 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.7] — Transition-Faithfulness Audit + Camera.scale Divergence Formalized
+
+A field-by-field audit of `GenomeInterpolator.blend` / `Transition.blend` / `Loop.blend` vs flam3 `interpolation.c:464-708` (the `INTERP` block), looking for any remaining gap in the v0.1.5/v0.1.6 class (missing/dropped/hard-cut INTERP field, param handling, endpoint issue) across all 99 variations and real gen-248 genomes. An independent fresh-context subagent re-ran the audit and confirmed the conclusion.
+
+### Audit result: no rendering-affecting gap remains for real genomes
+Every field in flam3's `INTERP` block is handled. The candidates that looked like gaps are all faithful-by-default or have zero observable effect on gen-248 explicit-palette genomes (the live flock):
+- `contrast` (INTERP :474) — Emberweft hardcodes 1.0; **0/300** gen-248 genomes set it (flam3 default 1.0). Moot.
+- `background` (INTERP :486-488) — hardcoded 0; always `"0 0 0"`. Moot.
+- `rot_center` (INTERP :484-485) — not modeled; never set. Moot.
+- `hue_rotation` (INTERP :478) — `Transition.blend` interpolates it correctly; inert for gen-248 (explicit palettes never carry `hue`, and `flam3_get_palette` — the sole `hue_rotation` consumer — only runs for `palette_index != -1` index palettes, which gen-248 never uses). Moot.
+- `size` w/h (INTERI :479-480) — hard-cut at 0.5; same-size pairs + `--size` CLI override → no render effect. Cosmetic.
+- chaos/weight/color/colorSpeed defensive clamps (interpolation.c:508,532,534-535,538-539) — omitted; lerp stays in-range for t∈[0,1] → no effect. Cosmetic.
+
+The v0.1.5 (mergeLog params, padding-final, paletteMode propagation) + v0.1.6 (Quality interp, det guard, endpoint padding-final) fixes closed the actual gaps. Stagger, chaos-matrix sizing, and endpoint faithfulness across all four final-xform pair-types were independently verified.
+
+### One divergence formalized: Camera.scale log-space
+The audit surfaced that `Camera.scale` (= flam3 `pixels_per_unit`) is interpolated in **log-space** (geometric mean) where flam3 uses **linear** `INTERP` (interpolation.c:489) — universal on real transitions (every gen-248 edge has differing scale), up to ~21% framing difference at high-ratio midpoints (e.g. 400→110). A/B-rendered the same 3.6× transition both ways and reviewed: **log kept as an intentional seamless divergence.** Magnification is perceived logarithmically (Weber-Fechner), so log-space gives constant *perceived* zoom velocity and a perceptually-symmetric midpoint (linear perceptually accelerates on zoom-out). `zoom`/`rotation` stay linear — `zoom` is already log-coded in the projection (`pixelsPerUnit = scale·2^zoom`, so linear-in-zoom is geometric-in-magnification), and angle is perceived linearly. **No behavior change** (log-space has been the implementation since `179c21b5a`); this entry makes it permanent, documented, and regression-pinned.
+
+### Changed
+- `GenomeInterpolator.swift`: removed the temporary `EMBERWEFT_SCALE_INTERP` A/B switch; permanent log-space `Camera.scale` with a rationale comment.
+- `InterpolationTests.swift`: strengthened `testScaleLogSpace` docstring — pins the divergence with a "don't revert to linear in a flam3-parity pass" guard.
+- `CLAUDE.md`: new gotcha documenting the `Camera.scale` log-space intentional divergence (parallel to the `.log` det guard).
+
+### Verified
+- `make test-fast`: **324/0** (1 skipped perf gate), incl. the strengthened `testScaleLogSpace`, InterpolationTests, TransitionTests, SpecialSauceTests, VariationsTests (110). No frozen-golden shift (transition-only; single-frame rendering unchanged).
+- A/B render confirmed the (now-removed) switch took effect during the comparison: transition frames differ log↔linear, loop frames byte-identical.
+
 ## [v0.1.6] — Transition Smoothness: Quality Interpolation + Singularity Guard + Endpoint Final
 
 Three fixes for mid-transition and endpoint discontinuities found in the 8-sheep coverage video. One is a strict faithfulness fix; two are intentional seamless divergences from flam3 (per the owner's directive: "fix for seamless even where flam3 does the same").
