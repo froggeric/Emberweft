@@ -7,6 +7,26 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.9] — Revert v0.1.8 Offline Boundary Short-Circuit (sharp-frame regression)
+
+A frame-by-frame review of the v0.1.8 overnight render (12 gen-247 genomes, 720p/q1000/ts32) found visible "complexity jumps" at loop→transition boundaries (e.g. frame 240→241: ~30 MAD). **Root cause: v0.1.8's own short-circuit.** The per-frame `isLoopToTransitionBoundary` check in `AnimateCommand.blendAt` returned `pure-A` for ALL 32 temporal sub-frames of the boundary frame, so it rendered **sharp** while its neighbors were motion-blurred — the sharp↔blurred delta was the jump (boundary-frame sharpness 129.9, +33% above the ~97 loop baseline, vs ~71 for blurred neighbors). flam3's `seqflag` shortcut fires PER SUB-FRAME (only the exact blend=0 one), so its blur survives and averages out the faithful `.log` polar residual (flam3 ts=32 = 6.25 MAD). v0.1.8 fixed the segment-boundary frame but relocated the jump to boundary+1, and at the wrong layer.
+
+### Fix
+- **Removed** the offline short-circuit from `AnimateCommand.blendAt` — the offline path's temporal blur now smooths the boundary (matching flam3).
+- **Kept** the realtime short-circuit in `PlaybackDispatcher.renderOneFrame` (no temporal blur there; faithful to flam3's `seqflag` for single-frame rendering).
+- `Schedule.isLoopToTransitionBoundary` + `testLoopToTransitionBoundary` retained (the realtime path uses them).
+
+### Verified
+- Boundary-frame sharpness spike gone (was 129.9; now matches the blurred transition neighbors).
+- MAD(boundary → first-transition-frame): **29.83 → 5.93** (now below the 8.0 within-loop baseline). Re-rendered 05915→37205 at ts=32.
+- `make test-fast`: 325/0.
+
+### Not a defect (confirmed)
+The other flagged spot (959→960) is NOT a discrete jump — it's the top of a smooth ramp (within-segment MAD climbs 3→22 through the transition) into genome 03400's uniformly-rough loop (12–16 MAD/frame). A busy dissimilar morph into a spiky attractor; faithful.
+
+### Lesson
+v0.1.8 was verified with a single-frame MAD measurement that I misread as "the morph starting" — it was the same sharp-frame defect. Verify boundary fixes at the actual render settings (ts>1) and inspect sharpness/blur asymmetry, not just blend-level endpoint MAD.
+
 ## [v0.1.8] — Fix Loop→Transition Boundary Discontinuity (port flam3's seqflag shortcut)
 
 The loop→transition handoff (`loop(A) → transition(A→B)`) had a ~21 MAD-per-pixel discontinuity on spiky attractors (e.g. 09557→21924) — the largest of 10 segment boundaries in the v0.1.7 coverage sweep. Root cause: Emberweft was missing flam3's `seqflag && blend==0` shortcut (flam3.c:476-477: `flam3_copy(result, &prealign[0])`), which returns A directly at the boundary, SKIPPING the align+establish+rotate+interpolate chain. Emberweft ran that full chain at the boundary, where (a) the 1-indexed schedule emits `blend=1/N` (already morphed ~1/N toward B, not pure A) and (b) the `.log` polar round-trip drops ~1e-15 affine residual that the chaos game amplifies (Lyapunov instability) into a decorrelated sample distribution. (`SpecialSauce.align` itself is faithful — it does not touch A's existing xforms, only invisible padding slots.)
