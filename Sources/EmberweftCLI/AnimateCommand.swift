@@ -41,6 +41,7 @@ extension EmberweftCLI {
         var loopCycles = 1
         var temporalSamples = 1
 
+        var onlyFrame: Int? = nil   // --frame N: render only global frame N (re-render specific frames; skips all others)
         var i = 0
         while i < args.count {
             let tok = args[i]
@@ -86,6 +87,9 @@ extension EmberweftCLI {
                 case "--temporal-samples":
                     guard i + 1 < args.count else { err("error: --temporal-samples requires a value\n"); return 2 }
                     temporalSamples = max(1, Int(args[i + 1]) ?? 1); i += 2
+                case "--frame":
+                    guard i + 1 < args.count else { err("error: --frame requires a value\n"); return 2 }
+                    onlyFrame = Int(args[i + 1]); i += 2
                 default:
                     err("error: unknown flag: \(tok)\n"); return 2
                 }
@@ -216,6 +220,10 @@ extension EmberweftCLI {
         let loopCyclesConst = loopCycles
 
         for globalFrame in 0..<totalFrames {
+            // --frame N: render only the requested global frame (re-render specific
+            // frames after a fix — e.g. to patch a corrected boundary frame into an
+            // existing sequence). Skip everything else: no render, no PNG, no manifest row.
+            if let onlyFrame, onlyFrame >= 0, globalFrame != onlyFrame { continue }
             let mapping = schedule.frameToBlend(globalFrame: globalFrame)
             let segment = schedule.segment(at: mapping.segmentId)
 
@@ -400,7 +408,8 @@ extension EmberweftCLI {
             err("error: cannot write manifest.json: \(error)\n"); return 1
         }
 
-        out("wrote \(totalFrames) frames + manifest.json to \(outPath) (\(width)×\(height))\n")
+        let writtenDesc = onlyFrame.map { "frame \($0)" } ?? "\(totalFrames) frames"
+        out("wrote \(writtenDesc) + manifest.json to \(outPath) (\(width)×\(height))\n")
         return 0
     }
 }
