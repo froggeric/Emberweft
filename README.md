@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4, v0.2.0):**
+**Works now (M0–M3 complete; M4 first slice, v0.2.0):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -60,8 +60,9 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.1.7** | ✅ Done | Transition-faithfulness audit (no remaining INTERP gaps) + Camera.scale log-space (perceptual, Weber-Fechner) |
 | **v0.1.8–v0.1.9** | ✅ Done | Loop→transition boundary: port flam3's seqflag shortcut (v0.1.8), revert the offline sharp-frame regression (v0.1.9) |
 | **v0.1.10** | ✅ Done | **Fix:** seamless boundaries — clip one-sided variation "leaks" (the blur-invariant over-bright at loop↔transition boundaries) |
-| **v0.2.0** | ✅ Done | **M4:** SwiftUI app + library browser + click-to-play (off-main Metal thumbnails); `curate` CLI |
-| M5 | **Current** | macOS screensaver bundle |
+| **v0.2.0** | ✅ Done | **M4 (part 1):** SwiftUI app first slice — library browser + click-to-play (off-main Metal thumbnails); `curate` CLI |
+| M4 | **In progress** | App search/filter, import, metadata editor, favorites, transport, a11y (remaining) |
+| M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
@@ -233,4 +234,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 are complete (v0.2.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the native SwiftUI app + library browser all work today. M5 (macOS screensaver) is next — see the [roadmap](docs/engineering/roadmap.md).
+**M0–M3 are complete; M4 is in progress (first slice shipped v0.2.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the native SwiftUI app + library browser (first slice) all work today. M4's remaining deliverables (search/filter, import, metadata, favorites, transport, a11y) are next — see the [roadmap](docs/engineering/roadmap.md).

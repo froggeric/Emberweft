@@ -9,6 +9,10 @@ implications of porting flam3) is the owner's decision and under review.
 
 ## [v0.2.0] — M4: SwiftUI App + Library Browser
 
+> _M4 part 1 (first vertical slice). Search/filter, list view, drag-drop import,
+> metadata editor, favorites, transport controls, and formal a11y are tracked in
+> the M4 completion plan and land in later slices (→ v0.3.0)._
+
 The first GUI. A native macOS app (`emberweft-gui`) that browses a curated genome
 library and plays sheep in realtime, reusing the M1–M3 engine verbatim. Adds two
 new SwiftPM targets and an off-main Metal render path.
