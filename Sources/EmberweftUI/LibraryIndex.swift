@@ -64,6 +64,25 @@ public actor LibraryIndex {
         }
     }
 
+    // MARK: - Imported (drag-and-drop folder)
+
+    /// Scan the flat `Imported/` folder (top-level only) for `.flam3` files, sorted
+    /// by filename. `id` is the bare stem (the folder is flat ⇒ unique). Mirrors
+    /// `scanBundle` but over the Imported directory.
+    public func scanImported(rootURL: URL) -> [LibraryEntry] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles])) ?? []
+        return urls.filter { $0.pathExtension == "flam3" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .map { url in
+                let stem = url.deletingPathExtension().lastPathComponent
+                return LibraryEntry(id: stem, source: .imported,
+                                    fileURL: url, displayName: stem, rank: nil)
+            }
+    }
+
     // MARK: - Lazy parse (cached)
 
     /// Parse a genome on demand, cache it by `entry.id`, and record its

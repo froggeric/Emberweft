@@ -5,9 +5,11 @@ import EmberweftUI
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
     @State private var selectedEntry: LibraryEntry?
+    @State private var editingEntry: LibraryEntry?
     @State private var openImporter = false
     @State private var filter = LibraryFilter()
     @State private var displayMode: DisplayMode = .grid
+    @State private var importToast: String?
 
     enum DisplayMode { case grid, list }
 
@@ -18,9 +20,23 @@ struct LibraryView: View {
                     filterBar
                     favoritesSection
                     bundleSection
+                    importedSection
                     directorySection
                 }
                 .padding(20)
+            }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                handleDrop(providers)
+                return true
+            }
+            .overlay(alignment: .bottom) {
+                if let toast = importToast {
+                    Text(toast)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.bottom, 20)
+                        .transition(.opacity)
+                }
             }
             .navigationTitle("Emberweft Library")
             .toolbar {
@@ -51,6 +67,13 @@ struct LibraryView: View {
             }
             .sheet(item: $selectedEntry) { entry in
                 PlaybackWindow(entry: entry).environment(model)
+            }
+            .sheet(item: $editingEntry) { entry in
+                MetadataEditorView(entry: entry, model: model)
+            }
+            .onChange(of: importToast) {
+                let snapshot = importToast
+                Task { try? await Task.sleep(for: .seconds(3)); if importToast == snapshot { importToast = nil } }
             }
         }
     }
@@ -170,6 +193,40 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
+    private var importedSection: some View {
+        if case .ready(let entries) = model.importedLoadState, !entries.isEmpty {
+            section(title: "Imported", state: model.importedLoadState)
+        }
+    }
+
+    // MARK: - Drag-and-drop import
+
+    private func handleDrop(_ providers: [NSItemProvider]) {
+        Task {
+            var urls: [URL] = []
+            for p in providers {
+                if let u = await Self.loadDroppedURL(p) { urls.append(u) }
+            }
+            guard !urls.isEmpty else { return }
+            let r = await model.importFiles(urls)
+            if r.imported == 0 {
+                importToast = "Nothing imported (skipped \(r.skipped))"
+            } else if r.skipped > 0 {
+                importToast = "Imported \(r.imported), skipped \(r.skipped)"
+            } else {
+                importToast = "Imported \(r.imported)"
+            }
+        }
+    }
+
+    private static func loadDroppedURL(_ p: NSItemProvider) async -> URL? {
+        guard p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return nil }
+        return await withCheckedContinuation { cont in
+            p.loadObject(ofClass: URL.self) { url, _ in cont.resume(returning: url) }
+        }
+    }
+
+    @ViewBuilder
     private func section(title: String, state: LoadState) -> some View {
         switch state {
         case .loading:
@@ -196,13 +253,13 @@ struct LibraryView: View {
                 } else if displayMode == .grid {
                     LazyVGrid(columns: grid, spacing: 16) {
                         ForEach(filtered) { entry in
-                            ThumbnailCell(entry: entry).onTapGesture { selectedEntry = entry }
+                            cell(entry, in: .grid)
                         }
                     }
                 } else {
                     VStack(spacing: 0) {
                         ForEach(filtered) { entry in
-                            listRow(entry); Divider()
+                            cell(entry, in: .list); Divider()
                         }
                     }
                 }
@@ -222,6 +279,22 @@ struct LibraryView: View {
                 Text("No genomes match.").foregroundStyle(.secondary)
                 Button("Clear filters") { filter = LibraryFilter() }.buttonStyle(.borderless)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(_ entry: LibraryEntry, in mode: DisplayMode) -> some View {
+        Group {
+            switch mode {
+            case .grid: ThumbnailCell(entry: entry)
+            case .list: listRow(entry)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { selectedEntry = entry }
+        .contextMenu {
+            Button("Play") { selectedEntry = entry }
+            Button("Edit metadata…") { editingEntry = entry }
         }
     }
 
@@ -251,8 +324,6 @@ struct LibraryView: View {
             }
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture { selectedEntry = entry }
         .accessibilityLabel("Genome \(entry.displayName)")
     }
 

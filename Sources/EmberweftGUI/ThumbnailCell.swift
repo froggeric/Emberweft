@@ -77,7 +77,7 @@ struct ThumbnailCell: View {
     private func load() async {
         guard let flame = try? await model.libraryIndex.loadGenome(for: entry) else {
             state = .failed
-            model.markThumbResolved(entry.id)
+            model.markThumbResolved(for: entry)
             return
         }
         // Palette facet for filtering (genome already parsed + cached; cheap, no
@@ -92,13 +92,13 @@ struct ThumbnailCell: View {
         switch outcome {
         case .image(let rgba):
             state = .ready(rgba.toNSImage() ?? NSImage())
-            model.markThumbResolved(entry.id)
+            model.markThumbResolved(for: entry)
         case .degenerate:
             // Exclude degenerate genomes from the grid entirely.
-            model.hideEntry(entry.id)
+            model.hideEntry(for: entry)
         case .failed:
             state = .failed
-            model.markThumbResolved(entry.id)
+            model.markThumbResolved(for: entry)
         }
     }
 }
