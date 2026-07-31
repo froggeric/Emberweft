@@ -282,6 +282,13 @@ struct LibraryView: View {
         }
     }
 
+    private func cellAccessibilityLabel(_ entry: LibraryEntry) -> String {
+        let m = model.metadataStore.metadata(for: entry)
+        let cat = entry.rank?.category.capitalized ?? "uncategorized"
+        let fav = m.favorite ? "favorite" : "not favorite"
+        return "Genome \(entry.displayName), \(cat), \(m.rating) of 5 stars, \(fav)"
+    }
+
     @ViewBuilder
     private func cell(_ entry: LibraryEntry, in mode: DisplayMode) -> some View {
         Group {
@@ -296,6 +303,10 @@ struct LibraryView: View {
             Button("Play") { selectedEntry = entry }
             Button("Edit metadata…") { editingEntry = entry }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(cellAccessibilityLabel(entry))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens playback")
     }
 
     @ViewBuilder

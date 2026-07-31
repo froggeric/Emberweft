@@ -21,16 +21,23 @@ struct PlaybackWindow: View {
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
-        .task(id: entry.id) {
-            await start()
-        }
+        .task(id: entry.id) { await start() }
         .onDisappear { vm.beginStop() }
+        // Keyboard: Space toggles play/pause, Esc closes.
+        .background {
+            // Hidden buttons carry the keyboard shortcuts.
+            Group {
+                Button("Play/Pause") { vm.togglePlaying() }
+                    .keyboardShortcut(" ", modifiers: [])
+                Button("Close") { close() }
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            .hidden()
+        }
         .alert("Could not open genome", isPresented: Binding(
             get: { loadError != nil }, set: { if !$0 { loadError = nil } })) {
             Button("Close") { dismiss() }
-        } message: {
-            Text(loadError ?? "")
-        }
+        } message: { Text(loadError ?? "") }
         .alert("Degenerate genome", isPresented: $degenerate) {
             Button("Open anyway", role: .destructive) { Task { await forceStart() } }
             Button("Cancel", role: .cancel) { dismiss() }
@@ -40,33 +47,36 @@ struct PlaybackWindow: View {
     }
 
     private var bar: some View {
-        HStack {
-            Text(entry.displayName).font(.headline)
-            Spacer()
-            if vm.isPlaying {
-                Label("Playing", systemImage: "play.fill").foregroundStyle(.green)
+        HStack(spacing: 14) {
+            Button { vm.togglePlaying() } label: {
+                Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title3)
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(vm.isPlaying ? "Pause" : "Play")
+            .accessibilityHint("Space")
+
+            Slider(value: Binding(get: { vm.position },
+                                  set: { p in Task { await vm.scrub(to: p) } }),
+                   in: 0...1)
+            .accessibilityLabel("Loop position")
+            .accessibilityValue("\(Int(vm.position * 100)) percent")
+            .accessibilityHint("Scrub the loop")
+
+            Text(entry.displayName).font(.headline).lineLimit(1)
             Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)
     }
 
-    /// Stop playback deterministically, then dismiss. Awaiting `stop()` before
-    /// `dismiss()` guarantees the dispatcher is quiesced (no orphaned GPU work)
-    /// even though the view-model is `@State` that SwiftUI tears down on dismiss.
-    private func close() {
-        Task { await vm.stop(); dismiss() }
-    }
+    /// Stop deterministically, then dismiss.
+    private func close() { Task { await vm.stop(); dismiss() } }
 
     private func start() async {
         do {
             let flame = try await model.libraryIndex.loadGenome(for: entry)
-            if !flame.isRenderable {
-                degenerate = true
-                return
-            }
-            await begin(flame: flame)
+            if !flame.isRenderable { degenerate = true; return }
+            begin(flame: flame)
         } catch {
             loadError = "\(error.localizedDescription)"
         }
@@ -74,17 +84,15 @@ struct PlaybackWindow: View {
 
     private func forceStart() async {
         if let flame = try? await model.libraryIndex.loadGenome(for: entry) {
-            await begin(flame: flame)
+            begin(flame: flame)
         }
     }
 
-    private func begin(flame: Flame) async {
-        // Preview renders at a small internal resolution (previewWidth×Height)
-        // with low spp; the CAMetalLayer scales it up to the window. Fast, with
-        // minor softness — independent of the (full-quality) preset.
+    private func begin(flame: Flame) {
         let params = model.prefs.previewParams()
-        await vm.start(flame: flame, params: params,
-                       backend: model.prefs.backend,
-                       targetFPS: Double(model.prefs.targetFPS))
+        vm.load(flame: flame, params: params,
+                backend: model.prefs.backend,
+                targetFPS: Double(model.prefs.targetFPS))
+        vm.play()
     }
 }
