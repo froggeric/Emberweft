@@ -14,6 +14,7 @@ final class AppModel {
 
     let libraryIndex = LibraryIndex()
     let thumbnailService: ThumbnailService
+    let metadataStore: MetadataStore
 
     /// The bundled curated library resource root (`CuratedLibrary/`).
     private let bundleRoot: URL?
@@ -63,6 +64,21 @@ final class AppModel {
         let thumbs = AppPreferences.defaultDirectory.appendingPathComponent("thumbs", isDirectory: true)
         // ThumbnailService is an actor; its init creates the dir.
         self.thumbnailService = ThumbnailService(cacheDirectory: thumbs)
+        let (mdStore, _) = MetadataStore.loadResilient()
+        self.metadataStore = mdStore
+    }
+
+    /// Favorite entries across all loaded sections (bundle + directory), in source
+    /// order. @Observable-tracked (reads `metadataStore.entries` + the load states)
+    /// so the Favorites section re-renders when a favorite is toggled.
+    func favoriteEntries() -> [LibraryEntry] {
+        var out: [LibraryEntry] = []
+        for state in [bundleLoadState, dirLoadState] {
+            if case .ready(let entries) = state {
+                out += entries.filter { metadataStore.metadata(for: $0).favorite }
+            }
+        }
+        return out
     }
 
     // MARK: - Scan

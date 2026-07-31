@@ -31,6 +31,23 @@ struct ThumbnailCell: View {
                             .padding(6)
                     }
                 }
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        model.metadataStore.update(for: entry) { $0.favorite.toggle() }
+                    } label: {
+                        Image(systemName: model.metadataStore.metadata(for: entry).favorite
+                              ? "heart.fill" : "heart")
+                            .foregroundStyle(model.metadataStore.metadata(for: entry).favorite
+                                             ? .pink : .white.opacity(0.85))
+                            .font(.caption)
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(model.metadataStore.metadata(for: entry).favorite
+                                        ? "Unfavorite" : "Favorite")
+                    .accessibilityHint("Toggles favorite.")
+                }
             Text(entry.displayName)
                 .font(.caption)
                 .lineLimit(1)

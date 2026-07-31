@@ -11,6 +11,7 @@ struct LibraryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    favoritesSection
                     bundleSection
                     directorySection
                 }
@@ -52,6 +53,14 @@ struct LibraryView: View {
     @ViewBuilder
     private var bundleSection: some View {
         section(title: "Curated", state: model.bundleLoadState)
+    }
+
+    @ViewBuilder
+    private var favoritesSection: some View {
+        let favs = model.favoriteEntries()
+        if !favs.isEmpty {
+            section(title: "Favorites", state: .ready(favs))
+        }
     }
 
     @ViewBuilder
