@@ -7,6 +7,21 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.1.10] — Seamless Transition Boundaries: Clip One-Sided Variation Leaks
+
+A frame-by-frame review of the 12-gen-247 overnight render (v0.1.9) found a "complexity jump" at loop→transition boundaries — elements appearing that weren't in the loop, persisting through the transition. After ruling out 4 wrong hypotheses (sharp-frame v0.1.8/v0.1.9, `.log` polar residual, align padding, padding-pick-rate), an **instrumented** dump + per-slot/per-component bisect found the true cause: at any t>0, `mergeVariations` (faithfully porting flam3's `INTERP(xform[i].var[j])`) emits tiny nonzero weights (~t·B.weight) for one-sided variations (B has, A lacks). On spiky attractors these chaotic "leaks" redecorate the canvas — e.g. 05915→37205 slot-2 (horseshoe/fan2/mobius/cot/lazysusan) fills ~30% more histogram bins at the boundary → +38% luma, **blur-invariant** (the loop, which doesn't interpolate, is clean). Confirmed FAITHFUL (flam3's oracle does the same; q-dependent — worse at low q where the background isn't filled).
+
+### Fix (seamless divergence, per owner's "fix-for-seamless where flam3 does it")
+`GenomeInterpolator.mergeVariations` clips one-sided leaks: drops any variation whose raw weight is 0 on **exactly one** side (absent, or a weight-0 `align` parametric-copy slot) AND whose merged weight is below ε=1e-3. Both-zero slots preserved (flam3's full `var[]` array); two-sided kept; leaks fade in once weight ≥ ε (~frame 7 at N=240). Name-presence alone is defeated by `align`'s parametric-param copy (adds B's parametric variations to A at weight 0) — the per-side RAW weight is the test.
+
+### Verified
+- Both boundaries seamless: loop→trans **start** luma 84→60 (matching the loop's 61); trans→loop **end** 34.1→34.8 (matching the next loop). The morph is intact (61→23→34 mid-transition, continuous, no spike).
+- `make test-fast`: **325/0** (+1 `testMergeClipsOneSidedLeaksBelowEps`).
+- AnimationParity (vs flam3) shift: the clip diverges from flam3 on boundary frames (expected — it's a documented divergence); re-baseline pending the parity-gate run.
+
+### Lesson (5 wrong turns to the cause)
+The over-bright survived 4 misdiagnoses because it's blur-invariant + lives at the variation-list level (not the matrix or the padding). The decisive move was **instrumenting** — dumping the actual merged genome, bisecting per-slot and per-component (affine / scalars / variations) — rather than reasoning. Always dump + measure a render-brightness bug before theorizing a fix.
+
 ## [v0.1.9] — Revert v0.1.8 Offline Boundary Short-Circuit (sharp-frame regression)
 
 A frame-by-frame review of the v0.1.8 overnight render (12 gen-247 genomes, 720p/q1000/ts32) found visible "complexity jumps" at loop→transition boundaries (e.g. frame 240→241: ~30 MAD). **Root cause: v0.1.8's own short-circuit.** The per-frame `isLoopToTransitionBoundary` check in `AnimateCommand.blendAt` returned `pure-A` for ALL 32 temporal sub-frames of the boundary frame, so it rendered **sharp** while its neighbors were motion-blurred — the sharp↔blurred delta was the jump (boundary-frame sharpness 129.9, +33% above the ~97 loop baseline, vs ~71 for blurred neighbors). flam3's `seqflag` shortcut fires PER SUB-FRAME (only the exact blend=0 one), so its blur survives and averages out the faithful `.log` polar residual (flam3 ts=32 = 6.25 MAD). v0.1.8 fixed the segment-boundary frame but relocated the jump to boundary+1, and at the wrong layer.
