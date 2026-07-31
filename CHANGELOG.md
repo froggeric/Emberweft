@@ -7,6 +7,69 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.2.0] — M4: SwiftUI App + Library Browser
+
+The first GUI. A native macOS app (`emberweft-gui`) that browses a curated genome
+library and plays sheep in realtime, reusing the M1–M3 engine verbatim. Adds two
+new SwiftPM targets and an off-main Metal render path.
+
+### Added
+- **`EmberweftUI`** (new library) + **`EmberweftGUI`** (new executable) SwiftPM
+  targets. The existing `emberweft` CLI target is untouched. The library holds the
+  SwiftUI↔AppKit bridge, production playback conformers, thumbnail service, and
+  library/settings models — a library (not the executable) so the M5 screensaver
+  can reuse the playback hosting.
+- **Library browser** — a grid of thumbnails over a curated bundle + any
+  user-opened directory. Thumbnails render off-main (see below), downscale from a
+  higher render resolution for a crisp cell, and are cached (bounded `NSCache` +
+  disk). Degenerate / all-black / NaN-camera genomes are excluded from the grid.
+  A progress indicator tracks thumbnail rendering.
+- **Click-to-play** — opens a realtime playback window hosting the existing
+  `PlaybackDispatcher` + `FlameUI` (`CAMetalLayer`). Preview uses fast/low-spp
+  params so playback stays close to real time; settings persist to
+  `~/Library/Application Support/Emberweft/preferences.json` (resilient to
+  corruption).
+- **`emberweft curate`** CLI subcommand — the offline curation pipeline (parse
+  filter → thumbnail → deterministic heuristic score → emit `ranking.json`).
+  Curated the ~9.5k gen-248 flock into a diverse, ranked 24-genome seed bundle
+  (spiral / radial / filament / dense; 142 NaN/degenerate rejected).
+- **Off-main Metal render path** — `MetalRenderer.renderOffMain` renders on a
+  dedicated background serial queue with its own device/library/queue/PSO cache,
+  so thumbnails are fast AND never touch the MainActor (no UI freeze). The
+  realtime `@MainActor` path is unchanged.
+- 34 new `EmberweftUITests` (library scan, cache-key determinism, settings
+  round-trip + corrupt-file quarantine, genome health, playback teardown
+  invariant, and Metal parity incl. **off-main == MainActor byte-identical** on a
+  real complex genome).
+
+### Changed
+- `MetalRenderer.renderFused` extracted into an actor-agnostic `renderFusedCore`
+  (takes device/queue/PSOs as params); the `@MainActor` wrapper and the off-main
+  path both call it. Output is byte-identical.
+- De-isolated the pure Metal host helpers (`MetalHost`,
+  `DisplayPipelineMetal.makeSpatialKernelMetal` / `DisplayParams`) — their
+  `@MainActor` was purely conservative; they're pure compute, now callable
+  off-main. `FlameUI.makeCGImage` is now `public nonisolated`.
+
+### Fixed
+- **Thumbnail vs playback orientation mismatch.** The thumbnail path applied the
+  `CAMetalLayer`-oriented row-flip (`FlameUI.makeCGImage`) inside the downscale
+  step, then again at display — a double flip vs playback's single flip.
+  `RGBA8Image.toCGImage()` now builds an upright (no-flip) CGImage matching the
+  `writePNG`/flam3-oracle orientation, used for `NSImage`/SwiftUI and processing.
+- **Playback kept using the GPU after its window closed.** `beginStop()` captured
+  `[weak self]`, but the view-model is `@State` owned by the sheet — SwiftUI
+  released it before `stop()` could run, leaking the dispatcher's infinite run
+  loop. `beginStop()` now captures self strongly; the Close button awaits
+  `stop()` before dismissing.
+
+### Lesson
+The ~36 ms thumbnail "freeze" was per-render host overhead (buffer alloc + commit
++ `waitUntilCompleted`), largely resolution-independent — so lowering the
+thumbnail size didn't help. The only fix is off-main rendering. And: a CGImage
+built for `CAMetalLayer.contents` is NOT the same orientation as one built for
+`NSImage` — keep the two flip paths separate.
+
 ## [v0.1.10] — Seamless Transition Boundaries: Clip One-Sided Variation Leaks
 
 A frame-by-frame review of the 12-gen-247 overnight render (v0.1.9) found a "complexity jump" at loop→transition boundaries — elements appearing that weren't in the loop, persisting through the transition. After ruling out 4 wrong hypotheses (sharp-frame v0.1.8/v0.1.9, `.log` polar residual, align padding, padding-pick-rate), an **instrumented** dump + per-slot/per-component bisect found the true cause: at any t>0, `mergeVariations` (faithfully porting flam3's `INTERP(xform[i].var[j])`) emits tiny nonzero weights (~t·B.weight) for one-sided variations (B has, A lacks). On spiky attractors these chaotic "leaks" redecorate the canvas — e.g. 05915→37205 slot-2 (horseshoe/fan2/mobius/cot/lazysusan) fills ~30% more histogram bins at the boundary → +38% luma, **blur-invariant** (the loop, which doesn't interpolate, is clean). Confirmed FAITHFUL (flam3's oracle does the same; q-dependent — worse at low q where the background isn't filled).

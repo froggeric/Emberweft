@@ -346,6 +346,14 @@ The Swift Package manifest defines:
 - Changes to the package trigger rebuilds of dependent targets
 - Package.swift is the single source of truth for module structure
 
+> **As-built (M4, v0.2.0):** the GUI landed as **SwiftPM targets**, not Xcode
+> targets — `EmberweftUI` (library) + `EmberweftGUI` (executable product
+> `emberweft-gui`), at `Sources/EmberweftUI/` and `Sources/EmberweftGUI/`. This
+> keeps the CLI-first, SwiftPM-only workflow; revisit the Xcode-target layout
+> above only if app distribution (signing/notarization) eventually requires it.
+> The `Apps/EmberweftApp/` + `Sources/FlameUI/` structure above remains the
+> aspirational long-form layout; M5 (screensaver) will consume `EmberweftUI`.
+
 ### Module Boundaries
 
 **Separation principles:**
@@ -353,7 +361,10 @@ The Swift Package manifest defines:
 - **FlameRenderer**: GPU code only, no UI or audio
 - **FlamePlayer**: Playback logic, no rendering details
 - **FlameExport**: Export and audio, separate from playback
-- **FlameUI**: UI only, thin wrapper over other modules
+- **EmberweftUI**: GUI support (SwiftUI bridge, playback conformers, thumbnails,
+  library/settings models) — reusable by the app and the screensaver
+- **FlameUI**: the `@MainActor` `NSView`/`CAMetalLayer` playback sink (in
+  FlamePlayer); not to be confused with the `EmberweftUI` *module*
 
 **Testing implications:**
 - Each module can be unit tested independently
