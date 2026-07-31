@@ -216,14 +216,18 @@ public enum GenomeInterpolator {
         var weight = [String: Double]()
         var aParams = [String: [String: Double]]()
         var bParams = [String: [String: Double]]()
+        var aRaw = [String: Double]()
+        var bRaw = [String: Double]()
         for v in a {
             weight[v.name, default: 0] += (1 - t) * v.weight
+            aRaw[v.name, default: 0] += v.weight
             var p = aParams[v.name] ?? [:]
             for (k, val) in v.parameters { p[k] = val }
             aParams[v.name] = p
         }
         for v in b {
             weight[v.name, default: 0] += t * v.weight
+            bRaw[v.name, default: 0] += v.weight
             var p = bParams[v.name] ?? [:]
             for (k, val) in v.parameters { p[k] = val }
             bParams[v.name] = p
@@ -250,7 +254,33 @@ public enum GenomeInterpolator {
             }
             params[name] = merged
         }
+        // SEAMLESSNESS DIVERGENCE (per owner): flam3's INTERP emits tiny nonzero
+        // weights (≈ t·B.weight) for one-sided variations (present in only one
+        // genome). On spiky attractors these chaotic "leaks" redecorate the canvas
+        // — e.g. 05915→37205 slot 2 (horseshoe/fan2/lazysusan/cot/mobius) fills
+        // ~30% more histogram bins at the boundary, raising luma ~38% (the loop,
+        // which doesn't interpolate, is clean → a visible "elements appearing"
+        // jump). Clip one-sided variations whose interpolated weight is below ε so
+        // the transition's endpoint frame matches the loop; two-sided (principal)
+        // variations are always kept; one-sided leaks fade in once weight ≥ ε.
+        // flam3 does NOT clip (its own INTERP artifact, confirmed via the oracle) —
+        // a deliberate divergence for seamless loop↔transition boundaries, like the
+        // `.log` det guard + the Camera.scale log-space decision.
+        let leakEps = 1e-3
         return weight
+            .filter { name, w in
+                // drop one-sided leaks: a variation whose raw weight is 0 on
+                // EXACTLY one side (absent, OR a weight-0 parametric-copy slot)
+                // contributes only `t·other` — a chaotic "leak" on spiky
+                // attractors. Clip it below ε. Both-zero slots (preserved — flam3
+                // keeps the full var[] array) and both-nonzero (two-sided) are kept.
+                // (Name-presence alone is defeated by `align`'s parametric-param
+                // copy, which adds B's parametric variations to A at weight 0, so
+                // the per-side RAW weight — not name membership — is the test.)
+                let az = (aRaw[name] ?? 0) == 0
+                let bz = (bRaw[name] ?? 0) == 0
+                return !((az != bz) && abs(w) < leakEps)
+            }
             .sorted { $0.key < $1.key }
             .map { Variation(name: $0.key, weight: $0.value, parameters: params[$0.key] ?? [:]) }
     }

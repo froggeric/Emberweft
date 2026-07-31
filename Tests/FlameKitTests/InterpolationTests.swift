@@ -421,4 +421,31 @@ final class InterpolationTests: XCTestCase {
             }
         }
     }
+
+    /// SEAMLESSNESS DIVERGENCE (v0.1.10): `mergeVariations` clips one-sided
+    /// "leak" variations — raw weight 0 on exactly one side (absent, or a
+    /// weight-0 parametric-copy slot) AND merged weight below ε. On spiky
+    /// attractors these chaotic leaks redecorate the canvas at the transition
+    /// boundary (e.g. 05915→37205 slot-2 horseshoe/fan2/mobius/cot/lazysusan
+    /// → +38% luma, the user-visible "elements appearing" jump). flam3's INTERP
+    /// does NOT clip (faithful artifact, confirmed via the oracle); this is a
+    /// deliberate divergence for seamless loop↔transition boundaries. Both-zero
+    /// slots are preserved (flam3's full var[] array); two-sided kept; leaks
+    /// fade in once their merged weight ≥ ε.
+    func testMergeClipsOneSidedLeaksBelowEps() {
+        let a = Flame(xforms: [Xform(variations: [Variation(name: "curl", weight: 1.0)])])
+        let b = Flame(xforms: [Xform(variations: [
+            Variation(name: "curl", weight: 1.0),
+            Variation(name: "horseshoe", weight: 0.3),   // B-only, non-parametric (not copied to A)
+        ])])
+        // Small t (boundary): horseshoe merged = t·0.3 ≈ 3e-4 < ε → clipped (seamless).
+        let smallT = GenomeInterpolator.interpolate(a, b, t: 0.001, type: .log).xforms[0].variations
+        XCTAssertEqual(smallT.count, 1, "B-only leak below ε must be clipped at the boundary")
+        XCTAssertEqual(smallT[0].name, "curl")
+        // Large t (mid-transition): horseshoe merged = 0.5·0.3 = 0.15 > ε → kept (the morph).
+        let largeT = GenomeInterpolator.interpolate(a, b, t: 0.5, type: .log).xforms[0].variations
+        XCTAssertEqual(largeT.count, 2, "B-only variation must fade in once its weight ≥ ε")
+        XCTAssertEqual(largeT.contains { $0.name == "horseshoe" }, true)
+        XCTAssertEqual(largeT.first { $0.name == "horseshoe" }?.weight ?? -1, 0.15, accuracy: 1e-12)
+    }
 }
