@@ -57,7 +57,10 @@ public struct GPUFrameParams {
     public init() {}
 }
 
-@MainActor
+/// Pure host-side packing helpers (thread geometry + GPU buffer payloads).
+/// Nonisolated by design: every member is a pure function of `(flame, params)`
+/// with no Metal-state or main-thread access, so they can run on any thread —
+/// including the off-main thumbnail render path.
 enum MetalHost {
     // Pin thread geometry from params alone (NOT device caps) → machine-independent.
     static let threadsPerGroup: Int = 256

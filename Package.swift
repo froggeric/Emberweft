@@ -15,7 +15,9 @@ let package = Package(
         .library(name: "FlameRenderer", targets: ["FlameRenderer"]),
         .library(name: "FlamePlayer", targets: ["FlamePlayer"]),
         .library(name: "FlameExport", targets: ["FlameExport"]),
-        .executable(name: "emberweft", targets: ["EmberweftApp"])
+        .library(name: "EmberweftUI", targets: ["EmberweftUI"]),
+        .executable(name: "emberweft", targets: ["EmberweftApp"]),
+        .executable(name: "emberweft-gui", targets: ["EmberweftGUI"])
     ],
     targets: [
         // Core genome model + .flam3 parsing/interpolation (no Metal).
@@ -49,6 +51,21 @@ let package = Package(
             name: "FlameExport",
             dependencies: ["FlameRenderer", "FlameKit"],
             path: "Sources/FlameExport"
+        ),
+        // SwiftUI/AppKit GUI support library: the FlameUI↔SwiftUI bridge,
+        // production playback conformers, thumbnail service, library/settings
+        // models. Reused by the GUI app (M4) and the screensaver (M5).
+        .target(
+            name: "EmberweftUI",
+            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer"],
+            path: "Sources/EmberweftUI"
+        ),
+        // `emberweft-gui` executable — thin SwiftUI shell over EmberweftUI.
+        .executableTarget(
+            name: "EmberweftGUI",
+            dependencies: ["EmberweftUI", "FlameKit"],
+            path: "Sources/EmberweftGUI",
+            resources: [.copy("CuratedLibrary")]
         ),
         // Testable `emberweft` CLI engine library (render / validate / info).
         .target(
@@ -90,6 +107,14 @@ let package = Package(
             name: "FlamePlayerTests",
             dependencies: ["FlamePlayer", "FlameRenderer", "FlameReference", "FlameKit"],
             path: "Tests/FlamePlayerTests"
+        ),
+        .testTarget(
+            name: "EmberweftUITests",
+            dependencies: ["EmberweftUI", "FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer"],
+            path: "Tests/EmberweftUITests",
+            // Fixtures are read via `#file`-relative paths (see FlameKitTests),
+            // not `Bundle.module` → exclude rather than declare as resources.
+            exclude: ["Fixtures"]
         )
     ]
 )

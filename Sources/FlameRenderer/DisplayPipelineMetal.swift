@@ -14,7 +14,9 @@ import FlameKit
 /// `DisplayParams` (9 floats + 7 uints = 64 bytes) is laid out identically to
 /// the MSL `DisplayParams` struct; the host copies `MemoryLayout<DisplayParams>
 /// .size` bytes into a shared buffer.
-@MainActor
+/// `DisplayParams` and `makeSpatialKernelMetal` are pure compute (no Metal
+/// state) and nonisolated so the off-main thumbnail path can use them. The
+/// `render(...)` method touches Metal state and stays `@MainActor`.
 enum DisplayPipelineMetal {
 
     /// Host mirror of MSL `DisplayParams` (Kernels.metal). Field order, types,
@@ -48,6 +50,7 @@ enum DisplayPipelineMetal {
     /// pipeline. Deterministic in `(histogram, width, height, oversample, gamma,
     /// gammaThreshold, vibrancy, brightness, sampleDensity, pixelsPerUnit,
     /// highlightPower, spatialFilterRadius)`.
+    @MainActor
     static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                        gamma: Double, gammaThreshold: Double, vibrancy: Double,
                        brightness: Double = 4.0,

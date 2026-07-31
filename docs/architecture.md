@@ -13,8 +13,12 @@ Emberweft is a native macOS application that implements the fractal flame algori
 │                              APP LAYER                                       │
 ├─────────────────┬─────────────────────────┬─────────────────────────────────┤
 │   SwiftUI App   │   ScreenSaver Bundle    │   emberweft CLI             │
-│                 │   (.saver target)       │   (render/animate/validate)        │
+│  (emberweft-gui)│   (.saver target, M5)   │   (render/animate/curate/…)      │
 ├─────────────────┴─────────────────────────┴─────────────────────────────────┤
+│                            EmberweftUI (M4)                                  │
+│   (SwiftUI↔AppKit bridge, playback conformers, thumbnail service,          │
+│    library/settings models — shared by app + screensaver)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
 │                              FlamePlayer                                      │
 │   (Playback Engine: adaptive generation, caching, transitions)              │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -22,7 +26,8 @@ Emberweft is a native macOS application that implements the fractal flame algori
 │   (AVFoundation export: codecs, long-form rendering)                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                            FlameRenderer                                     │
-│   (Metal Compute Pipeline: histogram → density → tone-map)                  │
+│   (Metal Compute Pipeline: histogram → density → tone-map;                  │
+│    @MainActor realtime path + off-main background path)                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                              FlameKit                                        │
 │   (Genome Model + .flam3 Parse/Serialize + Temporal Interpolation)         │
@@ -134,6 +139,36 @@ and hands it to the `CAMetalLayer.contents`. Teardown of any owned dispatcher is
 an explicit `async stop()` the owner calls (Swift 6 forbids async work in
 `deinit`). Availability mirrors `MetalRenderer.isAvailable`.
 
+### EmberweftUI (GUI Support Library — M4)
+
+**Purpose:** SwiftUI/AppKit hosting + the app's non-engine logic, shared by the GUI
+app (M4) and the screensaver (M5)
+
+`EmberweftUI` is a SwiftPM **library** (so M5 can reuse it), not the executable.
+It depends on `FlameKit`, `FlameReference`, `FlameRenderer`, `FlamePlayer` and adds:
+
+- **`FlameUIView`** — an `NSViewRepresentable` bridge over the `@MainActor`
+  `FlameUI` sink; `updateNSView` is a no-op so the SwiftUI body stays inert during
+  playback (the thin realtime gate).
+- **Production conformers** — `MetalFrameRenderer` / `CPUFrameRenderer`
+  (`Renderer`), `WallClock` (`PlaybackClock`), `SingleFlameProvider`
+  (`SheepProvider`). The FlamePlayer protocols ship without production conformers;
+  the app provides them.
+- **`ThumbnailService`** — renders small posters off-main (see below), downscales,
+  caches (bounded `NSCache` + disk). Excludes degenerate genomes.
+- **`LibraryIndex` / `LibraryEntry` / `CuratorRank` / `AppPreferences`** — the
+  library scan (reuses `FeatureCache`'s pure walk), lazy cached genome parse, the
+  ranking sidecar schema, and JSON-persisted settings.
+- **`RGBAImage+CGImage`** — the upright CGImage/NSImage bridging (distinct from
+  `FlameUI.makeCGImage`'s layer-oriented flip — see CLAUDE.md gotcha).
+
+**Off-main Metal (no UI freeze):** thumbnails use `MetalRenderer.renderOffMain`,
+which runs the fused pipeline on a dedicated background `DispatchQueue` with its
+own device/library/queue/PSO cache (`MetalOffMainCache`). It never touches the
+MainActor, so thumbnail rendering cannot hitch the UI. The realtime `@MainActor`
+path is unchanged; both call the shared actor-agnostic `renderFusedCore` and
+produce byte-identical output.
+
 ### FlameExport (Export Module)
 
 **Purpose:** AVFoundation-based offline rendering and export
@@ -227,14 +262,19 @@ Package.swift
 ├── FlameKit (library product)
 │   ├── Sources/FlameKit/ — genome model, parser, interpolation
 │   └── Tests/FlameKitTests/ — unit tests
+├── FlameReference (library product)
 ├── FlameRenderer (library product)
-│   ├── Sources/FlameRenderer/ — Metal kernels, pipeline
+│   ├── Sources/FlameRenderer/ — Metal kernels, pipeline (+ off-main cache)
 │   └── Tests/FlameRendererTests/ — reference renders
-├── App (executable product)
-│   ├── Sources/App/ — SwiftUI app
-│   └── Resources/ — assets, genomes, icons
-└── ScreenSaver (bundle product)
-    └── Sources/ScreenSaver/ — .saver bundle
+├── FlamePlayer (library product)
+├── FlameExport (library product)
+├── EmberweftUI (library product — M4)
+│   ├── Sources/EmberweftUI/ — SwiftUI bridge, playback conformers, thumbnails, models
+│   └── Tests/EmberweftUITests/ — unit + Metal smoke + parity tests
+├── emberweft (executable product) — CLI
+│   └── Sources/EmberweftApp/ + Sources/EmberweftCLI/
+└── emberweft-gui (executable product — M4)
+    └── Sources/EmberweftGUI/ — SwiftUI app shell (+ CuratedLibrary resource)
 ```
 
 ## Dependencies
