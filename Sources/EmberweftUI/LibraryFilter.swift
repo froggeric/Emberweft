@@ -52,7 +52,12 @@ public func passes(_ f: LibraryFilter,
     }
     if metadata.rating < f.minRating { return false }
     if f.favoritesOnly && !metadata.favorite { return false }
-    if let cat = f.category, entry.rank?.category != cat { return false }
+    if let cat = f.category {
+        // Curated genomes carry an accurate vision `rank.category`; others fall
+        // back to the heuristic `facet.category`. Every genome is categorizeable.
+        let effective = entry.rank?.category ?? facet?.category
+        guard effective == cat else { return false }
+    }
     if let hb = f.hueBucket {
         // No cached facet ⇒ excluded (never force a parse).
         guard let facet, facet.hueBucket == hb else { return false }

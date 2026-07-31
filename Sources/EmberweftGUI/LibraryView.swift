@@ -42,8 +42,8 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Picker("View", selection: $displayMode) {
-                        Image(systemName: "square.grid.2x2").tag(DisplayMode.grid)
-                        Image(systemName: "list.bullet").tag(DisplayMode.list)
+                        Text("Grid").tag(DisplayMode.grid)
+                        Text("List").tag(DisplayMode.list)
                     }
                     .pickerStyle(.segmented)
                     .help("Grid or list view")
@@ -159,8 +159,12 @@ struct LibraryView: View {
     }
 
     private var categories: [String] {
-        guard case .ready(let entries) = model.bundleLoadState else { return [] }
-        return Set(entries.compactMap { $0.rank?.category }).sorted()
+        var s = Set<String>()
+        if case .ready(let entries) = model.bundleLoadState {
+            for e in entries { if let c = e.rank?.category { s.insert(c) } }
+        }
+        for f in model.facets.facets.values { s.insert(f.category) }
+        return s.sorted()
     }
 
     private func paletteLabel(_ b: Int) -> String {

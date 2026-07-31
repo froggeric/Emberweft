@@ -92,6 +92,9 @@ struct ThumbnailCell: View {
         switch outcome {
         case .image(let rgba):
             state = .ready(rgba.toNSImage() ?? NSImage())
+            // Refine the palette hue from the actual rendered pixels (matches what
+            // the user sees; the palette mean is only a proxy).
+            model.facets.refine(for: entry, image: rgba)
             model.markThumbResolved(for: entry)
         case .degenerate:
             // Exclude degenerate genomes from the grid entirely.

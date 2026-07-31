@@ -18,6 +18,9 @@ struct PlaybackWindow: View {
             FlameUIView(vm.sinkView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .contentShape(Rectangle())
+                .onTapGesture { vm.togglePlaying() }
+                .accessibilityAdjustableAction { _ in vm.togglePlaying() }
             bar
         }
         .frame(minWidth: 640, minHeight: 420)

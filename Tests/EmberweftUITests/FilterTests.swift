@@ -60,8 +60,8 @@ final class FilterTests: XCTestCase {
 
     func testHueBucketRequiresMatchingFacet() {
         var f = LibraryFilter(); f.hueBucket = 3
-        let matching = GenomeFacet(hue: 3.0 / 12.0 + 0.001, luma: 0.5)   // bucket 3
-        let other    = GenomeFacet(hue: 0.0, luma: 0.5)                   // bucket 0
+        let matching = GenomeFacet(hue: 3.0 / 12.0 + 0.001, luma: 0.5, category: "other")   // bucket 3
+        let other    = GenomeFacet(hue: 0.0, luma: 0.5, category: "other")                   // bucket 0
         XCTAssertTrue(passes(f, entry: makeEntry("a", display: "x"), metadata: md(), facet: matching))
         XCTAssertFalse(passes(f, entry: makeEntry("b", display: "x"), metadata: md(), facet: other))
         XCTAssertFalse(passes(f, entry: makeEntry("c", display: "x"), metadata: md(), facet: nil))  // no facet ⇒ excluded
@@ -130,10 +130,10 @@ final class FacetCacheTests: XCTestCase {
     /// `FeatureVector`'s hue scale (the bucket→filter mapping is covered in
     /// `FilterTests.testHueBucketRequiresMatchingFacet`).
     func testGenomeFacetHueBucketMath() {
-        XCTAssertEqual(GenomeFacet(hue: 0.0, luma: 0).hueBucket, 0)
-        XCTAssertEqual(GenomeFacet(hue: 0.5, luma: 0).hueBucket, 6)
-        XCTAssertEqual(GenomeFacet(hue: 0.99, luma: 0).hueBucket, 11)
-        XCTAssertEqual(GenomeFacet(hue: 1.0 / 12.0, luma: 0).hueBucket, 1)
+        XCTAssertEqual(GenomeFacet(hue: 0.0, luma: 0, category: "other").hueBucket, 0)
+        XCTAssertEqual(GenomeFacet(hue: 0.5, luma: 0, category: "other").hueBucket, 6)
+        XCTAssertEqual(GenomeFacet(hue: 0.99, luma: 0, category: "other").hueBucket, 11)
+        XCTAssertEqual(GenomeFacet(hue: 1.0 / 12.0, luma: 0, category: "other").hueBucket, 1)
     }
 
     func testKeyIsSourceQualified() {
@@ -144,5 +144,36 @@ final class FacetCacheTests: XCTestCase {
         cache.putIfAbsent(for: bundle, flame: flame)
         XCTAssertNotNil(cache.facet(for: bundle))
         XCTAssertNil(cache.facet(for: dir), "same stem, different source ⇒ no facet (distinct key)")
+    }
+
+    func testCategoryHeuristicFromVariations() {
+        func cat(_ vname: String) -> String {
+            GenomeFacet.category(for: Flame(
+                xforms: [Xform(weight: 1, variations: [Variation(name: vname, weight: 1)])],
+                palette: solidPalette(SIMD3<Double>(1, 0, 0))))
+        }
+        XCTAssertEqual(cat("spiral"), "spiral")
+        XCTAssertEqual(cat("gaussian_blur"), "dense")
+        XCTAssertEqual(cat("radial_blur"), "radial")
+        XCTAssertEqual(cat("fisheye"), "filament")
+        XCTAssertEqual(cat("linear"), "other")          // not mapped ⇒ other
+    }
+
+    func testRefineKeepsCategoryUpdatesHueFromImage() {
+        let cache = FacetCache()
+        let e = makeEntry("a")
+        // Palette is blue; category from a spiral variation.
+        let flame = Flame(
+            xforms: [Xform(weight: 1, variations: [Variation(name: "spiral", weight: 1)])],
+            palette: solidPalette(SIMD3<Double>(0, 0, 1)))
+        cache.putIfAbsent(for: e, flame: flame)
+        XCTAssertEqual(cache.facet(for: e)?.category, "spiral")
+
+        // Refine from a solid-red rendered image — hue should move toward red (0).
+        var red = [UInt8]()
+        for _ in 0..<(4 * 4) { red += [255, 0, 0, 255] }
+        cache.refine(for: e, image: RGBA8Image(width: 4, height: 4, pixels: red))
+        XCTAssertEqual(cache.facet(for: e)?.category, "spiral", "category preserved across refine")
+        XCTAssertEqual(cache.facet(for: e)?.hueBucket, 0, "hue refined from the rendered red pixels")
     }
 }
