@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.1.6 — CPU + Metal renderers, animation + realtime playback, and motion-blurred real-genome parity are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.1.10 — CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, and seamless loop/transition boundaries are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -57,6 +57,9 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.1.4** | ✅ Done | **Fix:** Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations (clamp args to ±88) |
 | **v0.1.5** | ✅ Done | **Fix:** transition endpoint faithfulness — `Transition(A,B,1.0)` now = B (mergeLog per-param INTERP + padding-final fields + propagate `paletteMode`) |
 | **v0.1.6** | ✅ Done | **Fix:** transition smoothness — Quality field interpolation + `.log` det guard + endpoint padding-final drop |
+| **v0.1.7** | ✅ Done | Transition-faithfulness audit (no remaining INTERP gaps) + Camera.scale log-space (perceptual, Weber-Fechner) |
+| **v0.1.8–v0.1.9** | ✅ Done | Loop→transition boundary: port flam3's seqflag shortcut (v0.1.8), revert the offline sharp-frame regression (v0.1.9) |
+| **v0.1.10** | ✅ Done | **Fix:** seamless boundaries — clip one-sided variation "leaks" (the blur-invariant over-bright at loop↔transition boundaries) |
 | M4 | **Current** | SwiftUI app + player + library browser |
 | M5 | Planned | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
@@ -101,11 +104,22 @@ swift run -c release emberweft animate a.flam3 b.flam3 \
 ffmpeg -framerate 30 -i edge/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart edge.mp4
 ```
 
-- `--segments 1` = loop only (one sheep); `--segments 3` = loop + transition + loop (needs ≥2 genomes). Default `--segments 3`.
+**A sequence of many sheep** — the Electric Sheep model (long-form video). Pass N genomes with `--segments 2N−1`; loops and transitions alternate over all of them:
+
+```bash
+swift run -c release emberweft animate s1.flam3 s2.flam3 s3.flam3 s4.flam3 \
+  --segments 7 --frames 160 --loop-cycles 1 --selector sequential \
+  --backend metal --size 1280x720 --quality 1000 --temporal-samples 32 --out flock/
+ffmpeg -framerate 30 -i flock/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart flock.mp4
+```
+
+- `--segments 1` = loop only (one sheep); `--segments 3` = loop + transition + loop (needs ≥2 genomes). For N genomes use `--segments 2N−1`. Default `--segments 3`.
 - `--frames N` = frames per segment (one loop revolution over N frames; 160 @ 30 fps ≈ 5.3 s). `--loop-cycles N` = N revolutions per loop segment.
 - `--temporal-samples N` = motion-blur sub-passes (defaults to the genome's `temporal_samples` on CPU; capped at 64 on Metal). Omit or set `1` for sharp frames.
 - `--selector sequential` walks the library in order (`similarity` does ε-greedy pairing; needs `--library <dir>`).
 - Use `--backend cpu` for byte-deterministic offline renders (uncapped temporal samples); `metal` for speed.
+- **Seamless transitions need `--temporal-samples ≥ 16`** (motion blur). Lower reads as a hard cut. Since v0.1.10, one-sided variation "leaks" are clipped so loop↔transition boundaries match the loops (see [CHANGELOG](CHANGELOG.md)).
+- **Re-render a single frame** after a change with `--frame N` (writes only `00000N.png`, skips the rest): render it, copy it over the old PNG in the sequence, re-mux.
 
 Full flag reference + the `sheep_loop`/`sheep_edge` mapping: [docs/rendering/animation.md](docs/rendering/animation.md).
 

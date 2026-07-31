@@ -33,7 +33,7 @@ emberweft animate <genome.flam3> [<genome.flam3> …] [flags] --out <dir/>
 | `--temporal-samples N` | genome's `temporal_samples` (CPU) | motion-blur sub-passes. Capped at 64 on Metal. `1` = sharp (no blur). |
 | `--seed S` | 42 | RNG seed (deterministic per backend). |
 | `--selector sequential\|similarity` | sequential | how the next sheep is picked for transitions. `similarity` needs `--library <dir>`. |
-| `--stagger`, `--library`, `--out` | — | per-xform transition stagger, genome library dir, output dir. |
+| `--stagger`, `--library`, `--out`, `--frame N` | — | per-xform transition stagger, genome library dir, output dir, render only global frame `N` (re-render one frame after a change). |
 
 ## Examples
 
@@ -59,12 +59,25 @@ ffmpeg -framerate 30 -i edge/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +f
 
 Produces loop(A) → morph A→B → loop(B) — 480 frames, ~16 s.
 
+### Sequence of many sheep (long-form video)
+
+Pass N genomes with `--segments 2N−1`; loops and transitions alternate over all of them (the Electric Sheep model). `--selector sequential` walks them in the order given:
+
+```bash
+swift run -c release emberweft animate s1.flam3 s2.flam3 s3.flam3 s4.flam3 \
+  --segments 7 --frames 160 --loop-cycles 1 --selector sequential \
+  --backend metal --size 1280x720 --quality 1000 --temporal-samples 32 --out flock/
+ffmpeg -framerate 30 -i flock/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart flock.mp4
+```
+
 ### Tips
 
 - **Build with `-c release`** for renders (debug is ~14× slower).
 - **Disable the bash sandbox** if invoking under one — `MTLCreateSystemDefaultDevice()` returns nil sandboxed, so `--backend metal` fails.
 - **Quality vs time**: `--quality 500 --temporal-samples 32` at 1280×720 is a good preview/production balance on Metal. For final offline fidelity use `--backend cpu --quality 2000 --temporal-samples 1000` (slow; honors the genome's full temporal samples).
 - **Determinism**: the same genomes + `--seed` + flags produce identical output run-to-run within a backend. CPU and Metal agree within the parity threshold (≥38 dB) but are not byte-identical to each other.
+- **Seamless transitions**: keep `--temporal-samples ≥ 16` (motion blur is what makes the morph read as continuous). Since v0.1.10, one-sided variation "leaks" are clipped in `mergeVariations` so a loop and its following transition render the shared endpoint genome identically (no over-bright "elements appearing" jump at the boundary).
+- **Patch one frame**: `--frame N` writes only `00000N.png` (skips the rest), so after a fix you can re-render just the affected frame(s), copy them over the old PNGs, and re-mux, instead of re-rendering the whole sequence.
 
 ## Motion blur
 
