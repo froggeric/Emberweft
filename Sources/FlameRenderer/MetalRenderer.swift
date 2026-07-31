@@ -165,14 +165,21 @@ public enum MetalRenderer {
     /// displayPipeline into one command buffer; commit once. The histogram lives
     /// in GPU buffers across all stages (`atomicBuf` → `floatBufA` → optional
     /// `floatBufB`), never crossing to the CPU. Only the final RGBA is read back.
-    @MainActor
-    static func renderFused(flame: Flame, params: RenderParams) throws -> RGBA8Image {
-        guard let (device, _) = deviceAndLibrary() else {
-            throw NSError(domain: "MetalRenderer", code: 10)
-        }
-        guard let queue = commandQueue else {
-            throw NSError(domain: "MetalRenderer", code: 11)
-        }
+    /// Core fused-path encode/commit/readback, actor-agnostic. The Metal handles
+    /// are passed in so this runs identically on the MainActor (realtime path,
+    /// via `renderFused`) OR on a dedicated background queue (thumbnail path, via
+    /// `renderOffMain`). Output is byte-identical either way — the GPU
+    /// computation is independent of the encoding thread; only the thread that
+    /// blocks on `waitUntilCompleted` differs (main vs background).
+    static func renderFusedCore(
+        flame: Flame,
+        params: RenderParams,
+        device: MTLDevice,
+        queue: MTLCommandQueue,
+        psos: (chaos: MTLComputePipelineState, decode: MTLComputePipelineState,
+               density: MTLComputePipelineState, log: MTLComputePipelineState,
+               display: MTLComputePipelineState)
+    ) throws -> RGBA8Image {
         // Thread `flame.quality.filterRadius` into `params.spatialFilterRadius`
         // before the chaos game iterates — the grid's gutter width depends on
         // the filter radius (rect.c:656), so the radius must be set in `params`
@@ -293,10 +300,7 @@ public enum MetalRenderer {
         let deParamsBuf = buf(deParams)
         let deDimsBuf = buf(deDims)
 
-        // -------- Pipeline states (cached; built once on first frame) --------
-        guard let psos = fusedPipelines() else {
-            throw NSError(domain: "MetalRenderer", code: 27)
-        }
+        // -------- Pipeline states (passed in by the caller) --------
         let chaosPso   = psos.chaos
         let decodePso  = psos.decode
         let densityPso = psos.density
@@ -401,6 +405,54 @@ public enum MetalRenderer {
             dst.baseAddress!.copyMemory(from: outBuf.contents(), byteCount: outBytes)
         }
         return RGBA8Image(width: params.width, height: params.height, pixels: pixels)
+    }
+
+    // MARK: - Realtime (MainActor) fused entry
+
+    /// MainActor fused render — the realtime/playback path. Builds the cached
+    /// device/queue/PSOs (MainActor-isolated) and delegates to `renderFusedCore`.
+    @MainActor
+    static func renderFused(flame: Flame, params: RenderParams) throws -> RGBA8Image {
+        guard let (device, _) = deviceAndLibrary() else {
+            throw NSError(domain: "MetalRenderer", code: 10)
+        }
+        guard let queue = commandQueue else {
+            throw NSError(domain: "MetalRenderer", code: 11)
+        }
+        guard let psos = fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
+        }
+        return try renderFusedCore(flame: flame, params: params,
+                                   device: device, queue: queue, psos: psos)
+    }
+
+    // MARK: - Off-main (thumbnail) entry
+
+    /// Dedicated serial queue for off-main Metal rendering. All access to
+    /// `offMainCache` is serialized through this queue → no separate lock needed.
+    nonisolated private static let offMainQueue =
+        DispatchQueue(label: "emberweft.metal.offmain")
+
+    /// Off-main Metal cache. `nonisolated(unsafe)` is the honest escape: the
+    /// compiler can't see that all access is serialized via `offMainQueue.sync`.
+    nonisolated(unsafe) private static let offMainCache = MetalOffMainCache()
+
+    /// Render on a **background thread** — never touches the MainActor, so it
+    /// cannot freeze the UI. Blocks the calling (background) thread for the
+    /// encode + GPU wait. Returns `nil` if Metal is unavailable or the render
+    /// fails (callers fall back; never traps). Used by the thumbnail path.
+    nonisolated
+    public static func renderOffMain(flame: Flame, params: RenderParams) -> RGBA8Image? {
+        offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            do {
+                return try renderFusedCore(flame: flame, params: params,
+                                           device: device, queue: queue, psos: psos)
+            } catch {
+                return nil
+            }
+        }
     }
 
     // MARK: - Temporal motion-blur fused path (N chaos passes into one atomicBuf)

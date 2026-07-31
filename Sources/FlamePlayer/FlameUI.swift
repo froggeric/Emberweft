@@ -151,7 +151,7 @@ extension FlameUI {
     /// Rows are emitted top-to-bottom; the layer's default (non-flipped)
     /// coordinate space renders them bottom-up, so we flip via the provider's
     /// row order to preserve the renderer's orientation.
-    static func makeCGImage(_ image: RGBA8Image) -> CGImage? {
+    public nonisolated static func makeCGImage(_ image: RGBA8Image) -> CGImage? {
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else { return nil }
