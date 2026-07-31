@@ -15,6 +15,7 @@ final class AppModel {
     let libraryIndex = LibraryIndex()
     let thumbnailService: ThumbnailService
     let metadataStore: MetadataStore
+    let facets = FacetCache()
 
     /// The bundled curated library resource root (`CuratedLibrary/`).
     private let bundleRoot: URL?
@@ -90,6 +91,14 @@ final class AppModel {
         }
         let entries = await libraryIndex.scanBundle(rootURL: root)
         bundleLoadState = entries.isEmpty ? .empty : .ready(entries)
+        // Precompute palette facets for the curated bundle (24 genomes, all cached
+        // via loadGenome) so palette filtering works immediately. Directory entries
+        // get facets lazily as their thumbnails render (no mass parse).
+        for e in entries {
+            if let flame = try? await libraryIndex.loadGenome(for: e) {
+                facets.putIfAbsent(for: e, flame: flame)
+            }
+        }
         recomputeThumbTotal()
     }
 

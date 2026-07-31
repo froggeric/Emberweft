@@ -80,6 +80,9 @@ struct ThumbnailCell: View {
             model.markThumbResolved(entry.id)
             return
         }
+        // Palette facet for filtering (genome already parsed + cached; cheap, no
+        // extra parse, no overwrite).
+        model.facets.putIfAbsent(for: entry, flame: flame)
         let outcome = await model.thumbnailService.thumbnail(
             for: entry, flame: flame,
             renderParams: model.prefs.thumbnailRenderParams(),
