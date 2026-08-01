@@ -16,6 +16,7 @@ final class AppModel {
     let libraryIndex = LibraryIndex()
     let thumbnailService: ThumbnailService
     let metadataStore: MetadataStore
+    let collectionsStore: CollectionsStore
     let facets = FacetCache()
 
     /// The bundled curated library resource root (`CuratedLibrary/`).
@@ -105,6 +106,8 @@ final class AppModel {
         self.thumbnailService = ThumbnailService(cacheDirectory: thumbs)
         let (mdStore, _) = MetadataStore.loadResilient()
         self.metadataStore = mdStore
+        let (cStore, _) = CollectionsStore.loadResilient()
+        self.collectionsStore = cStore
     }
 
     /// Liked genomes (sentiment == +1) across all loaded sections. Folder order
@@ -163,6 +166,41 @@ final class AppModel {
             if url.path == path { return directoryLoadStates[url] ?? .empty }
         }
         return nil
+    }
+
+    /// Resolve a stored `CollectionEntry` to its live `LibraryEntry` — the
+    /// collection counterpart of `PlaybackRoute.resolve`. Returns `nil` when the
+    /// genome is gone (folder removed from the library, rescanned away, file
+    /// removed, or the section still loading); the collection grid skips
+    /// unresolvable entries rather than crashing. Reads the `@Observable` load
+    /// states so a collection grid refreshes when a folder is opened/removed.
+    func resolve(_ entry: CollectionEntry) -> LibraryEntry? {
+        let entries: [LibraryEntry]
+        switch entry.source {
+        case "bundle":
+            guard case .ready(let e) = bundleLoadState else { return nil }
+            entries = e
+        case "directory":
+            guard let state = directoryLoadState(forRootPath: entry.rootPath ?? ""),
+                  case .ready(let e) = state else { return nil }
+            entries = e
+        case "imported":
+            guard case .ready(let e) = importedLoadState else { return nil }
+            entries = e
+        default:
+            return nil
+        }
+        return entries.first { $0.id == entry.id }
+    }
+
+    /// Convenience: the stored-index → resolved-entry pairs for a collection's
+    /// grid, skipping unresolvable entries. The stored index travels with each
+    /// pair so remove / reorder operate on `collection.entries` (not the
+    /// resolved view, which may have gaps from skipped entries).
+    func resolvedPairs(for collection: GenomeCollection) -> [(storedIndex: Int, entry: LibraryEntry)] {
+        collection.entries.enumerated().compactMap { (i, ce) in
+            resolve(ce).map { (storedIndex: i, entry: $0) }
+        }
     }
 
     /// Sum of `.ready` entry counts across all opened folders (integer count —

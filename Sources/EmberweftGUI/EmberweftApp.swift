@@ -51,6 +51,21 @@ struct EmberweftApp: App {
         }
         .defaultSize(width: 800, height: 600)
 
+        // Non-modal sequence-playback window — one per collection, value-driven
+        // by `CollectionPlaybackRoute` (identity = collection id). The window
+        // re-resolves the live collection + genomes on open, so a deleted/
+        // edited collection shows a clean placeholder. Plays the collection's
+        // resolved genomes in order via the multi-genome `PlaybackDispatcher`
+        // (loop + transition segments). Does NOT touch the single-genome
+        // `Playback` WindowGroup above.
+        WindowGroup("Collection Playback", for: CollectionPlaybackRoute.self) { $route in
+            if let route {
+                CollectionPlaybackWindow(collectionId: route.id)
+                    .environment(model)
+            }
+        }
+        .defaultSize(width: 800, height: 600)
+
         Settings {
             SettingsView()
                 .environment(model)

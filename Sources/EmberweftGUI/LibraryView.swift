@@ -25,6 +25,9 @@ struct LibraryView: View {
     /// Pending folder for the remove-from-library confirmation dialog.
     /// `nil` ⇒ dialog hidden. Set by a folder row's remove control.
     @State private var pendingRemoval: URL?
+    /// Pending collection for the rename sheet. `nil` ⇒ sheet hidden.
+    @State private var renamingCollection: GenomeCollection?
+    @State private var renameText: String = ""
 
     var body: some View {
         NavigationSplitView {
@@ -51,6 +54,20 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Files stay on disk. Only the library reference is removed.")
+        }
+        .sheet(isPresented: Binding(
+            get: { renamingCollection != nil },
+            set: { if !$0 { renamingCollection = nil; renameText = "" } }
+        )) {
+            // Small rename sheet (a `.sheet` with a TextField is reliable on
+            // macOS; `.alert`+TextField is less consistent across versions).
+            NameCollectionSheet(title: "Rename Collection",
+                                 confirmLabel: "Rename",
+                                 name: $renameText) {
+                commitRename()
+            } onCancel: {
+                renamingCollection = nil; renameText = ""
+            }
         }
     }
 
@@ -79,6 +96,17 @@ struct LibraryView: View {
                 } else {
                     ForEach(folderSources, id: \.self) { url in
                         folderRow(url)
+                    }
+                }
+            }
+            Section("Collections") {
+                if model.collectionsStore.collections.isEmpty {
+                    Text("No collections")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                } else {
+                    ForEach(model.collectionsStore.collections) { c in
+                        collectionRow(c)
                     }
                 }
             }
@@ -146,6 +174,51 @@ struct LibraryView: View {
         pendingRemoval = nil
     }
 
+    /// One row per collection: a playlist icon + its (resolved) genome count,
+    /// selectable to show its grid, with a context menu for manage / play.
+    /// `model.collectionsStore.collections` is `@Observable` so the badge count
+    /// and the row list refresh when entries are added/removed/reordered.
+    @ViewBuilder
+    private func collectionRow(_ c: GenomeCollection) -> some View {
+        Label {
+            Text(c.name).lineLimit(1)
+        } icon: {
+            Image(systemName: "list.bullet.rectangle")
+        }
+        .badge(resolvedCount(of: c))
+        .tag(SidebarDestination.collection(c.id))
+        .contextMenu {
+            Button("Play as Sequence") { openWindow(value: CollectionPlaybackRoute(id: c.id)) }
+            Divider()
+            Button("Rename…") { renamingCollection = c; renameText = c.name }
+            Button("Delete", role: .destructive) { deleteCollection(c.id) }
+        }
+        .accessibilityLabel("Collection \(c.name), \(resolvedCount(of: c)) genomes")
+    }
+
+    /// Number of a collection's entries that currently resolve to a live genome
+    /// (entries whose folder was removed / file gone are skipped). Integer count
+    /// only — rule #2 safe.
+    private func resolvedCount(of c: GenomeCollection) -> Int {
+        model.resolvedPairs(for: c).count
+    }
+
+    /// Delete a collection; if it was selected, fall back to the All grid.
+    private func deleteCollection(_ id: UUID) {
+        model.collectionsStore.delete(id)
+        if case .collection(let current) = destination, current == id {
+            destination = .all
+        }
+    }
+
+    /// Commit a pending rename (sheet "Done"/Enter). Trims; empty ⇒ "Untitled".
+    private func commitRename() {
+        guard let c = renamingCollection else { return }
+        model.collectionsStore.rename(c.id, to: renameText)
+        renamingCollection = nil
+        renameText = ""
+    }
+
     /// Live count badge per destination (P6 — visible payoff of sentiment etc.).
     /// Integer counts only (rule #2 safe). Folders carry no badge (their count
     /// shows in the detail title bar when selected) to keep the minus control
@@ -160,6 +233,7 @@ struct LibraryView: View {
         case .liked:     return model.likedEntries().count
         case .imported:  return readyCount(model.importedLoadState)
         case .folder(let url): return readyCount(model.directoryLoadStates[url] ?? .empty)
+        case .collection(let id): return model.collectionsStore.collection(id: id).map { resolvedCount(of: $0) } ?? 0
         }
     }
 
@@ -219,7 +293,7 @@ struct LibraryView: View {
         .animation(.snappy, value: model.selection.isEmpty)
         .animation(.snappy, value: filter)
         .animation(.snappy, value: destination)
-        .navigationTitle(destination.title)
+        .navigationTitle(destinationTitle)
         .navigationSubtitle(countSubtitle(for: state))
         .toolbar { toolbarContent }
         // Keyboard: ⌘A selects all (filtered); Esc clears the selection;
@@ -237,6 +311,16 @@ struct LibraryView: View {
         }
     }
 
+    /// Title-bar title for the active destination. Collections use their name
+    /// (not the generic "Collection" label).
+    private var destinationTitle: String {
+        if case .collection(let id) = destination,
+           let c = model.collectionsStore.collection(id: id) {
+            return c.name
+        }
+        return destination.title
+    }
+
     /// The `LoadState` for the selected destination.
     private var currentLoadState: LoadState {
         switch destination {
@@ -252,32 +336,79 @@ struct LibraryView: View {
             return model.importedLoadState
         case .folder(let url):
             return model.directoryLoadStates[url] ?? .empty
+        // Collections are not backed by a `LoadState`; the resolved entries are
+        // wrapped in `.ready` so count/search/filter read naturally, while the
+        // grid body routes collections through the stored-index-aware
+        // `collectionGrid` (remove/reorder need the stored `entries` index).
+        case .collection(let id):
+            guard let c = model.collectionsStore.collection(id: id) else { return .empty }
+            let resolved = model.resolvedPairs(for: c).map(\.entry)
+            return resolved.isEmpty ? .empty : .ready(resolved)
         }
     }
 
     @ViewBuilder
     private func gridBody(for state: LoadState) -> some View {
-        switch state {
-        case .loading:
-            skeletonGrid()
-        case .empty:
-            emptyStateView
-        case .failed(let message):
-            ContentUnavailableView(
-                "Couldn't load \(destination.title)",
-                systemImage: "exclamationmark.triangle",
-                description: Text(message)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-        case .ready(let entries):
-            let filtered = applyFilter(filter, to: entries,
-                                       metadata: { model.metadataStore.metadata(for: $0) },
-                                       facet: { model.facets.facet(for: $0) })
-            if filtered.isEmpty {
-                filteredEmptyState(hadEntries: !entries.isEmpty)
-            } else {
-                LazyVGrid(columns: grid, spacing: 16) {
-                    ForEach(filtered) { entry in cell(entry, in: filtered) }
+        // Collections render through a dedicated path so remove-from-collection
+        // and Move Up/Down can recover the STORED `entries` index (the resolved
+        // view skips unresolvable entries, which would desync indices otherwise).
+        if case .collection(let id) = destination,
+           let c = model.collectionsStore.collection(id: id) {
+            collectionGrid(c)
+        } else {
+            switch state {
+            case .loading:
+                skeletonGrid()
+            case .empty:
+                emptyStateView
+            case .failed(let message):
+                ContentUnavailableView(
+                    "Couldn't load \(destination.title)",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(message)
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .ready(let entries):
+                let filtered = applyFilter(filter, to: entries,
+                                           metadata: { model.metadataStore.metadata(for: $0) },
+                                           facet: { model.facets.facet(for: $0) })
+                if filtered.isEmpty {
+                    filteredEmptyState(hadEntries: !entries.isEmpty)
+                } else {
+                    LazyVGrid(columns: grid, spacing: 16) {
+                        ForEach(filtered) { entry in cell(entry, in: filtered) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A collection's grid: resolves stored entries (skipping unresolvable ones),
+    /// applies the active filter, and renders each resolvable cell with its STORED
+    /// index so the cell context menu can Remove from Collection / Move Up / Move
+    /// Down against `collection.entries` (not the gap-compacted resolved view).
+    @ViewBuilder
+    private func collectionGrid(_ c: GenomeCollection) -> some View {
+        let pairs = model.resolvedPairs(for: c)
+        let resolved = pairs.map(\.entry)
+        let filtered = applyFilter(filter, to: resolved,
+                                   metadata: { model.metadataStore.metadata(for: $0) },
+                                   facet: { model.facets.facet(for: $0) })
+        // Identity → stored index, so each filtered cell recovers its position in
+        // `collection.entries`. A `Dictionary` is used for LOOKUP only; the
+        // display order comes from the filtered array — rule #2.
+        let storedIndex: [String: Int] = Dictionary(
+            pairs.map { (CollectionEntry($0.entry).identity, $0.storedIndex) },
+            uniquingKeysWith: { a, _ in a })
+        if filtered.isEmpty {
+            filteredEmptyState(hadEntries: !resolved.isEmpty)
+        } else {
+            LazyVGrid(columns: grid, spacing: 16) {
+                ForEach(filtered) { entry in
+                    collectionCell(entry,
+                                   storedIndex: storedIndex[CollectionEntry(entry).identity] ?? 0,
+                                   collection: c,
+                                   in: filtered)
                 }
             }
         }
@@ -310,6 +441,18 @@ struct LibraryView: View {
                 "No genomes in \(url.lastPathComponent)",
                 systemImage: "folder",
                 description: Text("This folder has no readable .flam3 files.")
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .collection(let id):
+            // Distinguish "collection is empty" from "all its genomes became
+            // unresolvable" (folder removed / rescanned away) for a useful message.
+            let stored = model.collectionsStore.collection(id: id)?.entries.count ?? 0
+            ContentUnavailableView(
+                stored > 0 ? "No resolvable genomes" : "Empty collection",
+                systemImage: "list.bullet.rectangle",
+                description: Text(stored > 0
+                    ? "The genomes in this collection's folder(s) are no longer available. Re-open the folder to bring them back."
+                    : "Add genomes with the selection bar's “Save as Collection…” or “Add to ▾”, or drag them from another collection.")
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         default:
@@ -607,8 +750,13 @@ struct LibraryView: View {
 
     // MARK: - Cell (display + selection interaction)
 
+    // MARK: - Cell (display + selection interaction)
+
+    /// Shared cell body (thumbnail + tap interaction). Plain click opens the
+    /// single-genome playback window; ⌘/ctrl toggles selection; shift range-
+    /// selects. Context menus are added by the callers (`cell` / `collectionCell`).
     @ViewBuilder
-    private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
+    private func cellCore(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         ThumbnailCell(entry: entry, selected: model.isSelected(entry))
             .contentShape(Rectangle())
             .onTapGesture {                                            // plain click → preview
@@ -621,14 +769,74 @@ struct LibraryView: View {
                     openWindow(value: PlaybackRoute(entry))            // plain → open playback window
                 }
             }
+    }
+
+    @ViewBuilder
+    private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
+        cellCore(entry, in: filtered)
             .contextMenu {
                 Button("Play") { openWindow(value: PlaybackRoute(entry)) }
                 Divider()
                 Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
                 Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
                 Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
+                Divider()
+                addToCollectionMenu(for: [CollectionEntry(entry)])
             }
             .accessibilityLabel(cellAccessibilityLabel(entry))
+    }
+
+    /// A cell inside a collection grid: same display + selection tap as `cell`,
+    /// but its context menu carries collection-ordering actions (Move Up / Move
+    /// Down / Remove from Collection) against the STORED index.
+    @ViewBuilder
+    private func collectionCell(_ entry: LibraryEntry,
+                                storedIndex: Int,
+                                collection c: GenomeCollection,
+                                in filtered: [LibraryEntry]) -> some View {
+        cellCore(entry, in: filtered)
+            .contextMenu {
+                Button("Play") { openWindow(value: PlaybackRoute(entry)) }
+                Divider()
+                Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
+                Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
+                Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
+                Divider()
+                Button("Move Up") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
+                }.disabled(storedIndex == 0)
+                Button("Move Down") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
+                }.disabled(storedIndex >= c.entries.count - 1)
+                Divider()
+                Button("Remove from Collection", role: .destructive) {
+                    model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
+                }
+                Divider()
+                addToCollectionMenu(for: [CollectionEntry(entry)])
+            }
+            .accessibilityLabel(cellAccessibilityLabel(entry))
+    }
+
+    /// "Add to Collection ▾" submenu — adds the given entries (deduped by
+    /// identity) to whichever collection the user picks. Shared by the per-cell
+    /// context menu (one entry) and the selection bar (the whole selection).
+    /// Reads `model.collectionsStore.collections` (`@Observable`) so the menu
+    /// refreshes as collections are created/deleted.
+    @ViewBuilder
+    private func addToCollectionMenu(for entries: [CollectionEntry]) -> some View {
+        Menu("Add to Collection") {
+            if model.collectionsStore.collections.isEmpty {
+                Button("No collections yet") {}.disabled(true)
+            } else {
+                ForEach(model.collectionsStore.collections) { c in
+                    Button(c.name) {
+                        let added = model.collectionsStore.addEntries(entries, to: c.id)
+                        importToast = added == 0 ? "Already in \(c.name)" : "Added \(added) to \(c.name)"
+                    }
+                }
+            }
+        }
     }
 
     private func cellAccessibilityLabel(_ entry: LibraryEntry) -> String {
@@ -692,6 +900,7 @@ struct LibraryView: View {
 private enum SidebarDestination: Hashable, Identifiable {
     case all, library, liked, imported
     case folder(URL)
+    case collection(UUID)
 
     /// Always-present destinations (the sidebar "Library" section + ⌘1…⌘4).
     static let builtIn: [SidebarDestination] = [.all, .library, .liked, .imported]
@@ -703,6 +912,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .liked:    return "liked"
         case .imported: return "imported"
         case .folder(let url): return "folder:\(url.path)"
+        case .collection(let id): return "collection:\(id.uuidString)"
         }
     }
 
@@ -713,6 +923,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .liked:    return "Liked"
         case .imported: return "Imported"
         case .folder(let url): return url.lastPathComponent
+        case .collection: return "Collection"
         }
     }
 
@@ -723,6 +934,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .liked:    return "star"
         case .imported: return "tray.and.arrow.down"
         case .folder:   return "folder"
+        case .collection: return "list.bullet.rectangle"
         }
     }
 }
