@@ -13,7 +13,7 @@ import EmberweftUI
 /// selection model, the drop handler, and the `?`/`⌘?` keyboard help.
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
-    @State private var selectedEntry: LibraryEntry?
+    @Environment(\.openWindow) private var openWindow
     @State private var openImporter = false
     @State private var filter = LibraryFilter()
     @State private var importToast: String?
@@ -178,9 +178,6 @@ struct LibraryView: View {
             case .success(let url): Task { await model.openDirectory(url) }
             case .failure: break
             }
-        }
-        .sheet(item: $selectedEntry) { entry in
-            PlaybackWindow(entry: entry).environment(model)
         }
         .onChange(of: importToast) {
             let snap = importToast
@@ -589,11 +586,11 @@ struct LibraryView: View {
                     model.selectRange(entry, in: filtered)             // shift → range select
                 } else {
                     lastOpened = entry                                 // remember for the inspector
-                    selectedEntry = entry                              // plain → open preview
+                    openWindow(value: PlaybackRoute(entry))            // plain → open playback window
                 }
             }
             .contextMenu {
-                Button("Play") { selectedEntry = entry }
+                Button("Play") { openWindow(value: PlaybackRoute(entry)) }
                 Divider()
                 Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
                 Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }

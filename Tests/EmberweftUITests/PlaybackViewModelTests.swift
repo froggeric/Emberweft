@@ -82,6 +82,34 @@ final class PlaybackViewModelTests: XCTestCase {
         await vm.scrub(to: -3.0); XCTAssertGreaterThanOrEqual(vm.position, 0.0)
     }
 
+    // MARK: - nudgeFrame (←/→ scrub, B9)
+
+    func testNudgeFrameAdvancesByOneFrameWhenPaused() async {
+        let vm = PlaybackViewModel()
+        vm.load(flame: simpleFlame(), params: tinyParams(), backend: .cpu,
+                targetFPS: 60, framesPerSegment: 160)
+        let r = CountingRenderer(); vm.setRenderer(r)   // inject after load
+        vm.setClock(NoSleepClock())
+        let before = r.calls
+        await vm.nudgeFrame(1)
+        XCTAssertEqual(vm.position, 1.0 / 160.0, accuracy: 1e-9)
+        XCTAssertEqual(r.calls - before, 1, "paused nudge renders exactly one frame")
+        await vm.nudgeFrame(-1)
+        XCTAssertEqual(vm.position, 0.0, accuracy: 1e-9)
+    }
+
+    func testNudgeFrameClampsAtBoundaries() async {
+        let vm = PlaybackViewModel()
+        vm.setRenderer(CountingRenderer()); vm.setClock(NoSleepClock())
+        vm.load(flame: simpleFlame(), params: tinyParams(), backend: .cpu,
+                targetFPS: 60, framesPerSegment: 160)
+        await vm.nudgeFrame(-5)                          // below 0 → clamp
+        XCTAssertEqual(vm.position, 0.0, accuracy: 1e-9)
+        vm.position = 1.0
+        await vm.nudgeFrame(5)                           // above 1 → clamp
+        XCTAssertEqual(vm.position, 1.0, accuracy: 1e-9)
+    }
+
     // MARK: - determinism (rule #2)
 
     func testRenderOnceIsDeterministicAtFixedSeed() async {

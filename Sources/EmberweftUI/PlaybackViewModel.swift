@@ -34,8 +34,10 @@ public final class PlaybackViewModel {
     private var params: RenderParams = RenderParams(seed: 1, width: 1, height: 1,
                                                     oversample: 1, samplesPerPixel: 1)
     private var renderer: any Renderer = CPUFrameRenderer()
-    private var targetFPS: Double = 60
-    private var framesPerSegment: Int = 160
+    /// Read-only outside `load` — the transport readouts (frame N/total, M:SS)
+    /// and `nudgeFrame` derive from these. `public private(set)`.
+    public private(set) var targetFPS: Double = 60
+    public private(set) var framesPerSegment: Int = 160
     private var clock: any PlaybackClock = WallClock()
     private var loopTask: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
@@ -82,6 +84,16 @@ public final class PlaybackViewModel {
     public func scrub(to p: Double) async {
         position = min(max(p, 0), 1)
         if !isPlaying { await renderOnce(at: position) }
+    }
+
+    /// Step the loop position by `delta` whole frames (←/→ keys). One frame =
+    /// `1/framesPerSegment` of the loop. Delegates to `scrub(to:)`, so it clamps
+    /// to `[0,1]` and renders once while paused (and while playing just advances
+    /// `position` — the loop picks it up next frame). Deterministic (rule #2).
+    public func nudgeFrame(_ delta: Int) async {
+        guard framesPerSegment > 0 else { return }
+        let step = Double(delta) / Double(framesPerSegment)
+        await scrub(to: position + step)
     }
 
     /// Render one frame at `p` (pure `Loop.blend` → renderer → layer). Deterministic

@@ -30,7 +30,8 @@ struct PlaybackWindow: View {
         // Keyboard: Space toggles play/pause, Esc closes.
         .background {
             // Hidden buttons carry the keyboard shortcuts: Space/Esc + set-semantics
-            // sentiment (+ = like, - = dislike, 0 = neutral) for the playing genome.
+            // sentiment (+ = like, - = dislike, 0 = neutral) for the playing genome,
+            // and ←/→ to scrub one frame.
             Group {
                 Button("Play/Pause") { vm.togglePlaying() }
                     .keyboardShortcut(" ", modifiers: [])
@@ -42,6 +43,10 @@ struct PlaybackWindow: View {
                     .keyboardShortcut("-", modifiers: [])
                 Button("Neutral") { model.metadataStore.setSentiment(0, for: entry) }
                     .keyboardShortcut("0", modifiers: [])
+                Button("Scrub back one frame") { Task { await vm.nudgeFrame(-1) } }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
+                Button("Scrub forward one frame") { Task { await vm.nudgeFrame(1) } }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
             }
             .hidden()
         }
@@ -71,10 +76,14 @@ struct PlaybackWindow: View {
                    in: 0...1)
             .accessibilityLabel("Loop position")
             .accessibilityValue("\(Int(vm.position * 100)) percent")
-            .accessibilityHint("Scrub the loop")
+            .accessibilityHint("Scrub the loop; ←/→ step one frame")
+
+            frameReadout
+
+            Divider().frame(height: 22)
 
             Text(entry.displayName).font(.headline).lineLimit(1)
-            SentimentBar(entry: entry).frame(width: 170)
+            SentimentBar(entry: entry).frame(width: 160)
             keyboardHelpButton
             Button("Close") { close() }
         }
@@ -93,6 +102,45 @@ struct PlaybackWindow: View {
             KeyboardHelpView(includesLibrary: false)
         }
         .accessibilityLabel("Keyboard shortcuts")
+    }
+
+    /// Frame + time readout for the transport (P8 mapping, P6 visible state).
+    /// `frame N/total` derives from `position * framesPerSegment`; `M:SS / M:SS`
+    /// elapsed/total derives from `targetFPS`. Monospaced digits so the readout
+    /// doesn't jitter as `position` changes per frame.
+    private var frameReadout: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("frame \(currentFrame)/\(vm.framesPerSegment)")
+            Text("\(timeString(elapsedSeconds)) / \(timeString(totalSeconds))")
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .frame(minWidth: 108)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Frame \(currentFrame) of \(vm.framesPerSegment), \(timeString(elapsedSeconds)) of \(timeString(totalSeconds))")
+    }
+
+    /// Current loop frame index, clamped to `[0, framesPerSegment]`.
+    private var currentFrame: Int {
+        let f = Int((vm.position * Double(vm.framesPerSegment)).rounded())
+        return min(max(f, 0), vm.framesPerSegment)
+    }
+
+    /// Total loop duration in seconds (`framesPerSegment / targetFPS`).
+    private var totalSeconds: Double {
+        vm.targetFPS > 0 ? Double(vm.framesPerSegment) / vm.targetFPS : 0
+    }
+
+    /// Elapsed seconds within the loop (`position * total`).
+    private var elapsedSeconds: Double {
+        vm.position * totalSeconds
+    }
+
+    /// `M:SS` formatting (clamps negatives/non-finite to `0:00`).
+    private func timeString(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let s = Int(seconds.rounded())
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     /// Stop deterministically, then dismiss.
