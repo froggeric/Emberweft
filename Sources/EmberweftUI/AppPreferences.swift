@@ -46,6 +46,11 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// Fixed render seed for determinism (rule #2).
     public var seed: UInt64
 
+    /// Library grid density (B11) — drives the adaptive `LazyVGrid` cell minimum
+    /// (small/medium/large → 140/180/240 pt). Additive; persisted with the rest of
+    /// `AppPreferences` via the `.onChange(of: model.prefs)` save.
+    public var density: Density
+
     public init(
         qualityPreset: QualityPreset = .medium,
         targetFPS: Int = 60,
@@ -61,7 +66,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         previewSamplesPerPixel: Int = 2,
         previewWidth: Int = 854,
         previewHeight: Int = 480,
-        seed: UInt64 = 1
+        seed: UInt64 = 1,
+        density: Density = .medium
     ) {
         self.qualityPreset = qualityPreset
         self.targetFPS = targetFPS
@@ -78,6 +84,42 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.previewWidth = previewWidth
         self.previewHeight = previewHeight
         self.seed = seed
+        self.density = density
+    }
+
+    // MARK: - Codable (additive: `density` defaults when absent)
+
+    /// Explicit CodingKeys so a custom `init(from:)` can decode `density`
+    /// additively. `encode(to:)` stays synthesized from these keys.
+    private enum CodingKeys: String, CodingKey {
+        case qualityPreset, targetFPS, defaultSamplesPerPixel, backend, thumbnailBackend
+        case defaultLibraryDir, thumbnailWidth, thumbnailHeight
+        case thumbnailRenderWidth, thumbnailRenderHeight, thumbnailSPP
+        case previewSamplesPerPixel, previewWidth, previewHeight, seed, density
+    }
+
+    /// Decodes all fields; `density` (added in B11) falls back to `.medium` when
+    /// absent, so an older `preferences.json` loads without a schema break or
+    /// quarantine (rule: density is purely additive). All other fields stay
+    /// required exactly as the previous synthesized decoder required them.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.qualityPreset = try c.decode(AppPreferences.QualityPreset.self, forKey: .qualityPreset)
+        self.targetFPS = try c.decode(Int.self, forKey: .targetFPS)
+        self.defaultSamplesPerPixel = try c.decode(Int.self, forKey: .defaultSamplesPerPixel)
+        self.backend = try c.decode(AppPreferences.Backend.self, forKey: .backend)
+        self.thumbnailBackend = try c.decode(AppPreferences.Backend.self, forKey: .thumbnailBackend)
+        self.defaultLibraryDir = try c.decodeIfPresent(URL.self, forKey: .defaultLibraryDir)
+        self.thumbnailWidth = try c.decode(Int.self, forKey: .thumbnailWidth)
+        self.thumbnailHeight = try c.decode(Int.self, forKey: .thumbnailHeight)
+        self.thumbnailRenderWidth = try c.decode(Int.self, forKey: .thumbnailRenderWidth)
+        self.thumbnailRenderHeight = try c.decode(Int.self, forKey: .thumbnailRenderHeight)
+        self.thumbnailSPP = try c.decode(Int.self, forKey: .thumbnailSPP)
+        self.previewSamplesPerPixel = try c.decode(Int.self, forKey: .previewSamplesPerPixel)
+        self.previewWidth = try c.decode(Int.self, forKey: .previewWidth)
+        self.previewHeight = try c.decode(Int.self, forKey: .previewHeight)
+        self.seed = try c.decode(UInt64.self, forKey: .seed)
+        self.density = try c.decodeIfPresent(AppPreferences.Density.self, forKey: .density) ?? .medium
     }
 
     /// Build full-window `RenderParams` for a given view size, using the preset's
@@ -198,6 +240,29 @@ public struct AppPreferences: Codable, Sendable, Equatable {
             switch self {
             case .low, .medium: return 1
             case .high: return 2
+            }
+        }
+    }
+
+    /// Library grid density (B11 / spec §5.7). Maps to the adaptive `LazyVGrid`
+    /// cell minimum width: small=140, medium=180, large=240 pt.
+    public enum Density: String, Codable, CaseIterable, Sendable {
+        case small, medium, large
+
+        /// Adaptive grid cell minimum width (points).
+        public var gridMinimum: CGFloat {
+            switch self {
+            case .small: return 140
+            case .medium: return 180
+            case .large: return 240
+            }
+        }
+        /// One-letter label for the segmented control (S / M / L).
+        public var glyph: String {
+            switch self {
+            case .small: return "S"
+            case .medium: return "M"
+            case .large: return "L"
             }
         }
     }

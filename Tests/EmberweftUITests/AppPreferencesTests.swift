@@ -78,4 +78,50 @@ final class AppPreferencesTests: XCTestCase {
         // Thumbnails default to Metal (off-main renderOffMain → fast + no freeze).
         XCTAssertEqual(AppPreferences().thumbnailBackend, .metal)
     }
+
+    // MARK: - Density (B11)
+
+    func testDensityDefaultsToMedium() {
+        XCTAssertEqual(AppPreferences().density, .medium)
+        XCTAssertEqual(AppPreferences.Density.medium.gridMinimum, 180)
+    }
+
+    func testDensityGridMinimumMapping() {
+        XCTAssertEqual(AppPreferences.Density.small.gridMinimum, 140)
+        XCTAssertEqual(AppPreferences.Density.medium.gridMinimum, 180)
+        XCTAssertEqual(AppPreferences.Density.large.gridMinimum, 240)
+    }
+
+    func testDensityRoundTrip() throws {
+        let dir = try tempDir()
+        var prefs = AppPreferences()
+        prefs.density = .large
+        try prefs.save(directory: dir)
+
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertEqual(loaded, prefs)
+        XCTAssertEqual(loaded.density, .large)
+    }
+
+    /// A pre-B11 `preferences.json` (no `density` key) must load with `.medium`
+    /// rather than failing/quarantining — density is purely additive (custom
+    /// decoder uses decodeIfPresent). Guards against a schema break for existing
+    /// users on upgrade.
+    func testLegacyPrefsMissingDensityLoadsMedium() throws {
+        let dir = try tempDir()
+        let json = """
+        {"backend":"metal","defaultLibraryDir":null,"defaultSamplesPerPixel":8,
+         "previewHeight":480,"previewSamplesPerPixel":2,"previewWidth":854,
+         "qualityPreset":"medium","seed":1,"targetFPS":60,
+         "thumbnailBackend":"metal","thumbnailHeight":144,"thumbnailRenderHeight":720,
+         "thumbnailRenderWidth":1280,"thumbnailSPP":8,"thumbnailWidth":256}
+        """
+        try Data(json.utf8).write(to: dir.appendingPathComponent("preferences.json"))
+
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertEqual(loaded.density, .medium,
+                       "legacy file without density must default to .medium (additive)")
+        XCTAssertEqual(loaded.backend, .metal)
+        XCTAssertEqual(loaded.qualityPreset, .medium)
+    }
 }

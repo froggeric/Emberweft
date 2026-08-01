@@ -106,6 +106,49 @@ final class AppModel {
         return out
     }
 
+    /// Unified entries across every loaded source for the sidebar **All** grid
+    /// (B7). Deduped within a source by `id` (sources never share an id namespace,
+    /// so this is belt-and-suspenders), then sorted deterministically by
+    /// `(sourceRank, sourcePath, id)` — rule #2: the `Set` is used only for
+    /// membership checks; the returned array is sorted, never iterated as a hash
+    /// collection. Stable across launches and machines.
+    func unifiedEntries() -> [LibraryEntry] {
+        var seen = Set<String>()
+        var out: [LibraryEntry] = []
+        for state in [bundleLoadState, dirLoadState, importedLoadState] {
+            guard case .ready(let entries) = state else { continue }
+            for e in entries {
+                let key = "\(Self.sourceRank(e.source))|\(Self.sourcePath(e.source))|\(e.id)"
+                if seen.insert(key).inserted { out.append(e) }
+            }
+        }
+        return out.sorted {
+            let a = (Self.sourceRank($0.source), Self.sourcePath($0.source), $0.id)
+            let b = (Self.sourceRank($1.source), Self.sourcePath($1.source), $1.id)
+            return a < b
+        }
+    }
+
+    /// Deterministic ordering rank for a source (bundle < directory < imported).
+    /// Pure; never reads hash order (rule #2).
+    private static func sourceRank(_ s: LibrarySource) -> Int {
+        switch s {
+        case .bundle: return 0
+        case .directory: return 1
+        case .imported: return 2
+        }
+    }
+
+    /// Stable disambiguator string for a source (the directory's path, or "" for
+    /// single-namespace sources). Pure.
+    private static func sourcePath(_ s: LibrarySource) -> String {
+        switch s {
+        case .bundle: return ""
+        case .directory(let url): return url.path
+        case .imported: return ""
+        }
+    }
+
     // MARK: - Selection (multi-select)
 
     func selectOnly(_ entry: LibraryEntry) {
