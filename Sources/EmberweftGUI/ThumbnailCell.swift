@@ -2,10 +2,10 @@ import SwiftUI
 import EmberweftUI
 import FlameKit
 
-/// One grid cell: placeholder-first async thumbnail + a category pill (rank OR
-/// heuristic facet) + a tri-state sentiment control + a selection border.
-/// Interaction (select / play) is handled by the wrapping `cell()` in LibraryView;
-/// this view is display + the in-cell sentiment toggle.
+/// One grid card: poster thumbnail + category pill + a hover-revealed sentiment
+/// bar (compact badge when marked) + a hover/selected tick. Interaction (open /
+/// select) is handled by the wrapping `cell()` in LibraryView; this view is
+/// display + the in-cell controls (sentiment bar, selection tick).
 struct ThumbnailCell: View {
     @Environment(AppModel.self) private var model
     let entry: LibraryEntry
@@ -13,8 +13,8 @@ struct ThumbnailCell: View {
 
     enum ThumbState: Equatable { case placeholder, ready(NSImage), failed }
     @State private var state: ThumbState = .placeholder
+    @State private var isHovered = false
 
-    private var sentiment: Int { model.metadataStore.metadata(for: entry).sentiment }
     private var category: String? { entry.rank?.category ?? model.facets.facet(for: entry)?.category }
 
     var body: some View {
@@ -23,6 +23,13 @@ struct ThumbnailCell: View {
                 .frame(width: 176, height: 99)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                // Selection ring (reinforces the tick).
+                .overlay {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.accentColor, lineWidth: 2)
+                    }
+                }
                 .overlay(alignment: .bottomLeading) {
                     if let cat = category {
                         Text(cat.capitalized)
@@ -32,57 +39,54 @@ struct ThumbnailCell: View {
                             .padding(6)
                     }
                 }
-                .overlay(alignment: .topTrailing) { sentimentButton }
-                .overlay {
-                    if selected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.accentColor, lineWidth: 3)
+                .overlay(alignment: .topTrailing) { tick }
+                .overlay(alignment: .bottom) {
+                    if isHovered {
+                        SentimentBar(entry: entry)
+                            .padding(4)
+                            .transition(.opacity)
                     }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if !isHovered { SentimentBadge(entry: entry).padding(6) }
                 }
             Text(entry.displayName)
                 .font(.caption).lineLimit(1).foregroundStyle(.secondary)
         }
+        .onHover { isHovered = $0 }
+        .animation(.snappy(duration: 0.12), value: isHovered)
         .task(id: entry.id, priority: .utility) { await load() }
+    }
+
+    /// Selection tick (top-right): visible when selected or hovered.
+    private var tick: some View {
+        Button { model.toggleInSelection(entry) } label: {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .font(.title3)
+                .padding(6)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .opacity(selected ? 1 : (isHovered ? 0.9 : 0))
+        .accessibilityLabel(selected ? "Selected" : "Select")
     }
 
     @ViewBuilder
     private var content: some View {
         switch state {
-        case .placeholder: ProgressView()
-        case .ready(let img): Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+        case .placeholder:
+            RoundedRectangle(cornerRadius: 8).fill(.quaternary).redacted(reason: .placeholder)
+        case .ready(let img):
+            Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
         case .failed:
             ZStack {
                 Color.black
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.white.opacity(0.4))
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.white.opacity(0.4))
+                    .help("Degenerate / unreadable genome")
             }
         }
-    }
-
-    /// Tri-state sentiment: −1 dislike / 0 neutral / +1 like. Tap cycles.
-    private var sentimentButton: some View {
-        Button {
-            let next: Int = sentiment == 0 ? 1 : (sentiment == 1 ? -1 : 0)
-            model.metadataStore.setSentiment(next, for: entry)
-        } label: {
-            Image(systemName: sentimentIcon)
-                .foregroundStyle(sentimentColor)
-                .font(.caption)
-                .padding(6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(sentimentLabel)
-        .accessibilityHint("Cycles like, dislike, neutral.")
-    }
-
-    private var sentimentIcon: String {
-        switch sentiment { case 1: "hand.thumbsup.fill"; case -1: "hand.thumbsdown.fill"; default: "circle" }
-    }
-    private var sentimentColor: Color {
-        switch sentiment { case 1: .green; case -1: .red; default: .white.opacity(0.7) }
-    }
-    private var sentimentLabel: String {
-        switch sentiment { case 1: "Liked"; case -1: "Disliked"; default: "Neutral" }
     }
 
     private func load() async {

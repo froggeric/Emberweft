@@ -28,17 +28,19 @@ struct PlaybackWindow: View {
         .onDisappear { vm.beginStop() }
         // Keyboard: Space toggles play/pause, Esc closes.
         .background {
-            // Hidden buttons carry the keyboard shortcuts (Space/Esc) + on-the-fly
-            // sentiment adjustment (+/-) for the playing genome.
+            // Hidden buttons carry the keyboard shortcuts: Space/Esc + set-semantics
+            // sentiment (+ = like, - = dislike, 0 = neutral) for the playing genome.
             Group {
                 Button("Play/Pause") { vm.togglePlaying() }
                     .keyboardShortcut(" ", modifiers: [])
                 Button("Close") { close() }
                     .keyboardShortcut(.escape, modifiers: [])
-                Button("Like") { model.metadataStore.adjustSentiment(for: entry, by: 1) }
+                Button("Like") { model.metadataStore.setSentiment(1, for: entry) }
                     .keyboardShortcut("=", modifiers: [])
-                Button("Dislike") { model.metadataStore.adjustSentiment(for: entry, by: -1) }
+                Button("Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
                     .keyboardShortcut("-", modifiers: [])
+                Button("Neutral") { model.metadataStore.setSentiment(0, for: entry) }
+                    .keyboardShortcut("0", modifiers: [])
             }
             .hidden()
         }
@@ -71,6 +73,7 @@ struct PlaybackWindow: View {
             .accessibilityHint("Scrub the loop")
 
             Text(entry.displayName).font(.headline).lineLimit(1)
+            SentimentBar(entry: entry).frame(width: 170)
             Button("Close") { close() }
         }
         .padding(10)

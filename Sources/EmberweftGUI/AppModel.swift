@@ -132,6 +132,14 @@ final class AppModel {
     func clearSelection() { selection.removeAll(); selectionAnchor = nil }
     func isSelected(_ entry: LibraryEntry) -> Bool { selection.contains(entry) }
 
+    /// Bulk-set sentiment over a selection (iterate a SORTED sequence — rule #2:
+    /// never accumulate over the hashed `Set`). `scheduleSave` coalesces the writes.
+    func applySentiment(_ value: Int, to entries: Set<LibraryEntry>) {
+        for e in entries.sorted(by: { $0.id < $1.id }) {
+            metadataStore.setSentiment(value, for: e)
+        }
+    }
+
     // MARK: - Scan
 
     func loadBundle() async {

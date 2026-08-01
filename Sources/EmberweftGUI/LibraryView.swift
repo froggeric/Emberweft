@@ -26,13 +26,18 @@ struct LibraryView: View {
                 handleDrop(providers); return true
             }
             .overlay(alignment: .bottom) {
-                if let toast = importToast {
+                if !model.selection.isEmpty {
+                    SelectionBar()
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if let toast = importToast {
                     Text(toast)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                         .padding(.bottom, 20).transition(.opacity)
                 }
             }
+            .animation(.snappy, value: model.selection.isEmpty)
             .navigationTitle("Emberweft Library")
             .toolbar { toolbarContent }
             // Keyboard: ⌘A selects all (filtered); Esc clears the selection.
@@ -65,12 +70,7 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            if !model.selection.isEmpty {
-                Text("\(model.selection.count) selected").foregroundStyle(.secondary)
-                Button("All") { model.selectAll(allFiltered) }
-                Button("None") { model.clearSelection() }
-            }
+        ToolbarItem(placement: .primaryAction) {
             Button("Open Directory…") { openImporter = true }
         }
         if let progress = thumbProgress, progress < 1.0 {
@@ -229,15 +229,14 @@ struct LibraryView: View {
     private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         ThumbnailCell(entry: entry, selected: model.isSelected(entry))
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { selectedEntry = entry }     // double-click → play
-            .onTapGesture(count: 1) {                              // single-click → select
+            .onTapGesture {                                            // plain click → preview
                 let mods = NSEvent.modifierFlags
                 if mods.contains(.command) || mods.contains(.control) {
-                    model.toggleInSelection(entry)
+                    model.toggleInSelection(entry)                     // ⌘/ctrl → toggle select
                 } else if mods.contains(.shift) {
-                    model.selectRange(entry, in: filtered)
+                    model.selectRange(entry, in: filtered)             // shift → range select
                 } else {
-                    model.selectOnly(entry)
+                    selectedEntry = entry                              // plain → open preview
                 }
             }
             .contextMenu {
