@@ -28,12 +28,17 @@ struct PlaybackWindow: View {
         .onDisappear { vm.beginStop() }
         // Keyboard: Space toggles play/pause, Esc closes.
         .background {
-            // Hidden buttons carry the keyboard shortcuts.
+            // Hidden buttons carry the keyboard shortcuts (Space/Esc) + on-the-fly
+            // sentiment adjustment (+/-) for the playing genome.
             Group {
                 Button("Play/Pause") { vm.togglePlaying() }
                     .keyboardShortcut(" ", modifiers: [])
                 Button("Close") { close() }
                     .keyboardShortcut(.escape, modifiers: [])
+                Button("Like") { model.metadataStore.adjustSentiment(for: entry, by: 1) }
+                    .keyboardShortcut("=", modifiers: [])
+                Button("Dislike") { model.metadataStore.adjustSentiment(for: entry, by: -1) }
+                    .keyboardShortcut("-", modifiers: [])
             }
             .hidden()
         }

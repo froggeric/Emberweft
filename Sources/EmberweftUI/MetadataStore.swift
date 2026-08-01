@@ -36,20 +36,14 @@ public final class MetadataStore {
         set(md, for: entry)
     }
 
-    /// Sorted unique tag list across all records, case-insensitive (matching
-    /// `GenomeMetadata.normalizeTags`). Rule #2: a `Set<String>` dedup is safe —
-    /// no floats summed; the result is sorted.
-    public func allTags() -> [String] {
-        let s = Set(entries.values.flatMap(\.tags))
-        return s.sorted { a, b in
-            let la = a.lowercased(), lb = b.lowercased()
-            return la == lb ? a < b : la < lb
-        }
+    /// Adjust a genome's sentiment by a delta (e.g. ±1), clamped to [-1, 1].
+    public func adjustSentiment(for entry: LibraryEntry, by delta: Int) {
+        update(for: entry) { $0.sentiment = GenomeMetadata.clamp($0.sentiment + delta) }
     }
 
-    /// Sorted list of metadata keys whose record is a favorite.
-    public func favoriteKeys() -> [String] {
-        entries.filter { $0.value.favorite }.keys.sorted()
+    /// Set the sentiment directly (clamped).
+    public func setSentiment(_ value: Int, for entry: LibraryEntry) {
+        update(for: entry) { $0.sentiment = GenomeMetadata.clamp(value) }
     }
 
     // MARK: - Source-qualified key
@@ -68,8 +62,7 @@ public final class MetadataStore {
 
     private static func normalize(_ md: GenomeMetadata) -> GenomeMetadata {
         var m = md
-        m.tags = GenomeMetadata.normalizeTags(m.tags)
-        m.rating = max(0, min(5, m.rating))
+        m.sentiment = GenomeMetadata.clamp(m.sentiment)
         return m
     }
 

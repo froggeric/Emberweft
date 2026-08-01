@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import EmberweftUI
 
 @main
@@ -12,6 +13,7 @@ struct EmberweftApp: App {
                 .task { await model.loadBundle() }
                 .task { await model.reloadDirectoryIfSet() }
                 .task { await model.rescanImported() }
+                .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 1000, height: 680)
 

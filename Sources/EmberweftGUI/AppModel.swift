@@ -32,6 +32,10 @@ final class AppModel {
     var dirRendered: Set<String> = []
     var importedRendered: Set<String> = []
 
+    /// Multi-selection of genomes (for bulk actions / future collections).
+    var selection: Set<LibraryEntry> = []
+    private(set) var selectionAnchor: LibraryEntry?
+
     /// Union of all sections' rendered ids (for the progress indicator).
     var renderedThumbIDs: Set<String> {
         bundleRendered.union(dirRendered).union(importedRendered)
@@ -90,17 +94,43 @@ final class AppModel {
         self.metadataStore = mdStore
     }
 
-    /// Favorite entries across all loaded sections, in source order. Reads the
-    /// `@Observable` stores, so the Favorites section re-renders on toggles.
-    func favoriteEntries() -> [LibraryEntry] {
+    /// Liked genomes (sentiment == +1) across all loaded sections, in source order.
+    /// Reads the `@Observable` stores, so the Liked section re-renders on changes.
+    func likedEntries() -> [LibraryEntry] {
         var out: [LibraryEntry] = []
         for state in [bundleLoadState, dirLoadState, importedLoadState] {
             if case .ready(let entries) = state {
-                out += entries.filter { metadataStore.metadata(for: $0).favorite }
+                out += entries.filter { metadataStore.metadata(for: $0).sentiment == 1 }
             }
         }
         return out
     }
+
+    // MARK: - Selection (multi-select)
+
+    func selectOnly(_ entry: LibraryEntry) {
+        selection = [entry]; selectionAnchor = entry
+    }
+    func toggleInSelection(_ entry: LibraryEntry) {
+        if selection.contains(entry) { selection.remove(entry) } else { selection.insert(entry) }
+        selectionAnchor = entry
+    }
+    /// Range-select within an ordered (filtered) list, from the anchor to `entry`.
+    func selectRange(_ entry: LibraryEntry, in ordered: [LibraryEntry]) {
+        guard let anchor = selectionAnchor,
+              let a = ordered.firstIndex(of: anchor),
+              let b = ordered.firstIndex(of: entry) else {
+            selectOnly(entry); return
+        }
+        let lo = min(a, b), hi = max(a, b)
+        for e in ordered[lo...hi] { selection.insert(e) }
+        selectionAnchor = entry
+    }
+    func selectAll(_ entries: [LibraryEntry]) {
+        selection = Set(entries); selectionAnchor = entries.first
+    }
+    func clearSelection() { selection.removeAll(); selectionAnchor = nil }
+    func isSelected(_ entry: LibraryEntry) -> Bool { selection.contains(entry) }
 
     // MARK: - Scan
 

@@ -1,64 +1,56 @@
 import Foundation
 
-/// Out-of-band per-genome metadata (the `Flame` model has no UI metadata — only a
-/// render-relevant `name`). One record per library entry, keyed by
-/// `MetadataStore.metadataKey(for:)`. Persisted to `metadata.json`.
+/// Out-of-band per-genome metadata. Reduced (per owner direction) to a single
+/// **tri-state sentiment** — the only per-genome signal that earns its keep for a
+/// visual browser. Drives filtering ("Liked"), and will drive live-playback
+/// weighting + on-the-fly adjustment (+/- keys) in the preview and future live mode.
 ///
-/// `tags` are kept **sorted + de-duped** (case-insensitive) and `rating` clamped,
-/// so two saves of equal state produce a byte-identical JSON file (rule #2). A
-/// custom `init(from:)` supplies defaults for any missing key → forward-compatible
-/// with older partial files and future fields.
+/// `sentiment`: −1 = dislike/skip, 0 = neutral (default), +1 = like/favourite.
+/// Persisted to `metadata.json`; schema v2. A custom `init(from:)` migrates v1
+/// records (which had a boolean `favorite`) by mapping `favorite == true` →
+/// `sentiment = +1`, and supplies defaults for any missing key.
 public struct GenomeMetadata: Codable, Sendable, Hashable {
 
-    public var tags: [String]
-    public var rating: Int            // clamped to 0...5
-    public var favorite: Bool
-    public var notes: String
-    public var importedAt: Date?      // set once on import; nil for bundle/dir
-    public var schemaVersion: Int     // == 1; gates future migration
+    public var sentiment: Int            // clamped to [-1, 1]
+    public var importedAt: Date?         // set once on import; nil otherwise
+    public var schemaVersion: Int        // == 2
 
-    public init(tags: [String] = [],
-                rating: Int = 0,
-                favorite: Bool = false,
-                notes: String = "",
+    public init(sentiment: Int = 0,
                 importedAt: Date? = nil,
-                schemaVersion: Int = 1) {
-        self.tags = GenomeMetadata.normalizeTags(tags)
-        self.rating = max(0, min(5, rating))
-        self.favorite = favorite
-        self.notes = notes
+                schemaVersion: Int = 2) {
+        self.sentiment = min(max(sentiment, -1), 1)
         self.importedAt = importedAt
         self.schemaVersion = schemaVersion
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case sentiment, importedAt, schemaVersion
+        case favorite   // v1 migration only (decoded, never encoded)
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        tags = GenomeMetadata.normalizeTags(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
-        rating = max(0, min(5, try c.decodeIfPresent(Int.self, forKey: .rating) ?? 0))
-        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
-        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
-        importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
-        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        let s = try c.decodeIfPresent(Int.self, forKey: .sentiment) ?? 0
+        self.sentiment = min(max(s, -1), 1)
+        self.importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
+        self.schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 2
+        // v1 migration: a previously-favourited genome becomes "liked".
+        if self.sentiment == 0,
+           try c.decodeIfPresent(Bool.self, forKey: .favorite) == true {
+            self.sentiment = 1
+        }
     }
 
-    /// Empty/default record.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sentiment, forKey: .sentiment)
+        try c.encodeIfPresent(importedAt, forKey: .importedAt)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+    }
+
+    /// Neutral/default record.
     public static let empty = GenomeMetadata()
 
-    /// Sorted (case-insensitive primary, exact secondary) + de-duped
-    /// (case-insensitive). Pure + deterministic (rule #2 — no float sums).
-    public static func normalizeTags(_ tags: [String]) -> [String] {
-        var seen = Set<String>()
-        var out: [String] = []
-        for t in tags {
-            let key = t.lowercased()
-            if !seen.contains(key) {
-                seen.insert(key)
-                out.append(t)
-            }
-        }
-        return out.sorted { a, b in
-            let la = a.lowercased(), lb = b.lowercased()
-            return la == lb ? a < b : la < lb
-        }
-    }
+    /// Clamp helper for in-place mutations.
+    public static func clamp(_ sentiment: Int) -> Int { min(max(sentiment, -1), 1) }
 }
