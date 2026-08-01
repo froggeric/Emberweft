@@ -9,12 +9,13 @@ struct LibraryView: View {
     @State private var openImporter = false
     @State private var filter = LibraryFilter()
     @State private var importToast: String?
+    @State private var showFilterPopover = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    filterBar
+                    activeFilterChips
                     likedSection
                     bundleSection
                     importedSection
@@ -22,6 +23,7 @@ struct LibraryView: View {
                 }
                 .padding(20)
             }
+            .searchable(text: $filter.searchText, prompt: "Search genomes")
             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                 handleDrop(providers); return true
             }
@@ -38,6 +40,7 @@ struct LibraryView: View {
                 }
             }
             .animation(.snappy, value: model.selection.isEmpty)
+            .animation(.snappy, value: filter)
             .navigationTitle("Emberweft Library")
             .toolbar { toolbarContent }
             // Keyboard: ⌘A selects all (filtered); Esc clears the selection.
@@ -70,7 +73,8 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
+            filterButton
             Button("Open Directory…") { openImporter = true }
         }
         if let progress = thumbProgress, progress < 1.0 {
@@ -84,50 +88,157 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: - Filter bar
+    private var filterButton: some View {
+        Button {
+            showFilterPopover.toggle()
+        } label: {
+            filterButtonLabel
+        }
+        .popover(isPresented: $showFilterPopover) {
+            filterPopover
+        }
+        .accessibilityLabel("Filter")
+    }
 
     @ViewBuilder
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search by name", text: $filter.searchText)
-                    .textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+    private var filterButtonLabel: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "line.3.horizontal.decrease")
+            if activeFilterCount > 0 {
+                Text("\(activeFilterCount)")
+                    .font(.caption2).bold().monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.accentColor, in: Capsule())
             }
-            HStack(spacing: 12) {
-                Picker("Sentiment", selection: Binding(
-                    get: { filter.sentiment ?? 999 },
-                    set: { filter.sentiment = $0 == 999 ? nil : $0 })) {
-                    Text("Any").tag(999)
-                    Text("👍 Liked").tag(1)
-                    Text("● Neutral").tag(0)
-                    Text("👎 Disliked").tag(-1)
-                }
-                .labelsHidden().frame(width: 110).accessibilityLabel("Sentiment")
+        }
+    }
 
-                if !categories.isEmpty {
-                    Picker("Category", selection: Binding(
-                        get: { filter.category ?? "any" },
-                        set: { filter.category = $0 == "any" ? nil : $0 })) {
-                        Text("Any").tag("any")
-                        ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
-                    }
-                    .labelsHidden().frame(width: 110).accessibilityLabel("Category")
-                }
+    // MARK: - Filter popover (A3)
 
-                Picker("Palette", selection: Binding(
-                    get: { filter.hueBucket ?? -1 },
-                    set: { filter.hueBucket = $0 == -1 ? nil : $0 })) {
-                    Text("Any").tag(-1)
-                    ForEach(0..<12, id: \.self) { Text(paletteLabel($0)).tag($0) }
-                }
-                .labelsHidden().frame(width: 92).accessibilityLabel("Palette")
+    @ViewBuilder
+    private var filterPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Filter").font(.headline)
+            Picker("Sentiment", selection: Binding(
+                get: { filter.sentiment ?? 999 },
+                set: { filter.sentiment = $0 == 999 ? nil : $0 })) {
+                Text("Any").tag(999)
+                Text("👍 Liked").tag(1)
+                Text("● Neutral").tag(0)
+                Text("👎 Disliked").tag(-1)
+            }
+            .pickerStyle(.menu)
 
-                Spacer()
-                if !filter.isEmpty {
-                    Button("Clear") { filter = LibraryFilter() }.buttonStyle(.borderless)
+            if !categories.isEmpty {
+                Picker("Category", selection: Binding(
+                    get: { filter.category ?? "any" },
+                    set: { filter.category = $0 == "any" ? nil : $0 })) {
+                    Text("Any").tag("any")
+                    ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
+                }
+                .pickerStyle(.menu)
+            }
+
+            Picker("Palette", selection: Binding(
+                get: { filter.hueBucket ?? -1 },
+                set: { filter.hueBucket = $0 == -1 ? nil : $0 })) {
+                Text("Any").tag(-1)
+                ForEach(0..<12, id: \.self) { Text(paletteLabel($0)).tag($0) }
+            }
+            .pickerStyle(.menu)
+
+            if !filter.isEmpty {
+                HStack {
+                    Spacer()
+                    Button("Clear all") { filter = LibraryFilter() }
+                        .buttonStyle(.borderless)
                 }
             }
+        }
+        .padding(16)
+        .frame(minWidth: 240)
+    }
+
+    // MARK: - Active-filter chips (A3)
+
+    /// The active facets in a fixed, deterministic order (search, sentiment,
+    /// category, palette). Iterates `CaseIterable.allCases` (a stable array),
+    /// never a `Set`/`Dictionary` — rule #2 safe.
+    private var activeFacets: [FilterFacet] {
+        FilterFacet.allCases.filter {
+            switch $0 {
+            case .searchText: return !filter.searchText.isEmpty
+            case .sentiment:  return filter.sentiment != nil
+            case .category:   return filter.category != nil
+            case .hueBucket:  return filter.hueBucket != nil
+            }
+        }
+    }
+
+    private var activeFilterCount: Int { activeFacets.count }
+
+    @ViewBuilder
+    private var activeFilterChips: some View {
+        let facets = activeFacets
+        if !facets.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(facets) { facet in
+                    chipButton(for: facet)
+                        .transition(.scale.combined(with: .opacity))
+                }
+                Spacer(minLength: 8)
+                Button("Clear all") { filter = LibraryFilter() }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+            }
+            .animation(.snappy, value: facets)
+        }
+    }
+
+    @ViewBuilder
+    private func chipButton(for facet: FilterFacet) -> some View {
+        let info = chipLabel(for: facet)
+        Button {
+            clearFacet(facet)
+        } label: {
+            HStack(spacing: 4) {
+                if let img = info.icon { Image(systemName: img).imageScale(.small) }
+                Text(info.text).lineLimit(1)
+                Image(systemName: "xmark").imageScale(.small).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(info.text), remove filter")
+    }
+
+    private func chipLabel(for facet: FilterFacet) -> ChipInfo {
+        switch facet {
+        case .searchText:
+            return ChipInfo(text: "“\(filter.searchText)”", icon: "magnifyingglass")
+        case .sentiment:
+            switch filter.sentiment {
+            case 1:   return ChipInfo(text: "Liked", icon: "hand.thumbsup")
+            case 0:   return ChipInfo(text: "Neutral", icon: "circle")
+            case -1:  return ChipInfo(text: "Disliked", icon: "hand.thumbsdown")
+            default:  return ChipInfo(text: "Sentiment", icon: nil)
+            }
+        case .category:
+            return ChipInfo(text: filter.category?.capitalized ?? "Category", icon: "tag")
+        case .hueBucket:
+            return ChipInfo(text: paletteLabel(filter.hueBucket ?? -1), icon: "paintpalette")
+        }
+    }
+
+    private func clearFacet(_ facet: FilterFacet) {
+        switch facet {
+        case .searchText: filter.searchText = ""
+        case .sentiment:  filter.sentiment = nil
+        case .category:   filter.category = nil
+        case .hueBucket:  filter.hueBucket = nil
         }
     }
 
@@ -156,7 +267,19 @@ struct LibraryView: View {
     @ViewBuilder
     private var likedSection: some View {
         let liked = model.likedEntries()
-        if !liked.isEmpty { section("Liked", .ready(liked)) }
+        if !liked.isEmpty {
+            section("Liked", .ready(liked))
+        } else if anySourceHasGenomes {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Liked").font(.headline)
+                ContentUnavailableView(
+                    "Nothing liked yet",
+                    systemImage: "hand.thumbsup",
+                    description: Text("Mark flames with 👍 to build your favorites.")
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     @ViewBuilder
@@ -171,7 +294,17 @@ struct LibraryView: View {
         if let dir = model.prefs.defaultLibraryDir {
             section("Directory — \(dir.lastPathComponent)", model.dirLoadState)
         } else if case .loading = model.dirLoadState {
-            ProgressView().frame(maxWidth: .infinity, alignment: .center)
+            skeletonSection("Directory")
+        } else {
+            ContentUnavailableView {
+                Label("Open a directory", systemImage: "sparkles")
+            } description: {
+                Text("Choose a folder of .flam3 files, or drag some in.")
+            } actions: {
+                Button("Open Directory…") { openImporter = true }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -179,11 +312,21 @@ struct LibraryView: View {
     private func section(_ title: String, _ state: LoadState) -> some View {
         switch state {
         case .loading:
-            ProgressView("Loading \(title)…").frame(maxWidth: .infinity, alignment: .leading)
+            skeletonSection(title)
         case .empty:
-            Text("No genomes in \(title).").foregroundStyle(.secondary)
+            ContentUnavailableView(
+                "No genomes in \(title)",
+                systemImage: "tray",
+                description: Text("This section is empty.")
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .failed(let message):
-            Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            ContentUnavailableView(
+                "Couldn't load \(title)",
+                systemImage: "exclamationmark.triangle",
+                description: Text(message)
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .ready(let entries):
             let filtered = applyFilter(filter, to: entries,
                                        metadata: { model.metadataStore.metadata(for: $0) },
@@ -208,18 +351,57 @@ struct LibraryView: View {
         }
     }
 
+    /// A titled grid of skeleton placeholder cards shown while a section loads
+    /// (A4 — perceived-faster, calmer than a spinner).
+    @ViewBuilder
+    private func skeletonSection(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            LazyVGrid(columns: grid, spacing: 16) {
+                ForEach(0..<6, id: \.self) { _ in skeletonCell() }
+            }
+        }
+    }
+
+    private func skeletonCell() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.quaternary)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .redacted(reason: .placeholder)
+            RoundedRectangle(cornerRadius: 4)
+                .fill(.quaternary)
+                .frame(height: 10)
+                .redacted(reason: .placeholder)
+        }
+    }
+
     @ViewBuilder
     private func filteredEmptyState(hadEntries: Bool) -> some View {
         if !hadEntries {
-            Text("No genomes here.").foregroundStyle(.secondary)
+            ContentUnavailableView(
+                "No genomes here",
+                systemImage: "tray",
+                description: Text("This section has no genomes to show.")
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else if filter.requireFacet && model.facets.facets.isEmpty {
-            Text("Render thumbnails or open the curated set to filter by palette.")
-                .foregroundStyle(.secondary)
+            ContentUnavailableView(
+                "No palette data yet",
+                systemImage: "paintpalette",
+                description: Text("Render thumbnails or open the curated set to filter by palette.")
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            HStack {
-                Text("No genomes match.").foregroundStyle(.secondary)
-                Button("Clear filters") { filter = LibraryFilter() }.buttonStyle(.borderless)
+            ContentUnavailableView {
+                Label("No genomes match", systemImage: "line.3.horizontal.decrease")
+            } description: {
+                Text("Adjust your search or filters to see more.")
+            } actions: {
+                Button("Clear filters") { filter = LibraryFilter() }
+                    .buttonStyle(.borderedProminent)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -292,10 +474,34 @@ struct LibraryView: View {
         return out
     }
 
+    /// True when any source has at least one ready entry — gates the "Liked"
+    /// teaching card so it only appears once the library is populated.
+    /// Iterates a fixed array (rule #2 safe).
+    private var anySourceHasGenomes: Bool {
+        for state in [model.bundleLoadState, model.importedLoadState, model.dirLoadState] {
+            if case .ready(let entries) = state, !entries.isEmpty { return true }
+        }
+        return false
+    }
+
     private let grid: [GridItem] = [GridItem(.adaptive(minimum: 180), spacing: 16)]
 
     private var thumbProgress: Double? {
         guard model.thumbTotal > 0 else { return nil }
         return Double(model.renderedThumbIDs.count) / Double(model.thumbTotal)
     }
+}
+
+// MARK: - Filter chip support (private to file)
+
+/// The four facets of `LibraryFilter` that can appear as an active chip.
+/// `CaseIterable` gives a stable, deterministic chip order (rule #2).
+private enum FilterFacet: String, CaseIterable, Identifiable {
+    case searchText, sentiment, category, hueBucket
+    var id: String { rawValue }
+}
+
+private struct ChipInfo {
+    let text: String
+    let icon: String?
 }
