@@ -12,6 +12,7 @@ struct PlaybackWindow: View {
     @State private var vm = PlaybackViewModel()
     @State private var loadError: String?
     @State private var degenerate = false
+    @State private var showKeyboardHelp = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,10 +75,24 @@ struct PlaybackWindow: View {
 
             Text(entry.displayName).font(.headline).lineLimit(1)
             SentimentBar(entry: entry).frame(width: 170)
+            keyboardHelpButton
             Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)
+    }
+
+    private var keyboardHelpButton: some View {
+        Button {
+            showKeyboardHelp.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+        }
+        .buttonStyle(.borderless)
+        .popover(isPresented: $showKeyboardHelp) {
+            KeyboardHelpView(includesLibrary: false)
+        }
+        .accessibilityLabel("Keyboard shortcuts")
     }
 
     /// Stop deterministically, then dismiss.

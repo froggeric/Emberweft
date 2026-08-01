@@ -10,6 +10,7 @@ struct LibraryView: View {
     @State private var filter = LibraryFilter()
     @State private var importToast: String?
     @State private var showFilterPopover = false
+    @State private var showKeyboardHelp = false
 
     var body: some View {
         NavigationStack {
@@ -43,13 +44,16 @@ struct LibraryView: View {
             .animation(.snappy, value: filter)
             .navigationTitle("Emberweft Library")
             .toolbar { toolbarContent }
-            // Keyboard: ⌘A selects all (filtered); Esc clears the selection.
+            // Keyboard: ⌘A selects all (filtered); Esc clears the selection;
+            // ⌘? opens the keyboard cheat-sheet.
             .background {
                 Group {
                     Button("Select All") { model.selectAll(allFiltered) }
                         .keyboardShortcut("a", modifiers: .command)
                     Button("Clear Selection") { model.clearSelection() }
                         .keyboardShortcut(.escape, modifiers: [])
+                    Button("Keyboard Shortcuts") { showKeyboardHelp = true }
+                        .keyboardShortcut("?", modifiers: .command)
                 }
                 .hidden()
             }
@@ -76,6 +80,7 @@ struct LibraryView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             filterButton
             Button("Open Directory…") { openImporter = true }
+            keyboardHelpButton
         }
         if let progress = thumbProgress, progress < 1.0 {
             ToolbarItem(placement: .navigation) {
@@ -98,6 +103,18 @@ struct LibraryView: View {
             filterPopover
         }
         .accessibilityLabel("Filter")
+    }
+
+    private var keyboardHelpButton: some View {
+        Button {
+            showKeyboardHelp.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+        }
+        .popover(isPresented: $showKeyboardHelp) {
+            KeyboardHelpView()
+        }
+        .accessibilityLabel("Keyboard shortcuts")
     }
 
     @ViewBuilder
