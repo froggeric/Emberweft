@@ -45,12 +45,14 @@ struct PlaybackRoute: Codable, Hashable, Sendable {
     }
 
     /// Find the live `LibraryEntry` in the matching `LoadState`. Returns `nil`
-    /// when the genome is gone (directory rescanned to a different folder, file
-    /// removed, or the section still loading) — the caller shows a
+    /// when the genome is gone (folder removed from the library, rescanned away,
+    /// file removed, or the section still loading) — the caller shows a
     /// "no longer available" placeholder.
     ///
-    /// For `.directory` the current `prefs.defaultLibraryDir` must match
-    /// `rootPath`, so a stale route into a different folder never resolves.
+    /// For `.directory` the route resolves against the SPECIFIC opened folder
+    /// matching `rootPath` (multi-folder: any opened folder, not just a single
+    /// primary one), so a stale route into a folder no longer in the library
+    /// never resolves.
     @MainActor
     func resolve(model: AppModel) -> LibraryEntry? {
         let entries: [LibraryEntry]
@@ -59,8 +61,8 @@ struct PlaybackRoute: Codable, Hashable, Sendable {
             guard case .ready(let e) = model.bundleLoadState else { return nil }
             entries = e
         case "directory":
-            guard model.prefs.defaultLibraryDir?.path == rootPath,
-                  case .ready(let e) = model.dirLoadState else { return nil }
+            guard let state = model.directoryLoadState(forRootPath: rootPath ?? ""),
+                  case .ready(let e) = state else { return nil }
             entries = e
         case "imported":
             guard case .ready(let e) = model.importedLoadState else { return nil }

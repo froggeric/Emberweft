@@ -57,8 +57,7 @@ struct KeyboardHelpView: View {
         .init(key: "⌘ / Ctrl-click", action: "Toggle selection"),
         .init(key: "Shift-click", action: "Range select"),
         .init(key: "Drag .flam3", action: "Import files"),
-        .init(key: "⌘1…⌘5", action: "Sidebar: All / Library / Liked / Imported / Dir"),
-        .init(key: "⌘\\", action: "Toggle inspector"),
+        .init(key: "⌘1…⌘4", action: "Sidebar: All / Library / Liked / Imported"),
     ]
 
     private let previewShortcuts: [Shortcut] = [

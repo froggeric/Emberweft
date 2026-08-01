@@ -23,14 +23,17 @@ struct SettingsView: View {
             Stepper("Thumbnail samples: \(model.prefs.thumbnailSPP)",
                     value: $model.prefs.thumbnailSPP, in: 1...64)
             Section {
-                if let dir = model.prefs.defaultLibraryDir {
-                    Text(dir.path).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                } else {
-                    Text("No directory chosen (curated set only).")
+                let dirs = model.prefs.directorySources.sorted(by: { $0.path < $1.path })
+                if dirs.isEmpty {
+                    Text("No folders added (curated set only). Use the sidebar to open a folder.")
                         .foregroundStyle(.secondary)
+                } else {
+                    ForEach(dirs, id: \.self) { dir in
+                        Text(dir.path).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
                 }
             } header: {
-                Text("Library directory")
+                Text("Library folders")
             }
         }
         .formStyle(.grouped)

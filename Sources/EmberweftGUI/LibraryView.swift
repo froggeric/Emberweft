@@ -3,10 +3,9 @@ import AppKit
 import UniformTypeIdentifiers
 import EmberweftUI
 
-/// Three-column studio shell (B7/B8): a `NavigationSplitView` sidebar of
-/// destinations (All / Library / Liked / Imported / Directory) drives a single
-/// detail grid (one section at a time — calmer than stacked sections), with a
-/// collapsible right `.inspector` (B8) for the selected genome's metadata.
+/// Two-column studio shell (B7): a `NavigationSplitView` sidebar of destinations
+/// (All / Library / Liked / Imported, plus one row per opened folder) drives a
+/// single detail grid (one section at a time — calmer than stacked sections).
 ///
 /// Reuses unchanged: the filter popover + active-filter chips + `.searchable`
 /// (A3), `ContentUnavailableView`/skeleton states (A4), `SelectionBar` +
@@ -23,11 +22,9 @@ struct LibraryView: View {
     /// Sidebar destination (B7). `List(selection:)` drives which entries the
     /// detail grid shows. Defaults to `.all` (the unified grid landing).
     @State private var destination: SidebarDestination = .all
-    /// Inspector visibility (B8). Toggled with ⌘\.
-    @State private var inspectorShown = true
-    /// Last genome opened (clicked) in the grid — the inspector's fallback
-    /// subject when nothing is selected.
-    @State private var lastOpened: LibraryEntry?
+    /// Pending folder for the remove-from-library confirmation dialog.
+    /// `nil` ⇒ dialog hidden. Set by a folder row's remove control.
+    @State private var pendingRemoval: URL?
 
     var body: some View {
         NavigationSplitView {
@@ -35,16 +32,25 @@ struct LibraryView: View {
         } detail: {
             detailGrid
         }
-        .inspector(isPresented: $inspectorShown) {
-            // Shows the first selected genome (deterministic by id), else the
-            // last-opened one; falls back to a placeholder (B8).
-            InspectorPane(subject: inspectorSubject)
-                .environment(model)
-        }
-        // Persist prefs (density etc.) on any change — spec §5.7 ("no extra
-        // plumbing": the onChange save is the persistence hook).
+        // Persist prefs (density, opened folders, etc.) on any change — spec §5.7
+        // ("no extra plumbing": the onChange save is the persistence hook).
         .onChange(of: model.prefs) { _, _ in
             try? model.prefs.save()
+        }
+        .confirmationDialog(
+            Text("Remove “\(pendingRemoval?.lastPathComponent ?? "folder")” from your library?"),
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            presenting: pendingRemoval
+        ) { url in
+            Button("Remove from Library", role: .destructive) {
+                confirmRemoveDirectory(url)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Files stay on disk. Only the library reference is removed.")
         }
     }
 
@@ -54,15 +60,26 @@ struct LibraryView: View {
     private var sidebar: some View {
         List(selection: $destination) {
             Section("Library") {
-                ForEach(visibleDestinations) { d in
+                ForEach(SidebarDestination.builtIn) { d in
                     Label {
-                        Text(sidebarTitle(for: d))
+                        Text(d.title)
                     } icon: {
                         Image(systemName: d.icon)
                     }
                     .badge(badgeCount(for: d))
                     .tag(d)
                     .accessibilityLabel("\(d.title) genomes")
+                }
+            }
+            Section("Folders") {
+                if folderSources.isEmpty {
+                    Text("No folders added")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                } else {
+                    ForEach(folderSources, id: \.self) { url in
+                        folderRow(url)
+                    }
                 }
             }
             Section {
@@ -79,34 +96,70 @@ struct LibraryView: View {
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
     }
 
-    /// Destinations always shown, plus `.directory` only when a dir is set.
-    private var visibleDestinations: [SidebarDestination] {
-        SidebarDestination.allCases.filter {
-            $0 != .directory || model.prefs.defaultLibraryDir != nil
-        }
+    /// Opened folders, sorted by path for deterministic display (rule #2).
+    private var folderSources: [URL] {
+        model.prefs.directorySources.sorted(by: { $0.path < $1.path })
     }
 
-    private func sidebarTitle(for d: SidebarDestination) -> String {
-        switch d {
-        case .directory:
-            return model.prefs.defaultLibraryDir?.lastPathComponent ?? "Directory"
-        default:
-            return d.title
+    /// One row per opened folder: a folder label and a trailing remove control.
+    /// Selecting the row shows that folder's grid; the minus button and the
+    /// context-menu item both trigger the remove-from-library confirmation
+    /// (files stay on disk — see the confirmation dialog in `body`).
+    @ViewBuilder
+    private func folderRow(_ url: URL) -> some View {
+        HStack(spacing: 6) {
+            Label {
+                Text(url.lastPathComponent).lineLimit(1)
+            } icon: {
+                Image(systemName: "folder")
+            }
+            Spacer(minLength: 0)
+            Button {
+                pendingRemoval = url
+            } label: {
+                Image(systemName: "minus.circle")
+                    .imageScale(.medium)
+                    .foregroundStyle(.secondary)
+            }
+            // `.borderless` is the macOS List-row button style: it activates on
+            // click without being swallowed by the row's selection gesture.
+            .buttonStyle(.borderless)
+            .help("Remove from library (files stay on disk)")
         }
+        .contentShape(Rectangle())
+        .tag(SidebarDestination.folder(url))
+        .contextMenu {
+            Button("Remove from Library", role: .destructive) {
+                pendingRemoval = url
+            }
+        }
+        .accessibilityLabel("Folder \(url.lastPathComponent)")
+    }
+
+    /// Confirm removal of a folder: drop it from the library (no disk changes),
+    /// and if it was selected, fall back to the All grid.
+    private func confirmRemoveDirectory(_ url: URL) {
+        model.removeDirectory(url)
+        if case .folder(let current) = destination, current == url {
+            destination = .all
+        }
+        pendingRemoval = nil
     }
 
     /// Live count badge per destination (P6 — visible payoff of sentiment etc.).
-    /// Integer counts only (rule #2 safe).
+    /// Integer counts only (rule #2 safe). Folders carry no badge (their count
+    /// shows in the detail title bar when selected) to keep the minus control
+    /// uncluttered.
     private func badgeCount(for d: SidebarDestination) -> Int {
         switch d {
         case .all:
             return readyCount(model.bundleLoadState)
-                + readyCount(model.dirLoadState)
+                + model.folderSourcesReadyCount()
                 + readyCount(model.importedLoadState)
         case .library:   return readyCount(model.bundleLoadState)
         case .liked:     return model.likedEntries().count
         case .imported:  return readyCount(model.importedLoadState)
-        case .directory: return readyCount(model.dirLoadState)
+        case .folder(let url): return readyCount(model.directoryLoadStates[url] ?? .empty)
         }
     }
 
@@ -170,8 +223,7 @@ struct LibraryView: View {
         .navigationSubtitle(countSubtitle(for: state))
         .toolbar { toolbarContent }
         // Keyboard: ⌘A selects all (filtered); Esc clears the selection;
-        // ⌘? opens the keyboard cheat-sheet; ⌘\ toggles the inspector;
-        // ⌘1…⌘5 jump to sidebar destinations.
+        // ⌘? opens the keyboard cheat-sheet; ⌘1…⌘4 jump to sidebar destinations.
         .background { keyboardShortcuts }
         .fileImporter(isPresented: $openImporter, allowedContentTypes: [.folder]) { result in
             switch result {
@@ -198,9 +250,8 @@ struct LibraryView: View {
             return liked.isEmpty ? .empty : .ready(liked)
         case .imported:
             return model.importedLoadState
-        case .directory:
-            guard model.prefs.defaultLibraryDir != nil else { return .empty }
-            return model.dirLoadState
+        case .folder(let url):
+            return model.directoryLoadStates[url] ?? .empty
         }
     }
 
@@ -232,8 +283,8 @@ struct LibraryView: View {
         }
     }
 
-    /// Empty state is destination-aware (Liked teaches sentiment; All/Directory
-    /// offer the open-directory CTA).
+    /// Empty state is destination-aware (Liked teaches sentiment; All offers the
+    /// open-directory CTA; a folder shows a folder-scoped empty message).
     @ViewBuilder
     private var emptyStateView: some View {
         switch destination {
@@ -254,15 +305,12 @@ struct LibraryView: View {
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        case .directory where model.prefs.defaultLibraryDir == nil:
-            ContentUnavailableView {
-                Label("Open a directory", systemImage: "sparkles")
-            } description: {
-                Text("Choose a folder of .flam3 files, or drag some in.")
-            } actions: {
-                Button("Open Directory…") { openImporter = true }
-                    .buttonStyle(.borderedProminent)
-            }
+        case .folder(let url):
+            ContentUnavailableView(
+                "No genomes in \(url.lastPathComponent)",
+                systemImage: "folder",
+                description: Text("This folder has no readable .flam3 files.")
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
         default:
             ContentUnavailableView(
@@ -346,8 +394,6 @@ struct LibraryView: View {
                 .keyboardShortcut(.escape, modifiers: [])
             Button("Keyboard Shortcuts") { showKeyboardHelp = true }
                 .keyboardShortcut("?", modifiers: .command)
-            Button("Toggle Inspector") { inspectorShown.toggle() }
-                .keyboardShortcut("\\", modifiers: .command)
             Button("Go to All") { destination = .all }
                 .keyboardShortcut("1", modifiers: .command)
             Button("Go to Library") { destination = .library }
@@ -356,24 +402,8 @@ struct LibraryView: View {
                 .keyboardShortcut("3", modifiers: .command)
             Button("Go to Imported") { destination = .imported }
                 .keyboardShortcut("4", modifiers: .command)
-            if model.prefs.defaultLibraryDir != nil {
-                Button("Go to Directory") { destination = .directory }
-                    .keyboardShortcut("5", modifiers: .command)
-            }
         }
         .hidden()
-    }
-
-    // MARK: - Inspector subject (B8)
-
-    /// The genome the inspector shows: the first selection (deterministic by id)
-    /// if any, else the last-opened genome. Never iterates a hash collection for
-    /// an FP sum — `.sorted` is ordering only (rule #2 safe).
-    private var inspectorSubject: LibraryEntry? {
-        if let first = model.selection.sorted(by: { $0.id < $1.id }).first {
-            return first
-        }
-        return lastOpened
     }
 
     // MARK: - Toolbar
@@ -563,7 +593,10 @@ struct LibraryView: View {
 
     private var categories: [String] {
         var s = Set<String>()
-        for state in [model.bundleLoadState, model.dirLoadState, model.importedLoadState] {
+        let dirStates = model.prefs.directorySources
+            .sorted(by: { $0.path < $1.path })
+            .map { model.directoryLoadStates[$0] ?? .empty }
+        for state in [model.bundleLoadState] + dirStates + [model.importedLoadState] {
             if case .ready(let entries) = state {
                 for e in entries { if let c = e.rank?.category { s.insert(c) } }
             }
@@ -585,7 +618,6 @@ struct LibraryView: View {
                 } else if mods.contains(.shift) {
                     model.selectRange(entry, in: filtered)             // shift → range select
                 } else {
-                    lastOpened = entry                                 // remember for the inspector
                     openWindow(value: PlaybackRoute(entry))            // plain → open playback window
                 }
             }
@@ -651,12 +683,28 @@ struct LibraryView: View {
 
 // MARK: - Sidebar destination (B7)
 
-/// Sidebar destinations. `.directory` is only surfaced when a default library
-/// directory is set; the others are always present.
-private enum SidebarDestination: String, Hashable, Identifiable, CaseIterable {
-    case all, library, liked, imported, directory
+/// Sidebar destinations. The built-in destinations are always present; each
+/// opened library folder is its own `.folder(URL)` destination (multi-folder).
+/// Not `CaseIterable` — the `.folder` case carries an associated URL — so
+/// `builtIn` lists the always-present static destinations (keyboard ⌘1…⌘4 and
+/// the sidebar "Library" section iterate that stable array). Structured so a
+/// future Collections group can add a `.collection(...)` case the same way.
+private enum SidebarDestination: Hashable, Identifiable {
+    case all, library, liked, imported
+    case folder(URL)
 
-    var id: String { rawValue }
+    /// Always-present destinations (the sidebar "Library" section + ⌘1…⌘4).
+    static let builtIn: [SidebarDestination] = [.all, .library, .liked, .imported]
+
+    var id: String {
+        switch self {
+        case .all:      return "all"
+        case .library:  return "library"
+        case .liked:    return "liked"
+        case .imported: return "imported"
+        case .folder(let url): return "folder:\(url.path)"
+        }
+    }
 
     var title: String {
         switch self {
@@ -664,7 +712,7 @@ private enum SidebarDestination: String, Hashable, Identifiable, CaseIterable {
         case .library:  return "Library"
         case .liked:    return "Liked"
         case .imported: return "Imported"
-        case .directory:return "Directory"
+        case .folder(let url): return url.lastPathComponent
         }
     }
 
@@ -674,176 +722,14 @@ private enum SidebarDestination: String, Hashable, Identifiable, CaseIterable {
         case .library:  return "books.vertical"
         case .liked:    return "star"
         case .imported: return "tray.and.arrow.down"
-        case .directory:return "folder"
+        case .folder:   return "folder"
         }
-    }
-}
-
-// MARK: - Inspector pane (B8)
-
-/// Right inspector for the selected/opened genome: a larger static poster still
-/// (rendered at t=0 via `ThumbnailService`), displayName, category, a hue swatch
-/// (from `GenomeFacet.hue`), rank/score, sentiment (reuses `SentimentBar`), file
-/// path, health (`Flame.isRenderable`), and `importedAt` when set.
-struct InspectorPane: View {
-    @Environment(AppModel.self) private var model
-    let subject: LibraryEntry?
-
-    @State private var poster: NSImage?
-    @State private var health: Bool?
-    @State private var loadFailed = false
-
-    var body: some View {
-        Group {
-            if let entry = subject {
-                content(for: entry)
-            } else {
-                ContentUnavailableView(
-                    "No genome selected",
-                    systemImage: "photo",
-                    description: Text("Click a flame to inspect it here.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .padding(16)
-    }
-
-    @ViewBuilder
-    private func content(for entry: LibraryEntry) -> some View {
-        let facet = model.facets.facet(for: entry)
-        let metadata = model.metadataStore.metadata(for: entry)
-        let category = entry.rank?.category ?? facet?.category
-
-        VStack(alignment: .leading, spacing: 14) {
-            posterView
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.displayName)
-                    .font(.headline)
-                    .lineLimit(2)
-                if let rank = entry.rank {
-                    Text(String(format: "★ %.2f", rank.score))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-
-            SentimentBar(entry: entry)
-
-            VStack(alignment: .leading, spacing: 8) {
-                if let category {
-                    infoRow("Category") { Text(category.capitalized) }
-                }
-                if let facet {
-                    infoRow("Palette") {
-                        HStack(spacing: 6) {
-                            hueSwatch(facet.hue)
-                            Text(hueBucketName(facet.hueBucket))
-                        }
-                    }
-                }
-                if let health {
-                    infoRow("Health") {
-                        Text(health ? "Renderable" : "Degenerate")
-                            .foregroundStyle(health ? Color.green : Color.red)
-                    }
-                }
-                if let importedAt = metadata.importedAt {
-                    infoRow("Imported") {
-                        Text(importedAt.formatted(date: .abbreviated, time: .shortened))
-                    }
-                }
-                infoRow("Path") {
-                    Text(entry.fileURL.path)
-                        .font(.caption.monospaced())
-                        .lineLimit(3)
-                        .truncationMode(.middle)
-                }
-            }
-            .font(.callout)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: entry.id, priority: .utility) {
-            await loadPoster(for: entry)
-        }
-    }
-
-    @ViewBuilder
-    private var posterView: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(Color.black)
-            if let poster {
-                Image(nsImage: poster)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else if loadFailed {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.white.opacity(0.5))
-                    .help("Degenerate / unreadable genome")
-            } else {
-                ProgressView()
-            }
-        }
-        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    /// Render the poster still at t=0 (the raw flame = the as-authored still)
-    /// via `ThumbnailService`, at a larger display size than the grid cell.
-    private func loadPoster(for entry: LibraryEntry) async {
-        poster = nil
-        health = nil
-        loadFailed = false
-        guard let flame = try? await model.libraryIndex.loadGenome(for: entry) else {
-            loadFailed = true
-            return
-        }
-        health = flame.isRenderable
-        model.facets.putIfAbsent(for: entry, flame: flame)
-        let outcome = await model.thumbnailService.thumbnail(
-            for: entry, flame: flame,
-            renderParams: model.prefs.thumbnailRenderParams(),
-            displayWidth: 320, displayHeight: 180,
-            backend: model.prefs.thumbnailBackend)
-        switch outcome {
-        case .image(let rgba):
-            poster = rgba.toNSImage()
-            model.facets.refine(for: entry, image: rgba)
-        case .degenerate, .failed:
-            loadFailed = true
-        }
-    }
-
-    @ViewBuilder
-    private func infoRow<C: View>(_ label: String, @ViewBuilder value: () -> C) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
-            value()
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// A small hue swatch derived from `GenomeFacet.hue` (0…1 → HSV).
-    private func hueSwatch(_ hue: Double) -> some View {
-        Color(hue: hue, saturation: 0.7, brightness: 0.9)
-            .frame(width: 14, height: 14)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .overlay {
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(.quaternary, lineWidth: 0.5)
-            }
     }
 }
 
 // MARK: - Shared helpers (file-private)
 
-/// 12-bucket hue names shared by the filter popover/chips and the inspector.
+/// 12-bucket hue names shared by the filter popover and chips.
 /// Deterministic (rule #2 — a fixed array, never a hash collection).
 fileprivate func hueBucketName(_ bucket: Int) -> String {
     let names = ["Red", "Orange", "Yellow", "Lime", "Green", "Teal",

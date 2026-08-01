@@ -22,23 +22,34 @@ final class AppModel {
     private let bundleRoot: URL?
 
     var bundleLoadState: LoadState = .loading
-    var dirLoadState: LoadState = .empty
     var importedLoadState: LoadState = .empty
 
+    /// Per-opened-folder load state, keyed by the exact `URL` stored in
+    /// `prefs.directorySources` (the scan root). A Dictionary is fine here: it is
+    /// used for keyed LOOKUP only — every list built for display iterates
+    /// `prefs.directorySources` (an array) sorted by path (rule #2).
+    var directoryLoadStates: [URL: LoadState] = [:]
+
     /// Per-section thumbnail-render progress. Per-section so an import (which only
-    /// rescans `importedLoadState`) or a directory rescan never discards the
-    /// bundle/directory progress — no full-grid re-render on import.
+    /// rescans `importedLoadState`) or a per-folder rescan never discards the
+    /// bundle/other-folder progress — no full-grid re-render on import.
     var bundleRendered: Set<String> = []
-    var dirRendered: Set<String> = []
+    var directoryRendered: [URL: Set<String>] = [:]
     var importedRendered: Set<String> = []
 
     /// Multi-selection of genomes (for bulk actions / future collections).
     var selection: Set<LibraryEntry> = []
     private(set) var selectionAnchor: LibraryEntry?
 
-    /// Union of all sections' rendered ids (for the progress indicator).
+    /// Union of all sections' rendered ids (for the progress indicator). Iterates
+    /// the `directorySources` array (not the Dictionary) — rule #2; the union is
+    /// order-independent anyway.
     var renderedThumbIDs: Set<String> {
-        bundleRendered.union(dirRendered).union(importedRendered)
+        var out = bundleRendered.union(importedRendered)
+        for url in prefs.directorySources {
+            out.formUnion(directoryRendered[url] ?? [])
+        }
+        return out
     }
     var thumbTotal: Int = 0
 
@@ -49,7 +60,7 @@ final class AppModel {
     func markThumbResolved(for entry: LibraryEntry) {
         switch entry.source {
         case .bundle: bundleRendered.insert(entry.id)
-        case .directory: dirRendered.insert(entry.id)
+        case .directory(let url): directoryRendered[url, default: []].insert(entry.id)
         case .imported: importedRendered.insert(entry.id)
         }
     }
@@ -60,9 +71,9 @@ final class AppModel {
         case .bundle:
             bundleLoadState = filtering(out: entry.id, in: bundleLoadState)
             bundleRendered.remove(entry.id)
-        case .directory:
-            dirLoadState = filtering(out: entry.id, in: dirLoadState)
-            dirRendered.remove(entry.id)
+        case .directory(let url):
+            directoryLoadStates[url] = filtering(out: entry.id, in: directoryLoadStates[url] ?? .empty)
+            directoryRendered[url]?.remove(entry.id)
         case .imported:
             importedLoadState = filtering(out: entry.id, in: importedLoadState)
             importedRendered.remove(entry.id)
@@ -79,8 +90,10 @@ final class AppModel {
     func recomputeThumbTotal() {
         var n = 0
         if case .ready(let e) = bundleLoadState { n += e.count }
-        if case .ready(let e) = dirLoadState { n += e.count }
         if case .ready(let e) = importedLoadState { n += e.count }
+        for url in prefs.directorySources {
+            if case .ready(let e) = directoryLoadStates[url] ?? .empty { n += e.count }
+        }
         thumbTotal = n
     }
 
@@ -94,39 +107,73 @@ final class AppModel {
         self.metadataStore = mdStore
     }
 
-    /// Liked genomes (sentiment == +1) across all loaded sections, in source order.
-    /// Reads the `@Observable` stores, so the Liked section re-renders on changes.
+    /// Liked genomes (sentiment == +1) across all loaded sections. Folder order
+    /// is deterministic (sorted by path — rule #2). Reads the `@Observable`
+    /// stores, so the Liked section re-renders on changes.
     func likedEntries() -> [LibraryEntry] {
         var out: [LibraryEntry] = []
-        for state in [bundleLoadState, dirLoadState, importedLoadState] {
-            if case .ready(let entries) = state {
+        if case .ready(let entries) = bundleLoadState {
+            out += entries.filter { metadataStore.metadata(for: $0).sentiment == 1 }
+        }
+        for url in prefs.directorySources.sorted(by: { $0.path < $1.path }) {
+            if case .ready(let entries) = directoryLoadStates[url] ?? .empty {
                 out += entries.filter { metadataStore.metadata(for: $0).sentiment == 1 }
             }
+        }
+        if case .ready(let entries) = importedLoadState {
+            out += entries.filter { metadataStore.metadata(for: $0).sentiment == 1 }
         }
         return out
     }
 
     /// Unified entries across every loaded source for the sidebar **All** grid
-    /// (B7). Deduped within a source by `id` (sources never share an id namespace,
-    /// so this is belt-and-suspenders), then sorted deterministically by
-    /// `(sourceRank, sourcePath, id)` — rule #2: the `Set` is used only for
-    /// membership checks; the returned array is sorted, never iterated as a hash
-    /// collection. Stable across launches and machines.
+    /// (B7). Deduped by `(sourceRank, sourcePath, id)` (folders carry their root
+    /// path in the key, so two folders never collide), then sorted
+    /// deterministically by that key — rule #2: the `Set` is used only for
+    /// membership checks; folder iteration is over a path-sorted array. Stable
+    /// across launches and machines.
     func unifiedEntries() -> [LibraryEntry] {
         var seen = Set<String>()
         var out: [LibraryEntry] = []
-        for state in [bundleLoadState, dirLoadState, importedLoadState] {
-            guard case .ready(let entries) = state else { continue }
+        func absorb(_ state: LoadState) {
+            guard case .ready(let entries) = state else { return }
             for e in entries {
                 let key = "\(Self.sourceRank(e.source))|\(Self.sourcePath(e.source))|\(e.id)"
                 if seen.insert(key).inserted { out.append(e) }
             }
         }
+        absorb(bundleLoadState)
+        for url in prefs.directorySources.sorted(by: { $0.path < $1.path }) {
+            absorb(directoryLoadStates[url] ?? .empty)
+        }
+        absorb(importedLoadState)
         return out.sorted {
             let a = (Self.sourceRank($0.source), Self.sourcePath($0.source), $0.id)
             let b = (Self.sourceRank($1.source), Self.sourcePath($1.source), $1.id)
             return a < b
         }
+    }
+
+    /// Lookup the load state for an opened folder by its root path. Used by
+    /// `PlaybackRoute.resolve` to resolve a route against the folder it came from
+    /// (multi-folder: the route's `rootPath` may be ANY opened folder, not just a
+    /// single primary one). Returns `nil` when no opened folder matches.
+    func directoryLoadState(forRootPath path: String) -> LoadState? {
+        for url in prefs.directorySources.sorted(by: { $0.path < $1.path }) {
+            if url.path == path { return directoryLoadStates[url] ?? .empty }
+        }
+        return nil
+    }
+
+    /// Sum of `.ready` entry counts across all opened folders (integer count —
+    /// rule #2 safe; iterates the `directorySources` array, not the Dict). Used
+    /// by the sidebar's All-destination badge.
+    func folderSourcesReadyCount() -> Int {
+        var n = 0
+        for url in prefs.directorySources {
+            if case .ready(let e) = directoryLoadStates[url] ?? .empty { n += e.count }
+        }
+        return n
     }
 
     /// Deterministic ordering rank for a source (bundle < directory < imported).
@@ -203,23 +250,54 @@ final class AppModel {
         recomputeThumbTotal()
     }
 
+    /// Open (and scan) a library folder. ADDS it to `prefs.directorySources`
+    /// (deduped by standardized path) rather than replacing, and stores its
+    /// `LoadState` under the folder's canonical URL. Re-opening an already-opened
+    /// folder just rescans it in place (state stays keyed under one URL even if
+    /// the incoming URL has a different representation, e.g. a trailing slash).
+    /// Persisted via `prefs.save()`.
     func openDirectory(_ url: URL) async {
-        prefs.defaultLibraryDir = url
+        prefs.addDirectorySource(url)
+        let key = canonicalDirectoryURL(url)
         try? prefs.save()
-        dirLoadState = .loading
-        dirRendered.removeAll()           // fresh directory
+        directoryLoadStates[key] = .loading
+        directoryRendered[key] = []           // fresh scan of this folder
         do {
-            let entries = try await libraryIndex.scanDirectory(url)
-            dirLoadState = entries.isEmpty ? .empty : .ready(entries)
+            let entries = try await libraryIndex.scanDirectory(key)
+            directoryLoadStates[key] = entries.isEmpty ? .empty : .ready(entries)
         } catch {
-            dirLoadState = .failed("Could not read library at \(url.path).\n\(error.localizedDescription)")
+            directoryLoadStates[key] = .failed("Could not read library at \(key.path).\n\(error.localizedDescription)")
         }
         recomputeThumbTotal()
     }
 
-    func reloadDirectoryIfSet() async {
-        guard let url = prefs.defaultLibraryDir else { dirLoadState = .empty; return }
-        await openDirectory(url)
+    /// Remove a folder from the library: drops it from `prefs.directorySources`
+    /// and clears its load state + thumbnail progress. **Does NOT touch any file
+    /// on disk** — only the in-app library reference is removed. The canonical
+    /// key is captured before mutating `prefs` (it reads `directorySources`).
+    func removeDirectory(_ url: URL) {
+        let key = canonicalDirectoryURL(url)
+        prefs.removeDirectorySource(url)
+        try? prefs.save()
+        directoryLoadStates[key] = nil
+        directoryRendered[key] = nil
+        recomputeThumbTotal()
+    }
+
+    /// The URL stored in `directorySources` that is equivalent to `url` (by
+    /// standardized path), or `url` itself when none. Always key per-folder state
+    /// by this canonical value so re-opening / removing a folder is stable
+    /// regardless of URL representation (trailing slash, `..`, etc.).
+    private func canonicalDirectoryURL(_ url: URL) -> URL {
+        let key = url.standardizedFileURL.path
+        return prefs.directorySources.first { $0.standardizedFileURL.path == key } ?? url
+    }
+
+    /// Re-scan every opened folder (called at launch to pick up on-disk changes).
+    func reloadDirectorySources() async {
+        for url in prefs.directorySources.sorted(by: { $0.path < $1.path }) {
+            await openDirectory(url)
+        }
     }
 
     // MARK: - Import (drag-and-drop)

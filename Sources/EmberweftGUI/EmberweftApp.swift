@@ -23,7 +23,7 @@ struct EmberweftApp: App {
             LibraryView()
                 .environment(model)
                 .task { await model.loadBundle() }
-                .task { await model.reloadDirectoryIfSet() }
+                .task { await model.reloadDirectorySources() }
                 .task { await model.rescanImported() }
         }
         .defaultSize(width: 1000, height: 680)
