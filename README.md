@@ -87,7 +87,7 @@ swift run emberweft --list-backends
 swift run emberweft-gui      # launch the SwiftUI app
 ```
 
-Browse the curated seed library (or **Open Directory…** → point at `genomes/electric-sheep/sheep/` for the full flock), click a thumbnail to play it in a realtime window. Thumbnails render off-main (Metal background queue) so the UI never freezes; settings (backend, quality, target FPS) persist across launches.
+Browse the curated seed library (or **Open Directory…** → point at `genomes/electric-sheep/sheep/` for the full flock), or **drag-and-drop** `.flam3` files in to import them. Click a thumbnail to play it in a realtime window; **filter** by name / sentiment / category / palette; **multi-select** (⌘/shift/⌘A) for bulk Like/Dislike; mark each genome with a tri-state **sentiment** (👍/○/👎). Thumbnails render off-main (Metal background queue) so the UI never freezes; settings persist across launches.
 
 `--backend cpu` is the default for the CLI. `metal` is used when a Metal device is available (check with `--list-backends`). `animate` honors `--temporal-samples N` for motion blur (defaults to the genome's value on CPU; capped at 64 on Metal).
 

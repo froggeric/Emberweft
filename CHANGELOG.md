@@ -7,6 +7,43 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [Unreleased] — M4 completion (in progress, on `feat/m4-completion`)
+
+The M4 GUI grows up: a full genome-library studio on top of the v0.2.0 first slice.
+All testable logic lives in `EmberweftUI`; `EmberweftGUI` stays a thin SwiftUI shell.
+
+### Added
+- **Sentiment** — a tri-state per-genome signal (−1 dislike / 0 neutral / +1 like)
+  replaces rating + favorite + tags + notes. Schema v2; old `favorite:true`
+  migrates to `sentiment = +1`. Set via a hover-revealed full-width 3-segment bar
+  on each card (direct-set, Fitts-sized), an always-on badge for marked cells, the
+  context menu, and `+`/`0`/`−` keys in the preview.
+- **Multi-select** — click = open preview; ⌘/ctrl = toggle, shift = range,
+  ⌘A = select all (post-filter), Esc = clear; a hover checkmark tick is the
+  discoverable per-card affordance; a bottom-floating selection bar carries bulk
+  Like / Dislike / Clear (`AppModel.applySentiment`, sorted iteration — rule #2).
+- **Search & filter** — text + sentiment + category (curated rank OR heuristic
+  facet, so every genome is categorizeable) + palette hue (derived from the
+  rendered thumbnail's dominant pixels, not just the palette mean).
+- **Drag-and-drop import** — pure `ImportKit` (path-traversal-safe sanitize,
+  dedup, parse-before-copy) into an `Imported/` folder; section-scoped rescan
+  (per-section rendered-id sets → import never re-renders the whole grid).
+- **Transport** — position-driven `PlaybackViewModel` (play/pause/scrub; the
+  dispatcher stays for future multi-genome sequencing); Space/Esc/+/-/0 keys.
+- **Off-main Metal thumbnails** — `MetalRenderer.renderOffMain` (byte-identical
+  to the MainActor path) so thumbnails never freeze the UI.
+
+### Fixed
+- **App activation** — a bare-executable SwiftUI app now sets
+  `NSApp.activationPolicy = .regular` + activates on launch, so it becomes the key
+  app (keyboard was reaching the launching shell).
+- Thumbnail/playback orientation mismatch; playback leaked the GPU after close.
+
+### Pending (not in this section)
+Collections/playlists + bulk-edit on selection; Phase B UX (NavigationSplitView
+sidebar, inspector, non-modal playback window); the `testFiniteDeterministicRenders`
+/ FlameKit `cell`-variation fix (separate, engine-layer).
+
 ## [v0.2.0] — M4: SwiftUI App + Library Browser
 
 > _M4 part 1 (first vertical slice). Search/filter, list view, drag-drop import,
