@@ -160,9 +160,9 @@ public final class CollectionsStore {
     }
 
     /// Move the entry at `from` to `to` within a collection's stored `entries`
-    /// (drag-reorder / Move Up-Down). Semantics mirror `Array.move`: the element
-    /// at `from` is removed then inserted at `to`. Clamped; no-op when `from` is
-    /// out of range or the collection is unknown.
+    /// (Move Up/Down — the context-menu accessible fallback). Semantics mirror
+    /// `Array.move`: the element at `from` is removed then inserted at `to`.
+    /// Clamped; no-op when `from` is out of range or the collection is unknown.
     public func moveEntry(in id: UUID, from: Int, to: Int) {
         guard let i = index(of: id),
               collections[i].entries.indices.contains(from) else { return }
@@ -170,6 +170,26 @@ public final class CollectionsStore {
         let clampedTo = min(max(to, entries.startIndex), entries.endIndex - 1)
         let e = entries.remove(at: from)
         entries.insert(e, at: min(clampedTo, entries.count))
+        collections[i].entries = entries
+        scheduleSave()
+    }
+
+    /// Reorder a collection's stored `entries` with `Array.move(fromOffsets:toOffset:)`
+    /// semantics — the primitive backing SwiftUI `List.onMove`. `from` are STORED
+    /// indices and `to` is a STORED offset (positions in `collection.entries`),
+    /// so a caller whose `List` shows a resolved/filtered SUBSET must translate
+    /// list rows → stored positions first (the collection detail view does this
+    /// via its identity→stored map, so unresolvable/filtered-out entries never
+    /// desync — rule #2). Out-of-range `from` indices are dropped; `to` is
+    /// clamped to `0...count`. No-op when the collection is unknown or no `from`
+    /// index is valid.
+    public func moveEntries(in id: UUID, from: IndexSet, to: Int) {
+        guard let i = index(of: id) else { return }
+        var entries = collections[i].entries
+        let valid = IndexSet(from.filter { entries.indices.contains($0) })
+        guard !valid.isEmpty else { return }
+        let clampedTo = min(max(to, entries.startIndex), entries.endIndex)
+        entries.move(fromOffsets: valid, toOffset: clampedTo)
         collections[i].entries = entries
         scheduleSave()
     }

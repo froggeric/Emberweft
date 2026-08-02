@@ -183,6 +183,102 @@ final class CollectionsStoreTests: XCTestCase {
         XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["a", "b"])
     }
 
+    // MARK: - moveEntries (List.onMove backend; Array.move semantics)
+    //
+    // The collection reorder list's `.onMove` calls `moveEntries(from:to:)`
+    // after translating List ROW indices → STORED `entries` indices. These pin
+    // the store primitive's semantics (it delegates to `Array.move(fromOffsets:toOffset:)`,
+    // the same primitive SwiftUI `.onMove` documents), so the GUI's index
+    // translation is the only thing that can desync — and that's covered by
+    // building `rowToStored` from the identity→stored map.
+
+    func testMoveEntriesOnMoveDownInsertsBeforeOffset() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // a(stored 0) dragged two slots down → insert before offset 2.
+        store.moveEntries(in: c.id, from: [0], to: 2)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "a", "c", "d"])
+    }
+
+    func testMoveEntriesOnMoveUpInsertsBeforeOffset() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // d(stored 3) dragged to the top → insert before offset 0.
+        store.moveEntries(in: c.id, from: [3], to: 0)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["d", "a", "b", "c"])
+    }
+
+    func testMoveEntriesAppendToEnd() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // a → end (toOffset == count).
+        store.moveEntries(in: c.id, from: [0], to: 4)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "c", "d", "a"])
+    }
+
+    func testMoveEntriesMultiSelectionToFront() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // Multi-select b,c (stored 1,2) → front.
+        store.moveEntries(in: c.id, from: [1, 2], to: 0)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "c", "a", "d"])
+    }
+
+    func testMoveEntriesMultiSelectionToEnd() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        store.moveEntries(in: c.id, from: [0, 1], to: 4)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["c", "d", "a", "b"])
+    }
+
+    func testMoveEntriesOperatesInStoredIndexSpace() {
+        // The GUI translates List rows → STORED indices before calling this
+        // (the resolved view may skip unresolvable entries). Pin that the store
+        // moves in STORED space: moving stored index 2 → 0 leaves stored index 1
+        // (a "gap"/unresolvable entry in the view) in place relative to index 3.
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("gap", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        store.moveEntries(in: c.id, from: [2], to: 0)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["c", "a", "gap", "d"])
+    }
+
+    func testMoveEntriesOutOfRangeFromDroppedNoCrash() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle)])
+        // An invalid `from` index is dropped; valid ones still move. No crash.
+        store.moveEntries(in: c.id, from: [0, 99], to: 2)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "a"])
+    }
+
+    func testMoveEntriesAllFromInvalidIsNoOp() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle)])
+        store.moveEntries(in: c.id, from: [99, 100], to: 0)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["a", "b"])
+    }
+
+    func testMoveEntriesClampsDestinationToEnd() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle)])
+        // A past-the-end destination is clamped to `count` (append). No crash.
+        store.moveEntries(in: c.id, from: [0], to: 999)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "c", "a"])
+    }
+
+    func testMoveEntriesUnknownCollectionIsNoOp() {
+        let store = CollectionsStore()
+        _ = store.create(name: "C", from: [ce("a", .bundle)])
+        store.moveEntries(in: UUID(), from: [0], to: 0)
+        XCTAssertEqual(store.collections.first?.entries.map(\.id), ["a"])
+    }
+
     // MARK: - Ordered playlist semantics (rule #2)
 
     func testEntriesOrderIsStableAcrossOperations() {
