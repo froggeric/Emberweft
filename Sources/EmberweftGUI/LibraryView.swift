@@ -29,6 +29,19 @@ struct LibraryView: View {
     @State private var renamingCollection: GenomeCollection?
     @State private var renameText: String = ""
 
+    /// Collection drag-reorder state. A custom in-app `DragGesture` (NOT system
+    /// pasteboard DnD) — `.draggable`/`.dropDestination` never fired the drop and
+    /// `List.onMove` replaced the grid with a list, so the grid uses its own
+    /// `DragGesture` instead. `draggingStoredIndex` is the STORED `entries` index
+    /// of the lifted cell; `collectionCellFrames` maps STORED index → cell frame
+    /// (in the collection-grid coordinate space) collected from cell
+    /// preferences for deterministic hit-testing (rule #2: a sorted/by-key map
+    /// read, never a float sum over a hash collection).
+    @State private var draggingStoredIndex: Int?
+    @State private var dragTranslation: CGSize = .zero
+    @State private var dropTargetStoredIndex: Int?
+    @State private var collectionCellFrames: [Int: CGRect] = [:]
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -268,16 +281,15 @@ struct LibraryView: View {
     private var detailGrid: some View {
         let state = currentLoadState
         detailChrome {
-            // Collections render as a reorderable `List` (`.onMove`) — the
-            // native macOS drag-reorder primitive — instead of the grid. The
-            // grid's `.draggable`/`.dropDestination` round-trip on a private
-            // UTType was unreliable on this bundle-less app (the drop "landed"
-            // but the destination action was not reached, so `moveEntry` never
-            // fired). `List.onMove` needs no UTType registration and no
-            // payload round-trip, so it is the guaranteed-reorder path.
+            // Collections render in the SAME `LazyVGrid` of `ThumbnailCell` as
+            // every other destination, with a custom in-app `DragGesture` for
+            // reorder (no system pasteboard DnD, no `List`). The prior two
+            // attempts both failed: `.draggable`+`.dropDestination` (Transferable)
+            // never fired the drop action on this bundle-less app, and
+            // `List`+`.onMove` replaced the grid with a list (regression).
             if case .collection(let id) = destination,
                let c = model.collectionsStore.collection(id: id) {
-                collectionDetailBody(c)
+                collectionGridBody(c)
             } else {
                 gridScrollBody(for: state)
             }
@@ -286,7 +298,7 @@ struct LibraryView: View {
 
     /// Shared detail chrome (search, file-URL import drop, selection bar / toast,
     /// animations, title/subtitle, toolbar, keyboard shortcuts, importer) applied
-    /// to BOTH the collection `List` and the browsing `ScrollView` so the
+    /// to BOTH the collection grid and the browsing `ScrollView` so the
     /// destination swap only changes the inner content.
     @ViewBuilder
     private func detailChrome<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -330,7 +342,7 @@ struct LibraryView: View {
     }
 
     /// The non-collection browsing surface: a `ScrollView` of filter chips + the
-    /// destination grid body. (Collections use `collectionDetailBody` instead.)
+    /// destination grid body. (Collections use `collectionGridBody` instead.)
     @ViewBuilder
     private func gridScrollBody(for state: LoadState) -> some View {
         ScrollView {
@@ -381,9 +393,10 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func gridBody(for state: LoadState) -> some View {
-        // Collections are routed to `collectionDetailBody` (a reorderable `List`)
-        // before this point; this grid body serves the non-collection browsing
-        // destinations (All / Library / Liked / Imported / Folders).
+        // Collections are routed to `collectionGridBody` (the same `LazyVGrid` of
+        // `ThumbnailCell`, plus a custom drag-reorder `DragGesture`) before this
+        // point; this grid body serves the non-collection browsing destinations
+        // (All / Library / Liked / Imported / Folders).
         switch state {
         case .loading:
             skeletonGrid()
@@ -410,124 +423,216 @@ struct LibraryView: View {
         }
     }
 
-    /// A collection's detail surface: a `List` whose rows are the collection's
-    /// (resolved, filtered) genomes, with native drag-reorder via `.onMove`.
+    /// A collection's detail surface: the SAME `LazyVGrid` of `ThumbnailCell`
+    /// used by every other destination (identical card, hover sentiment bar,
+    /// tick, category pill, density), PLUS a custom in-app `DragGesture` for
+    /// reorder. This is the proven pattern after two failed attempts:
+    /// `.draggable`+`.dropDestination` (Transferable) never fired the drop action
+    /// on this bundle-less SwiftPM executable, and `List`+`.onMove` replaced the
+    /// grid with a list (rejected as a regression). No pasteboard, no UTType, no
+    /// `List` — just a `DragGesture` that lifts, hit-tests, and calls
+    /// `CollectionsStore.moveEntries(in:from:to:)`.
     ///
-    /// `.onMove` reports List-ROW indices, but the store reorders by STORED
-    /// `entries` indices. Because the resolved view skips unresolvable entries
-    /// and the active filter may hide more, row index ≠ stored index. We build a
-    /// deterministic `rowToStored` map (same identity→stored lookup the old grid
-    /// used; display order still comes from the filtered array — rule #2) and
-    /// translate both the source rows and the destination offset into stored
-    /// space before calling `moveEntries`. Gaps (unresolvable / filtered-out)
-    /// therefore stay put relative to their stored neighbors — no desync.
+    /// **Stored vs resolved indices:** a collection can have unresolvable or
+    /// filtered-out entries (gaps). `moveEntries` operates on STORED `entries`
+    /// indices, but the grid shows the RESOLVED+FILTERED view. Each cell
+    /// publishes its STORED index + frame via `CollectionCellFramePreference`;
+    /// the drag hit-test resolves pointer position → STORED target index, and
+    /// the move calls `moveEntries` with STORED indices for BOTH source and
+    /// target (translated through the same identity→stored map the resolved view
+    /// is built from). Gaps therefore stay put relative to their stored
+    /// neighbors — no desync (rule #2).
     @ViewBuilder
-    private func collectionDetailBody(_ c: GenomeCollection) -> some View {
+    private func collectionGridBody(_ c: GenomeCollection) -> some View {
         let pairs = model.resolvedPairs(for: c)
         let resolved = pairs.map(\.entry)
         let filtered = applyFilter(filter, to: resolved,
                                    metadata: { model.metadataStore.metadata(for: $0) },
                                    facet: { model.facets.facet(for: $0) })
-        // Identity → stored index (LOOKUP only; display order = filtered array).
+        // Identity → stored index, and stored index → entry (LOOKUP only; the
+        // display order still comes from the filtered array — rule #2). The
+        // stored→entry map backs the lifted-copy overlay.
         let storedOf: [String: Int] = Dictionary(
             pairs.map { (CollectionEntry($0.entry).identity, $0.storedIndex) },
             uniquingKeysWith: { a, _ in a })
-        // List-row index → stored index — the deterministic translation `.onMove`
-        // uses (see header note). An identity missing from the map falls back to
-        // 0, which in practice never happens (filtered ⊆ resolved pairs).
-        let rowToStored: [Int] = filtered.map { storedOf[CollectionEntry($0).identity] ?? 0 }
-        if filtered.isEmpty {
-            // Mirror the empty-state messaging the grid used: "collection empty"
-            // vs "no resolvable" (resolved empty) vs "no matches" (filter).
-            ScrollView {
-                if resolved.isEmpty {
-                    emptyStateView
+        let entryByStored: [Int: LibraryEntry] = Dictionary(
+            pairs.map { ($0.storedIndex, $0.entry) },
+            uniquingKeysWith: { a, _ in a })
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                activeFilterChips
+                if filtered.isEmpty {
+                    // Mirror the grid's empty-state messaging: "collection empty"
+                    // vs "no resolvable" (resolved empty) vs "no matches" (filter).
+                    if resolved.isEmpty {
+                        emptyStateView
+                    } else {
+                        filteredEmptyState(hadEntries: true)
+                    }
                 } else {
-                    filteredEmptyState(hadEntries: true)
+                    LazyVGrid(columns: grid, spacing: 16) {
+                        ForEach(filtered) { entry in
+                            collectionCell(entry,
+                                           storedIndex: storedOf[CollectionEntry(entry).identity] ?? 0,
+                                           collection: c,
+                                           in: filtered)
+                        }
+                    }
+                    .coordinateSpace(name: CollectionGridSpace.name)
+                    .onPreferenceChange(CollectionCellFramePreference.self) {
+                        collectionCellFrames = $0
+                    }
+                    // The lifted copy: a translucent `ThumbnailCell` that follows
+                    // the pointer while a drag is in progress. Rendered as a grid
+                    // overlay (above all cells), positioned at the SOURCE cell's
+                    // center + the drag translation. Source cells themselves never
+                    // move, so their published frames stay stable and hit-testing
+                    // is exact. `allowsHitTesting(false)` so the copy can't
+                    // intercept the drag or taps. (The thumbnail loads from the
+                    // warm ThumbnailService cache — keyed by entry.id — so it
+                    // resolves in ~one frame.)
+                    .overlay {
+                        if let source = draggingStoredIndex,
+                           let frame = collectionCellFrames[source],
+                           let sourceEntry = entryByStored[source] {
+                            ThumbnailCell(entry: sourceEntry, selected: false)
+                                .opacity(0.92)
+                                .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+                                .position(x: frame.midX + dragTranslation.width,
+                                          y: frame.midY + dragTranslation.height)
+                                .allowsHitTesting(false)
+                        }
+                    }
                 }
             }
-        } else {
-            List {
-                ForEach(filtered) { entry in
-                    collectionRow(entry,
-                                  storedIndex: storedOf[CollectionEntry(entry).identity] ?? 0,
-                                  collection: c,
-                                  in: filtered)
-                }
-                .onMove { fromRows, toRow in
-                    let fromStored = IndexSet(fromRows.compactMap {
-                        rowToStored.indices.contains($0) ? rowToStored[$0] : nil
-                    })
-                    // SwiftUI's `toOffset` is in `0...filtered.count`; map a
-                    // past-end drop to an append at the tail of the stored array.
-                    let toStored = (toRow >= rowToStored.count)
-                        ? c.entries.count
-                        : (rowToStored.indices.contains(toRow) ? rowToStored[toRow] : c.entries.count)
-                    guard !fromStored.isEmpty else { return }
-                    model.collectionsStore.moveEntries(in: c.id, from: fromStored, to: toStored)
-                }
-            }
-            .listStyle(.inset)
-            // Keep the active-filter chips visible above the list (they lived at
-            // the top of the scroll body in the grid).
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if !activeFacets.isEmpty {
-                    activeFilterChips
-                        .padding(.horizontal, 20).padding(.vertical, 10)
-                        .background(.bar)
-                }
-            }
+            .padding(20)
+            .animation(.snappy(duration: 0.15), value: dropTargetStoredIndex)
         }
     }
 
-    /// One row of the collection reorder list: a compact thumbnail (reusing
-    /// `ThumbnailCell` at `.list` size, so the async load + sentiment badge +
-    /// selection tick are shared with the grid) + name/category, with the SAME
-    /// tap interaction (open / ⌘⌘select / shift-range) and context menu as the
-    /// grid cell — Move Up/Down kept as an accessible non-drag fallback, Remove
-    /// from Collection, and Add to Collection. `storedIndex` is the row's
-    /// position in `collection.entries` (recovered via the identity→stored map).
+    /// One cell of the collection grid: the shared `ThumbnailCell` (identical
+    /// look to every other destination) + a per-cell `DragGesture(minimumDistance:
+    /// 10)` for reorder. The drag only recognizes after 10pt of movement, so a
+    /// quick tap still opens the preview (`.onTapGesture`) and the in-cell
+    /// Buttons (tick, sentiment) still receive their clicks. `.highPriorityGesture`
+    /// lets the drag claim the gesture once it recognizes (after 10pt), so a drag
+    /// does NOT also fire the tap (which would open the preview), and a click does
+    /// NOT start a drag. While dragging, the source cell is dimmed in place and a
+    /// lifted copy follows the pointer (see `collectionGridBody`'s overlay); the
+    /// `dropTargetStoredIndex` cell gets an accent border.
+    ///
+    /// Each cell publishes its frame + STORED index via a preference so the
+    /// grid-level drag state can hit-test pointer position → stored target. The
+    /// frame is read from `.background` on the unmoved cell, so it is the stable
+    /// laid-out frame (the lift is a separate overlay, not an offset on this cell).
     @ViewBuilder
-    private func collectionRow(_ entry: LibraryEntry,
+    private func collectionCell(_ entry: LibraryEntry,
                                 storedIndex: Int,
                                 collection c: GenomeCollection,
                                 in filtered: [LibraryEntry]) -> some View {
-        HStack(spacing: 12) {
-            ThumbnailCell(entry: entry, selected: model.isSelected(entry),
-                          size: .list, showsName: false)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.displayName).lineLimit(1)
-                if let cat = (entry.rank?.category
-                                ?? model.facets.facet(for: entry)?.category)?.capitalized {
-                    Text(cat)
-                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        let isSource = draggingStoredIndex == storedIndex
+        let isTarget = dropTargetStoredIndex == storedIndex
+        ThumbnailCell(entry: entry, selected: model.isSelected(entry))
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: CollectionCellFramePreference.self,
+                        value: [storedIndex: proxy.frame(in: .named(CollectionGridSpace.name))])
+                }
+            )
+            .overlay {
+                if isTarget {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
                 }
             }
-            Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { handleCellTap(entry, in: filtered) }
-        .contextMenu {
-            Button("Play") { openWindow(value: PlaybackRoute(entry)) }
-            Divider()
-            Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
-            Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
-            Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
-            Divider()
-            Button("Move Up") {
-                model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
-            }.disabled(storedIndex == 0)
-            Button("Move Down") {
-                model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
-            }.disabled(storedIndex >= c.entries.count - 1)
-            Divider()
-            Button("Remove from Collection", role: .destructive) {
-                model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
+            // Dim the source cell in place while its lifted copy follows the
+            // pointer (the copy is rendered by the grid overlay).
+            .opacity(isSource ? 0.35 : 1.0)
+            .contentShape(Rectangle())
+            .onTapGesture { handleCellTap(entry, in: filtered) }
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        if draggingStoredIndex == nil {
+                            draggingStoredIndex = storedIndex
+                        }
+                        dragTranslation = value.translation
+                        dropTargetStoredIndex = collectionDragTarget(
+                            sourceStored: storedIndex, translation: value.translation)
+                    }
+                    .onEnded { value in
+                        let target = collectionDragTarget(
+                            sourceStored: storedIndex, translation: value.translation)
+                        if let target = target, target != storedIndex {
+                            // "Drop on target → take target's stored slot." For a
+                            // DOWNWARD move (source < target) the source lands at
+                            // the target's original stored index via toOffset =
+                            // target+1 (Array.move's original-indexing "insert
+                            // after"); an UPWARD move uses toOffset = target
+                            // ("insert before"). Both proven against the store
+                            // tests (moveEntries delegates to Array.move).
+                            let toOffset = storedIndex < target ? target + 1 : target
+                            model.collectionsStore.moveEntries(
+                                in: c.id, from: IndexSet([storedIndex]), to: toOffset)
+                        }
+                        draggingStoredIndex = nil
+                        dropTargetStoredIndex = nil
+                        dragTranslation = .zero
+                    }
+            )
+            .contextMenu {
+                Button("Play") { openWindow(value: PlaybackRoute(entry)) }
+                Divider()
+                Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
+                Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
+                Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
+                Divider()
+                Button("Move Up") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
+                }.disabled(storedIndex == 0)
+                Button("Move Down") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
+                }.disabled(storedIndex >= c.entries.count - 1)
+                Divider()
+                Button("Remove from Collection", role: .destructive) {
+                    model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
+                }
+                Divider()
+                addToCollectionMenu(for: [CollectionEntry(entry)])
             }
-            Divider()
-            addToCollectionMenu(for: [CollectionEntry(entry)])
+            .accessibilityLabel(cellAccessibilityLabel(entry))
+    }
+
+    /// Hit-test the in-progress drag: returns the STORED index of the cell under
+    /// the pointer (pointer = the SOURCE cell's center + the drag translation),
+    /// or nil if none. Iterates the collected cell frames in STORED-INDEX order
+    /// (deterministic — rule #2): prefers a frame that CONTAINS the pointer, else
+    /// the nearest cell by squared-center-distance (comparison, not a float sum,
+    /// so iteration order can't affect the result). The source cell itself is
+    /// excluded (dropping on self is a no-op). Only VISIBLE cells publish frames
+    /// (LazyVGrid), which is all the user can drag over.
+    private func collectionDragTarget(sourceStored: Int, translation: CGSize) -> Int? {
+        guard let source = collectionCellFrames[sourceStored] else { return nil }
+        let pointer = CGPoint(x: source.midX + translation.width,
+                              y: source.midY + translation.height)
+        // Sorted by stored index for deterministic iteration (rule #2).
+        let orderedFrames = collectionCellFrames.sorted { $0.key < $1.key }
+        var contained: Int?
+        var nearest: (stored: Int, dist: CGFloat)?
+        for (stored, frame) in orderedFrames where stored != sourceStored {
+            if frame.contains(pointer) {
+                contained = stored
+                break
+            }
+            let dx = frame.midX - pointer.x
+            let dy = frame.midY - pointer.y
+            let dist = dx * dx + dy * dy
+            if nearest == nil || dist < nearest!.dist {
+                nearest = (stored, dist)
+            }
         }
-        .accessibilityLabel(cellAccessibilityLabel(entry))
+        return contained ?? nearest?.stored
     }
 
     /// Empty state is destination-aware (Liked teaches sentiment; All offers the
@@ -870,7 +975,7 @@ struct LibraryView: View {
 
     /// Shared cell body (thumbnail + tap interaction). Plain click opens the
     /// single-genome playback window; ⌘/ctrl toggles selection; shift range-
-    /// selects. Context menus are added by the callers (`cell` / `collectionRow`).
+    /// selects. Context menus are added by the callers (`cell` / `collectionCell`).
     @ViewBuilder
     private func cellCore(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         ThumbnailCell(entry: entry, selected: model.isSelected(entry))
@@ -1050,4 +1155,29 @@ private enum FilterFacet: String, CaseIterable, Identifiable {
 private struct ChipInfo {
     let text: String
     let icon: String?
+}
+
+// MARK: - Collection grid drag-reorder support (private to file)
+
+/// Coordinate-space name for the collection grid. Each collection cell publishes
+/// its frame in this space, and the drag hit-test resolves the pointer position
+/// in it. A small enum (not a bare `String`) keeps the call sites self-documenting
+/// and typo-proof.
+private enum CollectionGridSpace {
+    static let name = "CollectionGrid"
+}
+
+/// Per-cell frame preference for the collection grid's drag-reorder hit-test.
+/// Each collection cell publishes `[storedIndex: frame(in: .named("CollectionGrid"))]`;
+/// the grid reduces all cells' values into one `[Int: CGRect]` map. STORED
+/// indices (not grid-row indices) travel with each frame so the drag →
+/// `moveEntries` call stays in STORED space — gaps from unresolvable/filtered
+/// entries never desync (rule #2).
+private struct CollectionCellFramePreference: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        // Later values win per stored index (the live frame supersedes stale).
+        value.merge(nextValue()) { _, new in new }
+    }
 }
