@@ -1,5 +1,13 @@
 # Export Pipeline
 
+> **SUPERSEDED: do not implement.** This preliminary note contradicts the locked
+> M6 scope and the real engine (it seeds from `sheep.hashValue` (a rule-#2 break:
+> Swift hash seeds are randomized per process), invents `xoroshiro256plus` (the
+> engine is ISAAC), and proposes ProRes/AV1/HDR/audio/GUI that are out of scope).
+> The authoritative design is
+> `docs/superpowers/specs/2026-08-02-m6-export-pipeline-design.md` and its plan
+> `docs/superpowers/plans/2026-08-02-m6-export-pipeline.md`. Retained for history.
+
 *Offline rendering and encoding for video file output.*
 
 > **Status:** preliminary — for review · Emberweft
