@@ -1,5 +1,4 @@
 import Foundation
-import FlameKit
 
 /// Faithful port of flam3's `flam3_create_temporal_filter`
 /// (`/tmp/flam3/filters.c:409-489`). Produces N (delta, weight) sub-samples

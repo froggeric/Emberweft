@@ -219,114 +219,32 @@ extension EmberweftCLI {
         let staggerConst = stagger
         let loopCyclesConst = loopCycles
 
+        // Build the frame plan + render params once (outside the loop). The plan
+        // pre-materializes the segment walk and exposes a pure O(1) `descriptor`
+        // per frame — byte-identical to the prior per-frame construction (same
+        // Schedule arithmetic, same TemporalFilter samples with the load-bearing
+        // frame→blend delta scaling, same Loop/Transition blend semantics
+        // including the loop-unclamped / transition-clamped boundary handling and
+        // the no-offline-short-circuit rule; see FramePlan.swift for the rationale
+        // comments that previously lived here).
+        let plan = FramePlan(schedule: &schedule, segmentCount: segmentCount, flames: flamesConst,
+                             loopCycles: loopCyclesConst, stagger: staggerConst,
+                             temporalSamples: temporalSamples)
+        let params = RenderParams(
+            seed: seed, width: width, height: height,
+            oversample: 1, samplesPerPixel: renderQuality
+        )
+
         for globalFrame in 0..<totalFrames {
             // --frame N: render only the requested global frame (re-render specific
             // frames after a fix — e.g. to patch a corrected boundary frame into an
             // existing sequence). Skip everything else: no render, no PNG, no manifest row.
             if let onlyFrame, onlyFrame >= 0, globalFrame != onlyFrame { continue }
-            let mapping = schedule.frameToBlend(globalFrame: globalFrame)
-            let segment = schedule.segment(at: mapping.segmentId)
-
-            // Build the temporal filter sub-samples once per frame. N==1 collapses
-            // to the identity ([(0,1)], 1.0) and the temporal render path falls
-            // through to the single-pass path — byte-identical to the pre-blur
-            // behavior. The genome's own filter shape/width/exp is used (all real
-            // ES genomes: box / 1.2 / 0).
-            //
-            // UNIT CONVERSION (load-bearing — was a Task-4 bug): flam3's
-            // `temporal_filter_width` (1.2 on real ES genomes) is in FRAME-TIME
-            // units (flam3 animation time = frame index; rect.c:
-            // `temporal_sample_time = spec->time + temporal_delta`). But
-            // `mapping.blend` is NORMALIALIZED [0,1] PER SEGMENT (Loop.blend:
-            // θ = t·2π·cycles, one revolution per segment). Adding the raw
-            // frame-unit delta (±0.6) to blend would span ±0.6 of the WHOLE
-            // SEGMENT — for a 160-frame loop that's ±96 frames = ±216° of
-            // rotation averaged, collapsing the loop to its rotationally-averaged
-            // static attractor. Divide by `framesPerSegment` to convert
-            // frame → blend so the window is ±width/2 FRAMES (≈ ±0.6 frame ≈
-            // ±1.35°/frame at 160 frames) — the correct subtle ES motion blur.
-            // N==1's delta is 0.0 → scaling is a no-op → byte-identity preserved.
-            let fps = Double(segment.framesPerSegment)
-            let (temporalRaw, sumfilt): ([(delta: Double, weight: Double)], Double) = temporalSamples > 1
-                ? TemporalFilter.samples(
-                    temporalSamples,
-                    type: flamesConst[segment.fromSheep].quality.temporalFilterType,
-                    width: flamesConst[segment.fromSheep].quality.temporalFilterWidth,
-                    exp:    flamesConst[segment.fromSheep].quality.temporalFilterExp)
-                : ([(delta: 0.0, weight: 1.0)], 1.0)
-            let temporal: [(delta: Double, weight: Double)] = temporalRaw.map {
-                (delta: $0.delta / fps, weight: $0.weight)
-            }
-
-            // Blend closure passed to the temporal render path. Sub-times are
-            // `mapping.blend + sub.delta` (the render functions add each
-            // `sub.delta` to `centerTime` internally). After the frame→blend
-            // scaling above, sub-times span `mapping.blend ± width/(2·fps)`
-            // (≈ ±0.00375 blend at fps=160, width=1.2). The last frame in each
-            // segment (blend=1.0) has sub-times slightly > 1 (by 0.6/fps) —
-            // harmless for Loop (periodic rotation), clamped for Transition.
-            //
-            // Loop vs Transition handling (verified against the M3 design +
-            // flam3 semantics):
-            //
-            // - **Loop is UNCLAMPED.** `Loop.blend` is a pure affine rotation
-            //   (`sheep_loop`: θ = t·360°·cycles on the pre-affine 2×2 only);
-            //   palette and `xform.color` are STATIC during a loop. Rotation is
-            //   periodic (R(540°) == R(180°) within FP residual), so any finite
-            //   `t` is safe and out-of-range sub-times are exactly the
-            //   continuous-rotation temporal blur we want. Clamping would freeze
-            //   boundary frames (sub-time 1.6 → R(576°) == R(216°), a real
-            //   mid-loop rotation, NOT clamp-to-1 → R(360°) == R(0°)) and is a
-            //   behavior change away from faithful flam3.
-            //
-            // - **Transition is CLAMPED to [0,1].** `Transition.blend` ports
-            //   `sheep_edge` (align + interpolate A→B). `t > 1` extrapolates
-            //   `xform.color` and the affine coefs past their endpoint values
-            //   → palette color index > `palette.count - 1` → crash in
-            //   `ChaosGame.iterate` at `dmap[colorIndex0 + 1]`. flam3 itself
-            //   handles this via `flam3_interpolate`'s bracketing search, which
-            //   pins out-of-range `time` to the boundary control point; our
-            //   `Transition.blend` is a thin 2-cp port without that guard, so
-            //   the clamp is applied here at the CLI rather than inside FlameKit.
-            //   The deeper robustness gap — `ChaosGame.iterate`'s palette-index
-            //   lower-bound check — is flagged as a follow-up; the Transition
-            //   clamp avoids the trigger for the temporal path.
-            //
-            // `@Sendable` so the closure can cross the `MainActor.assumeIsolated`
-            // boundary below without triggering Swift 6's data-race check. All
-            // captures (`flamesConst`, `segment`, `mapping`, `loopCyclesConst`,
-            // `staggerConst`) are Sendable value types bound to `let`s.
-            let blendAt: @Sendable (Double) -> Flame = { t in
-                // NOTE: do NOT short-circuit the loop→transition boundary frame to
-                // pure-A here. The offline path uses temporal sub-sampling (ts>1):
-                // a per-frame short-circuit returns the SAME genome for every
-                // sub-frame, so the boundary frame renders SHARP while its neighbors
-                // are motion-blurred → a sharp-vs-blurred "complexity jump" (~30 MAD
-                // at ts=32; the v0.1.8 regression this comment replaces). The faithful
-                // `.log` polar residual at the boundary is small and is averaged out
-                // by the temporal blur, matching flam3 (which fires its seqflag
-                // shortcut PER SUB-FRAME inside sheep_edge, preserving the blur). The
-                // realtime path (PlaybackDispatcher, no temporal blur) keeps the
-                // shortcut — see Schedule.isLoopToTransitionBoundary.
-                switch mapping.kind {
-                case .loop:
-                    return Loop.blend(flamesConst[segment.fromSheep], t: t, cycles: loopCyclesConst)
-                case .transition:
-                    let tc = min(max(t, 0.0), 1.0)
-                    return Transition.blend(
-                        flamesConst[segment.fromSheep], flamesConst[segment.toSheep],
-                        t: tc, stagger: staggerConst
-                    )
-                }
-            }
+            let d = plan.descriptor(for: globalFrame)
 
             // Render on the chosen backend. N==1 takes the single-path branch
-            // (byte-identical to the pre-blur path: `blendAt(mapping.blend)` is
+            // (byte-identical to the pre-blur path: `d.blendAt(d.blend)` is
             // exactly the old `renderedFlame`).
-            let params = RenderParams(
-                seed: seed, width: width, height: height,
-                oversample: 1, samplesPerPixel: renderQuality
-            )
             let img: RGBA8Image
             if backend == "metal" {
                 // Per-frame autoreleasepool: renderFused / renderTemporalFused
@@ -343,16 +261,16 @@ extension EmberweftCLI {
                 img = MainActor.assumeIsolated {
                     autoreleasepool {
                         temporalSamples > 1
-                            ? MetalRenderer.render(blendAt: blendAt, centerTime: mapping.blend,
-                                                   temporal: temporal, sumfilt: sumfilt, params: params)
-                            : MetalRenderer.render(flame: blendAt(mapping.blend), params: params)
+                            ? MetalRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                                   temporal: d.temporal, sumfilt: d.sumfilt, params: params)
+                            : MetalRenderer.render(flame: d.blendAt(d.blend), params: params)
                     }
                 }
             } else {
                 img = temporalSamples > 1
-                    ? ReferenceRenderer.render(blendAt: blendAt, centerTime: mapping.blend,
-                                               temporal: temporal, sumfilt: sumfilt, params: params)
-                    : ReferenceRenderer.render(flame: blendAt(mapping.blend), params: params)
+                    ? ReferenceRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                               temporal: d.temporal, sumfilt: d.sumfilt, params: params)
+                    : ReferenceRenderer.render(flame: d.blendAt(d.blend), params: params)
             }
 
             // Write PNG — zero-padded 6-digit filename.
@@ -364,22 +282,26 @@ extension EmberweftCLI {
                 err("error: cannot write \(pngURL.path): \(error)\n"); return 1
             }
 
-            // Build manifest entry (index-ordered — F1).
+            // Build manifest entry (index-ordered — F1). `Manifest.FrameEntry.kind`
+            // is a STRING ("loop"/"transition"); `d.kind` is `Segment.Kind`, so the
+            // enum→string conversion + the per-fromSheep `interpolationType.rawValue`
+            // read are preserved verbatim. `flames` (not `flamesConst`) is read
+            // here, matching the original.
             let interpType: String?
-            switch mapping.kind {
+            switch d.kind {
             case .loop:
                 interpType = nil
             case .transition:
-                interpType = flames[segment.fromSheep].interpolationType.rawValue
+                interpType = flames[d.fromSheep].interpolationType.rawValue
             }
             frameEntries.append(Manifest.FrameEntry(
                 index: globalFrame,
                 file: pngName,
-                segmentId: mapping.segmentId,
-                kind: mapping.kind == .loop ? "loop" : "transition",
-                fromSheep: segment.fromSheep,
-                toSheep: segment.toSheep,
-                blend: mapping.blend,
+                segmentId: d.segmentId,
+                kind: d.kind == .loop ? "loop" : "transition",
+                fromSheep: d.fromSheep,
+                toSheep: d.toSheep,
+                blend: d.blend,
                 interpolationType: interpType
             ))
         }

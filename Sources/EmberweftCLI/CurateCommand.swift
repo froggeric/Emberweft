@@ -152,17 +152,12 @@ extension EmberweftCLI {
                 rejects.append(Reject(id: id, path: rel, reason: "parse: \(error)"))
                 continue
             }
-            // Inline isRenderable (EmberweftUI/GenomeHealth — not a dep here).
-            let c = flame.camera.center
-            let s = flame.camera.scale
-            guard c.x.isFinite, c.y.isFinite else {
-                rejects.append(Reject(id: id, path: rel, reason: "non-finite camera.center")); continue
-            }
-            guard s.isFinite, s > 0, s >= 1e-3, s <= 4000 else {
-                rejects.append(Reject(id: id, path: rel, reason: "degenerate scale: \(s)")); continue
-            }
-            guard flame.xforms.contains(where: { $0.weight > 0 }) else {
-                rejects.append(Reject(id: id, path: rel, reason: "zero total xform weight")); continue
+            // `Flame.isRenderable` now lives in FlameKit (moved from EmberweftUI
+            // for M6) — single shared definition across CLI / FlameExport / GUI.
+            guard flame.isRenderable else {
+                rejects.append(Reject(id: id, path: rel,
+                                      reason: "not renderable (non-finite/out-of-band camera or zero xform weight)"))
+                continue
             }
             survivors.append(Survivor(id: id, path: rel, flame: flame))
         }
