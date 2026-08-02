@@ -12,10 +12,9 @@ extension EmberweftCLI {
     /// Offline batch curation of a genome library (default: the live gen-248
     /// flock). For every `.flam3`:
     ///   1. Parse (cheap). Reject parse errors.
-    ///   2. Inline renderability gate (replicates `Flame.isRenderable` from
-    ///      EmberweftUI — EmberweftCLI does NOT depend on EmberweftUI): reject
-    ///      non-finite camera center, non-finite / <=0 / out-of-[1e-3,4000]
-    ///      scale, and zero total xform weight.
+    ///   2. Renderability gate (`Flame.isRenderable`, defined in FlameKit):
+    ///      reject non-finite camera center, non-finite / <=0 /
+    ///      out-of-[1e-3,4000] scale, and zero total xform weight.
     ///   3. Render a small thumbnail (Metal preferred, CPU fallback).
     ///   4. Score the thumbnail pixels with a deterministic pleasantness
     ///      heuristic over ARRAYS (rule #2 — no float sums over Dict/Set).
