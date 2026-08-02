@@ -18,9 +18,16 @@ struct SettingsView: View {
         Form {
             Section("Playback (realtime preview)") {
                 Picker("Preview quality", selection: $model.prefs.previewPreset) {
-                    ForEach(AppPreferences.PreviewPreset.allCases, id: \.self) { Text($0.label).tag($0) }
+                    ForEach([AppPreferences.PreviewPreset.draft, .balanced, .quality], id: \.self) { Text($0.label).tag($0) }
                 }
-                .help("Realtime preview quality. Higher presets sharpen the image and reduce noise by raising the resolution and samples-per-pixel, at the cost of framerate. Draft/Balanced/Quality are fixed; Custom uses individually-tuned values (adjust in a playback window's quality popover).")
+                .help("Realtime preview quality. Higher presets sharpen the image and reduce noise by raising the resolution and samples-per-pixel, at the cost of framerate. For per-parameter tuning, use a playback window's quality popover — it can switch to a Custom preset, shown read-only below.")
+                if model.prefs.previewPreset == .custom {
+                    let r = AppPreferences.PreviewResolution.nearest(
+                        width: model.prefs.previewWidth, height: model.prefs.previewHeight)
+                    Text("Custom — \(r.label) · \(model.prefs.previewSamplesPerPixel) spp · \(model.prefs.previewOversample)× (set via the playback popover)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Picker("Backend", selection: $model.prefs.backend) {
                     ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
