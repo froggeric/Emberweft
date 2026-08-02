@@ -6,7 +6,7 @@
 
 ## Current Status
 
-**Current milestone:** M4 — SwiftUI App and Library Browser (**in progress; first slice shipped v0.2.0**) · **M0, M1, M2, and M3 complete** (see [CHANGELOG.md](../../CHANGELOG.md)). Post-M3 patches landed on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), and **v0.1.3** (fix: the Metal empty-frame regression v0.1.2's batch-4 port introduced on fragile multi-xform animations — `GPUXform` passed by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations — clamp args to ±88), and **v0.1.5** (fix: transition endpoint faithfulness — `Transition(A,B,1.0)` now reaches B; mergeLog per-param INTERP + padding-final `colorSpeed=0` + propagate `paletteMode`), **v0.1.6** (fix: transition smoothness — Quality field interpolation (flam3 INTERPs brightness/gamma/etc.; Emberweft hard-cut at blend 0.5) + `.log` det guard for opposite-handedness midpoint singularity + endpoint padding-final drop), **v0.2.0** (M4 part 1 — the SwiftUI app first slice: library browser + click-to-play, an off-main Metal render path for thumbnails, and the `curate` CLI). M4's remaining deliverables (search/filter, import, metadata editor, favorites, transport, a11y) are tracked in the M4 completion plan; M5 follows.
+**Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries). M5 follows.
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
 
@@ -109,16 +109,22 @@ motion blur as a faithful `temporal_samples` port on both backends
 `pie`, `radial_blur`). M3's synthetic goldens stay byte-identical and the
 animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGELOG.md).
 
-### M4 — SwiftUI App and Library Browser (in progress)
+### M4 — SwiftUI App and Library Browser ✅
 
 **Goal:** Build the main application UI with library browsing, search, and playback controls. (Slice S8.)
 
-> **Closed v0.2.0:** ships a SwiftUI app (`emberweft-gui`) with a thumbnail library
-> browser (curated bundle + arbitrary folder), click-to-play realtime preview,
-> persisted settings, an off-main Metal thumbnail render path (no UI freeze), and
-> the `emberweft curate` offline ranking pipeline. **Deferred to a follow-up
-> slice:** search/filter, drag-drop import, favorites, metadata editor, and formal
-> a11y — the first vertical slice covered the M4 DoD core.
+> **Complete (v0.2.0 + v0.3.0).** v0.2.0 shipped the first slice: a SwiftUI app
+> (`emberweft-gui`) with a thumbnail library browser (curated bundle + arbitrary
+> folder), click-to-play realtime preview, persisted settings, an off-main Metal
+> thumbnail render path (no UI freeze), and the `emberweft curate` offline ranking
+> pipeline. v0.3.0 completed M4: a `NavigationSplitView` sidebar browser
+> (All / Library / Liked / Imported / Folders), multi-select with bulk actions,
+> tri-state sentiment (replacing rating + favorite + tags + notes), search + filter
+> (sentiment / category / palette), drag-and-drop import, collections/playlists
+> with drag reorder, Play as Sequence, and a non-modal playback window. All testable
+> logic lives in the `EmberweftUI` library; `EmberweftGUI` is a thin SwiftUI shell.
+> The M1–M3 engine is unchanged. See [CHANGELOG.md](../../CHANGELOG.md) for the full
+> v0.3.0 entry.
 
 **Key deliverables:**
 - SwiftUI app structure (EmberweftApp target)

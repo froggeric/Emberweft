@@ -7,42 +7,95 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
-## [Unreleased] — M4 completion (in progress, on `feat/m4-completion`)
+## [v0.3.0] — M4 complete: native GUI studio
 
-The M4 GUI grows up: a full genome-library studio on top of the v0.2.0 first slice.
-All testable logic lives in `EmberweftUI`; `EmberweftGUI` stays a thin SwiftUI shell.
+The M4 GUI is complete. `emberweft-gui` grows from the v0.2.0 first slice (library
+browser + click-to-play) into a full genome-library studio: a sidebar-driven
+browser, multi-select, tri-state sentiment, search and filter, drag-and-drop
+import, collections/playlists with drag reorder, and a non-modal playback window.
+All testable logic lives in the `EmberweftUI` library; `EmberweftGUI` stays a thin
+SwiftUI shell. The M1–M3 engine is unchanged.
 
 ### Added
-- **Sentiment** — a tri-state per-genome signal (−1 dislike / 0 neutral / +1 like)
-  replaces rating + favorite + tags + notes. Schema v2; old `favorite:true`
-  migrates to `sentiment = +1`. Set via a hover-revealed full-width 3-segment bar
-  on each card (direct-set, Fitts-sized), an always-on badge for marked cells, the
-  context menu, and `+`/`0`/`−` keys in the preview.
-- **Multi-select** — click = open preview; ⌘/ctrl = toggle, shift = range,
-  ⌘A = select all (post-filter), Esc = clear; a hover checkmark tick is the
-  discoverable per-card affordance; a bottom-floating selection bar carries bulk
-  Like / Dislike / Clear (`AppModel.applySentiment`, sorted iteration — rule #2).
-- **Search & filter** — text + sentiment + category (curated rank OR heuristic
-  facet, so every genome is categorizeable) + palette hue (derived from the
-  rendered thumbnail's dominant pixels, not just the palette mean).
-- **Drag-and-drop import** — pure `ImportKit` (path-traversal-safe sanitize,
-  dedup, parse-before-copy) into an `Imported/` folder; section-scoped rescan
-  (per-section rendered-id sets → import never re-renders the whole grid).
-- **Transport** — position-driven `PlaybackViewModel` (play/pause/scrub; the
-  dispatcher stays for future multi-genome sequencing); Space/Esc/+/-/0 keys.
-- **Off-main Metal thumbnails** — `MetalRenderer.renderOffMain` (byte-identical
-  to the MainActor path) so thumbnails never freeze the UI.
+- **NavigationSplitView sidebar:** destinations are **All** (unified, deterministically
+  sorted), **Library** (curated 24-genome bundle), **★ Liked** (live count),
+  **Imported** (drag-dropped), and **Folders** (one row per opened directory).
+  `⌘1–4` jumps to the built-in destinations. One detail grid shows a single
+  section at a time (calmer than the v0.2.0 stacked sections).
+- **Multi-folder library:** open several folders at once; remove any from the
+  library via a per-row control with a confirmation dialog (files stay on disk).
+  Legacy single-folder preferences migrate to the multi-folder list.
+- **Tri-state sentiment:** a per-genome `−1` dislike / `0` neutral / `+1` like
+  signal replaces rating + favorite + tags + notes. Persisted to `metadata.json`
+  as schema v2; old v1 `favorite == true` migrates to `sentiment = +1`. Set via the
+  card's hover-revealed bar (direct-set), the always-on badge for marked cells, the
+  context menu, and `+`/`0`/`−` keys.
+- **Multi-select:** click opens the preview; `⌘`/ctrl toggles, shift range-selects,
+  `⌘A` selects all (post-filter), `Esc` clears. A hover tick is the per-card
+  affordance. A bottom-floating selection bar carries bulk Like / Dislike / Clear
+  plus Save as Collection and Add to. `AppModel.applySentiment` iterates a sorted
+  sequence (rule #2: never accumulate over the hashed selection `Set`).
+- **Search & filter:** `.searchable` text plus a filter popover (sentiment /
+  category / palette) with an active-count badge and removable active-filter chips.
+  Category is the curated rank OR a heuristic facet, so every genome is
+  categorizeable. Palette hue derives from the rendered thumbnail's dominant pixels
+  (refined after render), not just the palette mean.
+- **Drag-and-drop import:** pure `ImportKit` (path-traversal-safe sanitize, dedup,
+  parse-before-copy) into an `Imported/` folder. Per-section rendered-id sets mean
+  an import only rescans the Imported section, never the whole grid.
+- **Collections / playlists:** create from selection, rename, delete, add, and
+  remove entries; drag-and-drop reorder; and Play as Sequence. Entries store their
+  source + id, so a removed folder or file is skipped cleanly rather than crashing.
+- **Non-modal playback window:** clicking a card opens a dedicated window (not a
+  blocking sheet) via a value-driven `WindowGroup(for: PlaybackRoute.self)`, so you
+  can browse and rate while a loop plays; one window per genome (identity = stored
+  fields). Transport: play/pause, scrub, `←`/`→` frame-step, frame and time
+  readouts, and a sentiment bar. A second value-driven window plays a collection as
+  a sequence, reusing the M3 multi-genome `PlaybackDispatcher` over a
+  `Schedule(librarySize:, selector: Sequential)` (loop + transition segments).
+- **Grid browser polish:** skeleton loading cells, `ContentUnavailableView`
+  empty/error states (destination-aware), a hover-revealed selection tick, a
+  category pill, and S/M/L density (persisted). Off-main Metal thumbnails (from
+  v0.2.0) keep the UI from freezing and stay byte-identical to the MainActor path.
+- **Keyboard:** Space (play/pause), Esc (close/clear), `+`/`0`/`−` (sentiment),
+  `⌘A` (select all), `⌘1–4` (sidebar destinations), `⌘?`/`?` (cheat-sheet).
+- Tests: `EmberweftUITests` grew to cover `CollectionsStore` (create/add/remove/
+  move/reorder), `ImportKit` (sanitize/dedup/plan), `LibraryFilter`, metadata
+  migration, multi-select invariants, and the off-main parity pins.
 
 ### Fixed
-- **App activation** — a bare-executable SwiftUI app now sets
-  `NSApp.activationPolicy = .regular` + activates on launch, so it becomes the key
-  app (keyboard was reaching the launching shell).
-- Thumbnail/playback orientation mismatch; playback leaked the GPU after close.
+- **App activation:** a bare-executable SwiftUI app now sets
+  `NSApp.activationPolicy = .regular` and activates on launch, so it becomes the
+  key app (keyboard was reaching the launching shell). `AppDelegate` via
+  `@NSApplicationDelegateAdaptor` in `EmberweftApp.swift`.
+- **Thumbnail vs playback orientation** and a **playback GPU leak after close**
+  (carried from v0.2.0 and verified under the new non-modal window): the sheet-owned
+  view-model was released before `stop()` could run; `beginStop()` now captures self
+  strongly and Close awaits `stop()` before dismissing.
+- **Collection drag-reorder:** the system `.draggable`/`.dropDestination` (custom
+  `Transferable`) and `List.onMove` approaches were unreliable on this bundle-less
+  SwiftPM executable (the drop action did not fire; `onMove` replaced the grid with
+  a list). Replaced with a custom in-app `DragGesture` (lift + cell-frame
+  `PreferenceKey` hit-test + `CollectionsStore.moveEntries`, which delegates to
+  `Array.move`). See the new CLAUDE.md gotcha.
 
-### Pending (not in this section)
-Collections/playlists + bulk-edit on selection; Phase B UX (NavigationSplitView
-sidebar, inspector, non-modal playback window); the `testFiniteDeterministicRenders`
-/ FlameKit `cell`-variation fix (separate, engine-layer).
+### Changed
+- The library surface moved from a single stacked grid (v0.2.0) to a
+  `NavigationSplitView`: a sidebar of destinations drives one detail grid.
+- Per-genome metadata reduced to sentiment only; schema bumped to v2 with a
+  `favorite → sentiment = +1` migration.
+- The playback surface is non-modal (a value-driven `WindowGroup`) instead of a
+  blocking `.sheet`.
+
+### Removed
+- Per-genome rating, favorite, tags, and notes (replaced by tri-state sentiment).
+- The blocking playback `.sheet` (replaced by the non-modal playback window).
+
+### Known, separate (not part of M4)
+A pre-existing, reproducible `testFiniteDeterministicRenders` crash in the FlameKit
+`cell` variation (`Int(Inf)` from `cell_size=0`) exists on `main` independent of
+M4: the GUI layer does not touch the oracle. A faithful fix is ready but lands
+separately.
 
 ## [v0.2.0] — M4: SwiftUI App + Library Browser
 
