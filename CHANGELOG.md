@@ -7,6 +7,37 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.3.1] — M4 polish: preview presets + live FPS, and a determinism-gate fix
+
+Two follow-ups to the v0.3.0 GUI studio.
+
+### Added
+- **Configurable preview presets + live FPS readout.** Both playback windows
+  (single-genome and collection sequence) now show a live FPS readout in the
+  transport bar and a preview-quality popover (`⌘,`). Three named presets —
+  **Draft** (480p · 2 spp), **Balanced** (720p · 8 spp), **Quality**
+  (1080p · 16 spp · 2×) — snap quality in one click; advanced steppers/menus
+  (resolution tier, samples/pixel, oversample, target frame rate, backend) tune
+  further, forking to a **Custom** preset that's flagged with a dot on the
+  trigger. The FPS readout is target-relative (green/amber/red vs your chosen
+  target, with an absolute 24 fps cinematic floor) and throttle-smoothed (~2 Hz)
+  so the digit settles rather than twitches; it shows an em dash while paused or
+  loading, never a misleading "0 fps". `Reset to Default` recalls Draft. Default
+  Draft is byte-identical to the pre-preset preview, so existing preferences are
+  unchanged on upgrade.
+
+### Fixed
+- **`testFiniteDeterministicRenders` crash** (pre-existing on `main`, now green).
+  The `cell` variation computed `Int(1.0/cell_size)` and `GenomeGen` generates
+  `cell` with the default `cell_size=0`, so `Int(Inf)` trapped in Swift (flam3's
+  C `(int)floor(Inf)` is UB but nontrapping). Added a nontrapping `intTrunc`
+  guard (NaN→0, out-of-range→±`Int.max/2`, else `Int(d)`) at `cell`, `rings2`,
+  and the chaos-game palette index. For normal genomes the guard is bit-identical
+  to `Int(d)` (zero parity impact); only degenerate `cell_size≈0` saturates,
+  where flam3 is UB and the output is unchanged. The ±`Int.max/2` target (not
+  ±`Int.max`) is required because `cell`'s downstream `y *= 2` overflows
+  otherwise.
+
 ## [v0.3.0] — M4 complete: native GUI studio
 
 The M4 GUI is complete. `emberweft-gui` grows from the v0.2.0 first slice (library
