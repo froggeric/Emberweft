@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.3.1: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, and a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS) are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.3.2: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, and a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings) are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4 complete, v0.3.1):**
+**Works now (M0–M4 complete, v0.3.2):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -62,6 +62,7 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.2.0** | ✅ Done | **M4 (part 1):** SwiftUI app first slice: library browser + click-to-play (off-main Metal thumbnails); `curate` CLI |
 | **v0.3.0** | ✅ Done | **M4 complete:** sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections + reorder, non-modal playback window |
 | **v0.3.1** | ✅ Done | **M4 polish:** configurable preview presets + live FPS readout (both playback windows); `testFiniteDeterministicRenders` crash fix (`intTrunc` guard) |
+| **v0.3.2** | ✅ Done | **M4 polish:** distinct preview/export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target |
 | M4 | ✅ Done | Native SwiftUI generative-flame studio |
 | M5 | Current | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
@@ -235,4 +236,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 are complete (v0.3.1):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 are complete (v0.3.2):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).

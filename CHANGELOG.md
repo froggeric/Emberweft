@@ -7,6 +7,41 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.3.2] — Settings clarity, per-parameter help, and a `dist` target
+
+Post-v0.3.1 polish on the GUI studio and build. The engine is unchanged.
+
+### Added
+- **Distinct preview vs. export quality in Settings.** The macOS Settings window
+  now separates the two quality notions, which serve different purposes:
+  **Preview quality** (`PreviewPreset`, realtime, tuned for fluid FPS) and
+  **Export quality** (`QualityPreset`, maximum quality for exported renders,
+  staged for the upcoming export feature). Grouped into Playback / Export /
+  Thumbnails / Library sections. Target FPS in Settings now offers
+  24/30/60/90/120 to match the playback popover (it previously offered only
+  24/30/60, so 90/120 set via the popover showed no selection).
+- **Per-parameter help.** Every quality/performance control in the playback
+  popover and Settings has a tooltip explaining what it does and its
+  performance/quality tradeoff (samples/pixel scales cost roughly linearly,
+  oversample scales with the square, resolution scales with pixel count), plus an
+  actionable footer tying the knobs to the live FPS readout.
+- **`make dist` target.** Builds a release (optimized) product into `./dist`
+  (the GUI + CLI + their two resource bundles) and prints the run command.
+  `dist/` is gitignored; it is reproducible from source via this target.
+
+### Changed
+- **Preview-quality picker trimmed.** Settings offers Draft/Balanced/Quality
+  only; "Custom" is no longer a selectable entry (it has no defined values and
+  is reached by tuning in the playback popover). When the live preset is Custom,
+  Settings shows the actual values read-only (e.g. "Custom — 1080p · 12 spp ·
+  2×").
+
+### Fixed
+- **`⌘,` shortcut collision.** The preview-quality popover was bound to `⌘,`,
+  the macOS Settings shortcut (auto-bound by the `Settings` scene), so `⌘,` did
+  different things depending on which window was key. Removed; the popover is
+  reachable via its toolbar button.
+
 ## [v0.3.1] — M4 polish: preview presets + live FPS, and a determinism-gate fix
 
 Two follow-ups to the v0.3.0 GUI studio.
