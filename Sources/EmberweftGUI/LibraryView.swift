@@ -28,6 +28,12 @@ struct LibraryView: View {
     /// Pending collection for the rename sheet. `nil` ⇒ sheet hidden.
     @State private var renamingCollection: GenomeCollection?
     @State private var renameText: String = ""
+    /// Stored index of the collection cell currently under a reorder drag
+    /// (drives the drop-affordance highlight). `nil` when nothing is hovering.
+    /// Tracked by stored index (unique array position) so the highlight pins to
+    /// the right cell even when the resolved view skips unresolvable entries.
+    /// Only one cell is the drop target at a time.
+    @State private var reorderDropStoredIndex: Int?
 
     var body: some View {
         NavigationSplitView {
@@ -787,14 +793,55 @@ struct LibraryView: View {
     }
 
     /// A cell inside a collection grid: same display + selection tap as `cell`,
-    /// but its context menu carries collection-ordering actions (Move Up / Move
-    /// Down / Remove from Collection) against the STORED index.
+    /// plus **drag-and-drop reorder** (whole card is both a `.draggable` source
+    /// and a `.dropDestination` target), and a context menu carrying
+    /// collection-ordering actions (Move Up / Move Down kept as an accessible
+    /// fallback / Remove from Collection) against the STORED index.
+    ///
+    /// DnD carries a private `CollectionReorderPayload` (collectionID + source
+    /// stored index) on a custom UTType, so it is a separate channel from the
+    /// scroll view's `.onDrop(of: [.fileURL])` import path — a Finder file drag
+    /// never matches the reorder type, and the reorder payload never matches
+    /// `.fileURL`. Dropping source onto this cell calls
+    /// `moveEntry(from: src.storedIndex, to: self.storedIndex)`; the store's
+    /// remove-then-insert places the source in this cell's slot uniformly for
+    /// up or down moves (verified by `testMoveEntryDropOnDest…`).
     @ViewBuilder
     private func collectionCell(_ entry: LibraryEntry,
                                 storedIndex: Int,
                                 collection c: GenomeCollection,
                                 in filtered: [LibraryEntry]) -> some View {
         cellCore(entry, in: filtered)
+            // Drop affordance (HIG: visible target feedback) — accent border +
+            // slight grow on the cell the drag is hovering. Purely visual.
+            .overlay {
+                if reorderDropStoredIndex == storedIndex {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                        .scaleEffect(1.02)
+                        .allowsHitTesting(false)
+                }
+            }
+            .draggable(CollectionReorderPayload(collectionID: c.id, storedIndex: storedIndex))
+            .dropDestination(
+                for: CollectionReorderPayload.self,
+                action: { items, _ in
+                    reorderDropStoredIndex = nil
+                    guard let src = items.first,
+                          src.collectionID == c.id,               // no cross-collection reorder
+                          src.storedIndex != storedIndex else { return false }   // drop on self = no-op
+                    model.collectionsStore.moveEntry(in: c.id,
+                                                      from: src.storedIndex,
+                                                      to: storedIndex)
+                    return true
+                },
+                isTargeted: { hovering in
+                    // One LibraryView `@State` backs the per-cell highlight
+                    // (only one cell is the target at a time).
+                    reorderDropStoredIndex = hovering ? storedIndex
+                        : (reorderDropStoredIndex == storedIndex ? nil : reorderDropStoredIndex)
+                }
+            )
             .contextMenu {
                 Button("Play") { openWindow(value: PlaybackRoute(entry)) }
                 Divider()
@@ -961,4 +1008,32 @@ private enum FilterFacet: String, CaseIterable, Identifiable {
 private struct ChipInfo {
     let text: String
     let icon: String?
+}
+
+// MARK: - Collection drag-and-drop reorder (private payload + UTType)
+
+/// In-app payload for collection drag-reorder. Carries the source collection id
+/// (so a drag can't reorder a different collection) and the source's STORED
+/// `entries` index — a stable array position, never a hash-order value (rule #2).
+/// On a private UTType so it never collides with the `.fileURL` import channel.
+///
+/// `Codable`/`Sendable`/`Transferable`: the drag is a value snapshot (no live
+/// references), and `CodableRepresentation` serializes it for the pasteboard.
+private struct CollectionReorderPayload: Codable, Sendable, Transferable {
+    let collectionID: UUID
+    let storedIndex: Int
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .emberweftCollectionReorder)
+    }
+}
+
+extension UTType {
+    /// Private in-app type for collection-reorder drags. Emberweft owns it
+    /// (`exportedAs`); it only ever rides same-window drags between the
+    /// collection grid's cells. Finder/file drags use `.fileURL` instead, so the
+    /// two DnD channels stay disjoint (a file import never fires the reorder
+    /// `dropDestination`, and a reorder drag never fires the `.fileURL` `.onDrop`).
+    fileprivate static let emberweftCollectionReorder =
+        UTType(exportedAs: "com.emberweft.collection-reorder")
 }

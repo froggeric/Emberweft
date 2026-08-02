@@ -150,6 +150,39 @@ final class CollectionsStoreTests: XCTestCase {
         XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["a", "b"])
     }
 
+    // MARK: - moveEntry drag-reorder contract (drop-on-dest = take dest's slot)
+    //
+    // The collection grid's drag-and-drop calls `moveEntry(from: srcStored, to:
+    // dstStored)` for a drop of `src` onto `dest`. These pin the exact ordering
+    // the GUI relies on: the source takes the destination's stored slot, and the
+    // entries between shift toward the vacated slot — uniform for up or down.
+
+    func testMoveEntryDropOnDestDownTakesDestSlot() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // Drop a(stored 0) onto c(stored 2): a takes slot 2, b/c shift up.
+        store.moveEntry(in: c.id, from: 0, to: 2)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "c", "a", "d"])
+    }
+
+    func testMoveEntryDropOnDestUpTakesDestSlot() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        // Drop d(stored 3) onto a(stored 0): d takes slot 0, b/c/d... shift down.
+        store.moveEntry(in: c.id, from: 3, to: 0)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["d", "a", "b", "c"])
+    }
+
+    func testMoveEntryDropOnSelfIsNoOp() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle)])
+        // Dropping a cell onto itself (from == to) must not change order.
+        store.moveEntry(in: c.id, from: 1, to: 1)
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["a", "b"])
+    }
+
     // MARK: - Ordered playlist semantics (rule #2)
 
     func testEntriesOrderIsStableAcrossOperations() {
