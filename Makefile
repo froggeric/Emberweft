@@ -3,13 +3,20 @@
 
 SWIFT   := swift
 
-.PHONY: build release test test-fast test-parity test-perf run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep feature-cache help
+.PHONY: build release dist test test-fast test-parity test-perf run cli clean format lint bootstrap-oracle regen-goldens fetch-sheep sync-sheep feature-cache help
 
 build:        ## Build (debug)
 	$(SWIFT) build
 
 release:      ## Build (release)
 	$(SWIFT) build -c release
+
+dist: release ## Build a release product into ./dist (GUI + CLI + their resource bundles). Gitignored — reproducible via this target.
+	@rm -rf dist && mkdir -p dist
+	cp .build/release/emberweft .build/release/emberweft-gui dist/
+	cp -R .build/release/emberweft_FlameRenderer.bundle .build/release/emberweft_EmberweftGUI.bundle dist/
+	@echo "Release built into dist/. Run from that folder so the resource bundles resolve:"
+	@echo "  cd dist && ./emberweft-gui &"
 
 test:         ## Run the full pre-merge suite (fast + parity; ~12 min). Excludes the opt-in perf gate — use `make test-perf`.
 	$(SWIFT) test --filter FlameKitTests --filter EmberweftCLITests --filter FlamePlayerTests --filter FlameReferenceTests --filter FlameRendererTests
