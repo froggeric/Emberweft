@@ -1,6 +1,20 @@
 import Foundation
 import FlameKit
 
+/// C-style nontrapping integer truncation: `NaN → 0`, out-of-range → saturate to
+/// ±`Int.max/2`, else truncate toward zero. Bit-identical to `Int(d)` for finite
+/// in-range `d`. Guards the palette-index `Int(dblIndex0)` against a non-finite
+/// `binColor` on degenerate genomes (flam3's C `(int)` is nontrapping); the value
+/// is clamped to `[0, cmapSize-1]` before indexing, so saturation is safe here.
+/// Duplicated from Variations.swift (different module; see there for the full
+/// ±Int.max/2 rationale — `cell`'s downstream `2*x` overflow).
+private func intTrunc(_ d: Double) -> Int {
+    if d.isNaN { return 0 }
+    if d >= Double(Int.max / 2) { return Int.max / 2 }
+    if d <= Double(Int.min / 2) { return Int.min / 2 }
+    return Int(d)
+}
+
 /// Faithful Swift port of flam3's chaos game (flam3.c:`flam3_iterate` +
 /// rect.c:`iter_thread`). The per-iteration ISAAC RNG consumption order
 /// matches flam3 exactly so that RNG-dependent variations (julia, noise,
@@ -234,7 +248,7 @@ public enum ChaosGame {
                                 // jumps (channel wraparounds / spiky ES palettes) diverges
                                 // badly from flam3, so branch on the genome's paletteMode.
                                 let dblIndex0 = binColor * Double(cmapSize)
-                                var colorIndex0 = Int(dblIndex0)
+                                var colorIndex0 = intTrunc(dblIndex0)
                                 let interpR: Double, interpG: Double, interpB: Double, interpA: Double
                                 if flame.paletteMode == .linear {
                                     var dblFrac: Double

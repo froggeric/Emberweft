@@ -63,6 +63,7 @@ struct KeyboardHelpView: View {
     private let previewShortcuts: [Shortcut] = [
         .init(key: "Space", action: "Play / pause"),
         .init(key: "← / →", action: "Scrub one frame"),
+        .init(key: "⌘,", action: "Preview quality & FPS"),
         .init(key: "Esc", action: "Close window"),
         .init(key: "+", action: "Like"),
         .init(key: "0", action: "Neutral"),

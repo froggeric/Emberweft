@@ -1,5 +1,24 @@
 import Foundation
 
+/// C-style nontrapping integer truncation: `NaN → 0`, out-of-range → saturate to
+/// ±`Int.max/2`, else truncate toward zero. Bit-identical to `Int(d)` for the
+/// finite in-range values normal genomes produce (zero parity impact); it only
+/// prevents the traps that flam3's C `(int)` cast rides out as
+/// undefined-but-nontrapping behavior. Saturation target is ±`Int.max/2` (NOT
+/// ±`Int.max`) because the `cell` variation then does `y *= 2` / `x = -(2*x+1)` on
+/// the result — those overflow `Int` (Swift traps; C wraps) for |x| > Int.max/2.
+/// ±Int.max/2 keeps `2*x` and `2*x+1` in range. For normal genomes
+/// `floor(p/cell_size)` is tiny ⇒ `Int(d)` exact; only degenerate `cell_size≈0`
+/// (⇒ `inv=±Inf`) saturates, where flam3's `(int)floor(±Inf)` is UB and the
+/// `x*cs` term vanishes (cs≈0) so the output is still `(w·p.x, -w·p.y)`. Applied at
+/// `cell` + `rings2` (ChaosGame has its own copy at the palette-index site).
+private func intTrunc(_ d: Double) -> Int {
+    if d.isNaN { return 0 }
+    if d >= Double(Int.max / 2) { return Int.max / 2 }
+    if d <= Double(Int.min / 2) { return Int.min / 2 }
+    return Int(d)
+}
+
 public enum Variations {
     // Swift 6 strict concurrency: mutable static state must be annotated. The
     // CPU reference is single-threaded by design (constraint #2), and access is
@@ -1405,7 +1424,9 @@ public enum Variations {
             let val = resolve("rings2", "rings2_val", par)
             var r = (p.x*p.x + p.y*p.y).squareRoot()
             let dx = val*val + eps
-            r += -2.0*dx*Double(Int((r + dx)/(2.0*dx))) + r*(1.0 - dx)
+            // r can diverge to ±Inf on chaotic trajectories ⇒ Int(±Inf) trap;
+            // intTrunc guards it (flam3's C (int) is nontrapping).
+            r += -2.0*dx*Double(intTrunc((r + dx)/(2.0*dx))) + r*(1.0 - dx)
             let a = atan2(p.x, p.y)
             return SIMD2(w * sin(a) * r, w * cos(a) * r)
         }
@@ -1533,8 +1554,10 @@ public enum Variations {
         t["cell"]         = { p, w, par, _ in
             let cs = resolve("cell", "cell_size", par)
             let inv = 1.0 / cs
-            var x = Int(floor(p.x * inv))
-            var y = Int(floor(p.y * inv))
+            // cell_size=0 ⇒ inv=±Inf; intTrunc avoids Int(±Inf) (flam3's C (int) is
+            // nontrapping). Normal cell_size>0 ⇒ bit-identical to the old Int(floor).
+            var x = intTrunc(floor(p.x * inv))
+            var y = intTrunc(floor(p.y * inv))
             let dx = p.x - Double(x) * cs
             let dy = p.y - Double(y) * cs
             if y >= 0 {

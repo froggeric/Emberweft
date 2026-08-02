@@ -49,6 +49,11 @@ public final class SequencePlaybackViewModel {
     public private(set) var sheepCount: Int = 0
     public private(set) var currentSheep: Int = 0
 
+    /// Live measured framerate (rolling average, ~2 Hz publish — see `FPSMeter`).
+    /// Diagnostic only: 0 while paused/loading. Measured at display time (the
+    /// dispatcher paces frames internally; this reports the achieved cadence).
+    public private(set) var measuredFPS: Double = 0
+
     private var flames: [Flame] = []
     private var dispatcher: PlaybackDispatcher?
     private var runTask: Task<Void, Never>?
@@ -56,8 +61,11 @@ public final class SequencePlaybackViewModel {
     private var renderer: any Renderer = CPUFrameRenderer()
     private var params: RenderParams = RenderParams(seed: 1, width: 1, height: 1,
                                                     oversample: 1, samplesPerPixel: 1)
-    private var targetFPS: Double = 60
+    /// Read-only outside `load` — the FPS readout's band target.
+    public private(set) var targetFPS: Double = 60
     private var framesPerSegment: Int = 160
+    private var fpsMeter = FPSMeter()
+    private let fpsClock = WallClock()
 
     public init() {}
 
@@ -75,6 +83,8 @@ public final class SequencePlaybackViewModel {
         self.framesPerSegment = 160
         self.sheepCount = flames.count
         self.position = 0
+        fpsMeter.reset()
+        measuredFPS = 0
         if flames.isEmpty {
             loadError = "This collection has no renderable genomes."
         } else {
@@ -117,6 +127,8 @@ public final class SequencePlaybackViewModel {
         isPlaying = false
         runTask?.cancel()
         runTask = nil
+        fpsMeter.reset()
+        measuredFPS = 0
     }
 
     public func togglePlaying() { isPlaying ? pause() : play() }
@@ -129,7 +141,31 @@ public final class SequencePlaybackViewModel {
         dispatcher = nil
         isPlaying = false
         position = 0
+        fpsMeter.reset()
+        measuredFPS = 0
         if !flames.isEmpty { buildDispatcher(); play() }
+    }
+
+    /// Apply new preview params (preset/quality/target-FPS/backend change from the
+    /// preview-quality popover). The dispatcher captures params at build time and
+    /// paces to `targetFPS`, so a live swap isn't supported — this rebuilds it with
+    /// the new params and RESUMES if the user was playing (position resets to the
+    /// first genome; the FPS readout then reflects the new quality). If paused,
+    /// the rebuild is staged and applies on the next `play()`.
+    public func updateParams(prefs: AppPreferences) {
+        let wasPlaying = isPlaying
+        self.params = prefs.previewParams()
+        self.renderer = (prefs.backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.targetFPS = Double(prefs.targetFPS)
+        runTask?.cancel(); runTask = nil
+        dispatcher = nil
+        isPlaying = false
+        position = 0
+        fpsMeter.reset()
+        measuredFPS = 0
+        guard !flames.isEmpty else { return }
+        buildDispatcher()
+        if wasPlaying { play() }
     }
 
     /// Fire-and-forget teardown for `.onDisappear` (strong self — see
@@ -147,6 +183,8 @@ public final class SequencePlaybackViewModel {
         isPlaying = false
         runTask?.cancel()
         runTask = nil
+        fpsMeter.reset()
+        measuredFPS = 0
         await dispatcher?.stop()
     }
 
@@ -158,6 +196,9 @@ public final class SequencePlaybackViewModel {
         position = info.blend
         // Loop segment ids are even; the sheep for loop segment `s` is `s/2`.
         if info.kind == .loop { currentSheep = info.segmentId / 2 % max(sheepCount, 1) }
+        if let measured = fpsMeter.record(now: fpsClock.now()) {
+            measuredFPS = measured
+        }
     }
 
     // MARK: - Run loop

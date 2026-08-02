@@ -13,6 +13,7 @@ struct PlaybackWindow: View {
     @State private var loadError: String?
     @State private var degenerate = false
     @State private var showKeyboardHelp = false
+    @State private var showPreviewQuality = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,13 @@ struct PlaybackWindow: View {
         }
         .frame(minWidth: 640, minHeight: 420)
         .task(id: entry.id) { await start() }
+        .onChange(of: previewKey) {
+            // Live re-apply: the single-genome loop picks up new params next frame
+            // (position + play state preserved) so the FPS readout responds live.
+            vm.updateParams(model.prefs.previewParams(),
+                            backend: model.prefs.backend,
+                            targetFPS: Double(model.prefs.targetFPS))
+        }
         .onDisappear { vm.beginStop() }
         // Keyboard: Space toggles play/pause, Esc closes.
         .background {
@@ -37,6 +45,8 @@ struct PlaybackWindow: View {
                     .keyboardShortcut(" ", modifiers: [])
                 Button("Close") { close() }
                     .keyboardShortcut(.escape, modifiers: [])
+                Button("Preview quality") { showPreviewQuality.toggle() }
+                    .keyboardShortcut(",", modifiers: .command)
                 Button("Like") { model.metadataStore.setSentiment(1, for: entry) }
                     .keyboardShortcut("=", modifiers: [])
                 Button("Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
@@ -63,7 +73,8 @@ struct PlaybackWindow: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 14) {
+        @Bindable var model = model
+        return HStack(spacing: 14) {
             Button { vm.togglePlaying() } label: {
                 Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title3)
             }
@@ -79,6 +90,12 @@ struct PlaybackWindow: View {
             .accessibilityHint("Scrub the loop; ←/→ step one frame")
 
             frameReadout
+
+            PreviewPerfCluster(measuredFPS: vm.measuredFPS,
+                               targetFPS: vm.targetFPS,
+                               isPlaying: vm.isPlaying,
+                               prefs: $model.prefs,
+                               showPopover: $showPreviewQuality)
 
             Divider().frame(height: 22)
 
@@ -124,6 +141,15 @@ struct PlaybackWindow: View {
     private var currentFrame: Int {
         let f = Int((vm.position * Double(vm.framesPerSegment)).rounded())
         return min(max(f, 0), vm.framesPerSegment)
+    }
+
+    /// A stable key over the preview-affecting prefs; a change re-applies params
+    /// live via `onChange` so the FPS readout reflects the new quality/settings.
+    private var previewKey: String {
+        let p = model.prefs
+        return "\(p.previewPreset.rawValue)|\(p.previewWidth)x\(p.previewHeight)|" +
+               "spp\(p.previewSamplesPerPixel)|os\(p.previewOversample)|" +
+               "be\(p.backend.rawValue)|fps\(p.targetFPS)"
     }
 
     /// Total loop duration in seconds (`framesPerSegment / targetFPS`).

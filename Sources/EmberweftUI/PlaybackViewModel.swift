@@ -30,6 +30,10 @@ public final class PlaybackViewModel {
     public var position: Double = 0          // 0…1; the transport slider binds here
     public var cycles: Int = 1               // loop rotations over [0,1]
 
+    /// Live measured framerate (rolling average, ~2 Hz publish — see `FPSMeter`).
+    /// Diagnostic only: 0 while paused/loading (the readout shows an em dash).
+    public private(set) var measuredFPS: Double = 0
+
     private var flame: Flame?
     private var params: RenderParams = RenderParams(seed: 1, width: 1, height: 1,
                                                     oversample: 1, samplesPerPixel: 1)
@@ -41,6 +45,7 @@ public final class PlaybackViewModel {
     private var clock: any PlaybackClock = WallClock()
     private var loopTask: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
+    private var fpsMeter = FPSMeter()
 
     public init() {}
 
@@ -61,6 +66,23 @@ public final class PlaybackViewModel {
         self.framesPerSegment = framesPerSegment
         self.cycles = cycles
         self.position = 0
+        fpsMeter.reset()
+        measuredFPS = 0
+    }
+
+    /// Hot-swap render params / backend / target FPS mid-playback WITHOUT resetting
+    /// position or play state — the loop picks up `params`/`targetFPS` on the next
+    /// frame. Used by the preview-quality popover so the user can tune and watch
+    /// the FPS readout respond live. The FPS meter is left running (its rolling
+    /// average adapts to the new frame cost over ~0.5 s, a smooth transition
+    /// rather than a "—" blip per tweak). Determinism is per-frame (rule #2): a
+    /// given `position` + `params` always renders the same pixels.
+    public func updateParams(_ params: RenderParams,
+                             backend: AppPreferences.Backend,
+                             targetFPS: Double) {
+        self.params = params
+        self.renderer = (backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.targetFPS = targetFPS
     }
 
     // MARK: - Transport
@@ -75,6 +97,8 @@ public final class PlaybackViewModel {
         isPlaying = false
         loopTask?.cancel()
         loopTask = nil
+        fpsMeter.reset()
+        measuredFPS = 0
     }
 
     public func togglePlaying() { isPlaying ? pause() : play() }
@@ -110,6 +134,8 @@ public final class PlaybackViewModel {
         loopTask?.cancel()
         loopTask = nil
         position = 0
+        fpsMeter.reset()
+        measuredFPS = 0
     }
 
     /// Fire-and-forget teardown for `.onDisappear`. Captures self STRONGLY: the VM
@@ -148,6 +174,9 @@ public final class PlaybackViewModel {
                 let p = Double(n).truncatingRemainder(dividingBy: Double(fps)) / Double(fps)
                 self.position = p
                 await self.renderOnce(at: p)
+                if let measured = self.fpsMeter.record(now: self.clock.now()) {
+                    self.measuredFPS = measured
+                }
                 if !self.isPlaying || Task.isCancelled { break }
                 n += 1
                 await self.clock.sleep(until: origin + Double(n) / self.targetFPS)

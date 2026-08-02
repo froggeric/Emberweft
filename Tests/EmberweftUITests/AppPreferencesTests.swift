@@ -209,4 +209,96 @@ final class AppPreferencesTests: XCTestCase {
         // No FileManager API exists on AppPreferences — removal is structural,
         // so nothing on disk is ever touched. (No assertion needed; structural.)
     }
+
+    // MARK: - PreviewPreset / PreviewResolution (M4 final)
+
+    func testPreviewPresetDefaultsToDraft() {
+        XCTAssertEqual(AppPreferences().previewPreset, .draft)
+        XCTAssertEqual(AppPreferences().previewOversample, 1)
+    }
+
+    /// Default `.draft` is byte-identical to the pre-preset preview (the
+    /// raw-field defaults), so existing users see no behavior change on upgrade.
+    func testDraftPresetMatchesLegacyRawDefaults() {
+        let prefs = AppPreferences()
+        let pp = prefs.previewParams()
+        XCTAssertEqual(pp.width, prefs.previewWidth)
+        XCTAssertEqual(pp.height, prefs.previewHeight)
+        XCTAssertEqual(pp.samplesPerPixel, prefs.previewSamplesPerPixel)
+        XCTAssertEqual(pp.oversample, 1)
+    }
+
+    func testPreviewParamsMatchesEachNamedPreset() {
+        for preset in [AppPreferences.PreviewPreset.draft, .balanced, .quality] {
+            var prefs = AppPreferences()
+            prefs.previewPreset = preset
+            // Set raw fields to sentinel values to PROVE the named preset ignores them.
+            prefs.previewWidth = 1; prefs.previewHeight = 1
+            prefs.previewSamplesPerPixel = 1; prefs.previewOversample = 9
+            let pp = prefs.previewParams()
+            XCTAssertEqual(pp.width, preset.resolution.width)
+            XCTAssertEqual(pp.height, preset.resolution.height)
+            XCTAssertEqual(pp.samplesPerPixel, preset.samplesPerPixel)
+            XCTAssertEqual(pp.oversample, preset.oversample)
+            XCTAssertEqual(pp.seed, prefs.seed)
+        }
+    }
+
+    func testPreviewParamsCustomUsesRawFields() {
+        var prefs = AppPreferences()
+        prefs.previewPreset = .custom
+        prefs.previewWidth = 100; prefs.previewHeight = 50
+        prefs.previewSamplesPerPixel = 7; prefs.previewOversample = 3
+        let pp = prefs.previewParams()
+        XCTAssertEqual(pp.width, 100)
+        XCTAssertEqual(pp.height, 50)
+        XCTAssertEqual(pp.samplesPerPixel, 7)
+        XCTAssertEqual(pp.oversample, 3)
+    }
+
+    func testPreviewPresetRoundTrip() throws {
+        let dir = try tempDir()
+        var prefs = AppPreferences()
+        prefs.previewPreset = .quality
+        prefs.previewOversample = 2
+        try prefs.save(directory: dir)
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertEqual(loaded.previewPreset, .quality)
+        XCTAssertEqual(loaded.previewOversample, 2)
+    }
+
+    /// A pre-M4-final `preferences.json` (no `previewPreset`/`previewOversample`)
+    /// must load as `.draft` / `1` (additive decode), never quarantine.
+    func testLegacyPrefsMissingPreviewPresetLoadsDraft() throws {
+        let dir = try tempDir()
+        let json = """
+        {"backend":"metal","defaultSamplesPerPixel":8,"density":"medium",
+         "directorySources":[],"previewHeight":480,"previewSamplesPerPixel":2,
+         "previewWidth":854,"qualityPreset":"medium","seed":1,"targetFPS":60,
+         "thumbnailBackend":"metal","thumbnailHeight":144,"thumbnailRenderHeight":720,
+         "thumbnailRenderWidth":1280,"thumbnailSPP":8,"thumbnailWidth":256}
+        """
+        try Data(json.utf8).write(to: dir.appendingPathComponent("preferences.json"))
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertEqual(loaded.previewPreset, .draft, "legacy file must default to .draft (additive)")
+        XCTAssertEqual(loaded.previewOversample, 1)
+    }
+
+    func testPreviewResolutionNearestAndLabels() {
+        XCTAssertEqual(AppPreferences.PreviewResolution.nearest(width: 1280, height: 720), .p720)
+        XCTAssertEqual(AppPreferences.PreviewResolution.nearest(width: 854, height: 480), .p480)
+        XCTAssertEqual(AppPreferences.PreviewResolution.nearest(width: 1920, height: 1080), .p1080)
+        XCTAssertEqual(AppPreferences.PreviewResolution.nearest(width: 3840, height: 2160), .p4k)
+        XCTAssertEqual(AppPreferences.PreviewResolution.p4k.label, "4K")
+        // Closer to 720p than 1080p by pixel count.
+        XCTAssertEqual(AppPreferences.PreviewResolution.nearest(width: 1300, height: 730), .p720)
+    }
+
+    func testPresetDerivedValuesAreInternallyConsistent() {
+        // The preset's computed props are the single source of truth previewParams reads.
+        for preset in [AppPreferences.PreviewPreset.draft, .balanced, .quality] {
+            XCTAssertEqual(preset.detail.contains("\(preset.samplesPerPixel) spp"), true,
+                           "detail should mention the preset's spp")
+        }
+    }
 }

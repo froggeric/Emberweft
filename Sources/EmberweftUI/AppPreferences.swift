@@ -46,6 +46,17 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// is a cheap speedup with minor softness. 480p default.
     public var previewWidth: Int
     public var previewHeight: Int
+    /// Preview oversample — used ONLY when `previewPreset == .custom`. The named
+    /// presets (`draft`/`balanced`/`quality`) carry their own oversample. Default 1.
+    public var previewOversample: Int
+    /// Realtime-preview quality preset (M4 final). `.custom` falls back to the
+    /// individual `previewWidth`/`previewHeight`/`previewSamplesPerPixel`/
+    /// `previewOversample` fields; the named presets derive all four from the
+    /// preset and ignore those fields. Default `.draft` (854×480, spp=2, os=1),
+    /// which is byte-identical to the pre-preset preview, so a legacy
+    /// `preferences.json` is behavior-preserving on upgrade. The preset→params
+    /// mapping is deterministic (rule #2); live FPS is a separate diagnostic.
+    public var previewPreset: PreviewPreset
     /// Fixed render seed for determinism (rule #2).
     public var seed: UInt64
 
@@ -69,6 +80,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         previewSamplesPerPixel: Int = 2,
         previewWidth: Int = 854,
         previewHeight: Int = 480,
+        previewOversample: Int = 1,
+        previewPreset: PreviewPreset = .draft,
         seed: UInt64 = 1,
         density: Density = .medium
     ) {
@@ -86,6 +99,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.previewSamplesPerPixel = previewSamplesPerPixel
         self.previewWidth = previewWidth
         self.previewHeight = previewHeight
+        self.previewOversample = previewOversample
+        self.previewPreset = previewPreset
         self.seed = seed
         self.density = density
     }
@@ -101,7 +116,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         case qualityPreset, targetFPS, defaultSamplesPerPixel, backend, thumbnailBackend
         case directorySources, thumbnailWidth, thumbnailHeight
         case thumbnailRenderWidth, thumbnailRenderHeight, thumbnailSPP
-        case previewSamplesPerPixel, previewWidth, previewHeight, seed, density
+        case previewSamplesPerPixel, previewWidth, previewHeight
+        case previewOversample, previewPreset, seed, density
     }
 
     /// Legacy key kept ONLY for one-way migration from the pre-multi-folder
@@ -140,6 +156,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.previewSamplesPerPixel = try c.decode(Int.self, forKey: .previewSamplesPerPixel)
         self.previewWidth = try c.decode(Int.self, forKey: .previewWidth)
         self.previewHeight = try c.decode(Int.self, forKey: .previewHeight)
+        self.previewOversample = try c.decodeIfPresent(Int.self, forKey: .previewOversample) ?? 1
+        self.previewPreset = try c.decodeIfPresent(PreviewPreset.self, forKey: .previewPreset) ?? .draft
         self.seed = try c.decode(UInt64.self, forKey: .seed)
         self.density = try c.decodeIfPresent(AppPreferences.Density.self, forKey: .density) ?? .medium
     }
@@ -197,16 +215,31 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         )
     }
 
-    /// Fast/low-quality `RenderParams` for realtime playback preview — renders at
-    /// `previewWidth × previewHeight` (the layer scales it to the window) with low
-    /// spp so each frame is cheap and playback sustains the target fps.
+    /// Fast/low-quality `RenderParams` for realtime playback preview — the layer
+    /// scales the internal buffer to the window, so a smaller buffer + low spp keeps
+    /// each frame cheap. The `previewPreset` selects the buffer/spp/oversample:
+    /// `.custom` uses the individual `previewWidth/Height/SamplesPerPixel/Oversample`
+    /// fields; the named presets derive all four (deterministic, rule #2). Default
+    /// `.draft` (854×480 · 2 spp · 1×) is byte-identical to the pre-preset preview.
     public func previewParams() -> RenderParams {
-        RenderParams(
+        let w: Int, h: Int, spp: Int, os: Int
+        switch previewPreset {
+        case .custom:
+            w = previewWidth; h = previewHeight
+            spp = previewSamplesPerPixel; os = previewOversample
+        case .draft, .balanced, .quality:
+            // Single source of truth: the preset's computed resolution/spp/os.
+            w = previewPreset.resolution.width
+            h = previewPreset.resolution.height
+            spp = previewPreset.samplesPerPixel
+            os = previewPreset.oversample
+        }
+        return RenderParams(
             seed: seed,
-            width: max(previewWidth, 1),
-            height: max(previewHeight, 1),
-            oversample: 1,
-            samplesPerPixel: max(previewSamplesPerPixel, 1)
+            width: max(w, 1),
+            height: max(h, 1),
+            oversample: max(os, 1),
+            samplesPerPixel: max(spp, 1)
         )
     }
 
@@ -291,6 +324,119 @@ public struct AppPreferences: Codable, Sendable, Equatable {
             case .low, .medium: return 1
             case .high: return 2
             }
+        }
+    }
+
+    /// Realtime-preview quality preset (M4 final). `.custom` defers to the
+    /// individual `previewWidth`/`previewHeight`/`previewSamplesPerPixel`/
+    /// `previewOversample` fields; the named presets carry fixed values (the
+    /// `resolution`/`samplesPerPixel`/`oversample` computed props below — the
+    /// single source of truth `previewParams()` reads). Display helpers
+    /// (`label`/`detail`/`symbol`) drive the preset popover in both playback
+    /// windows.
+    public enum PreviewPreset: String, Codable, CaseIterable, Sendable, Equatable {
+        case draft, balanced, quality, custom
+
+        /// Buffer resolution (the `CAMetalLayer` scales it to the window).
+        public var resolution: PreviewResolution {
+            switch self {
+            case .draft: return .p480
+            case .balanced: return .p720
+            case .quality: return .p1080
+            case .custom: return .p480   // unused — `.custom` reads the raw fields
+            }
+        }
+        public var samplesPerPixel: Int {
+            switch self {
+            case .draft: return 2
+            case .balanced: return 8
+            case .quality: return 16
+            case .custom: return 2       // unused — `.custom` reads the raw fields
+            }
+        }
+        public var oversample: Int {
+            switch self {
+            case .draft: return 1
+            case .balanced: return 1
+            case .quality: return 2
+            case .custom: return 1       // unused — `.custom` reads the raw fields
+            }
+        }
+
+        /// Capitalized display label.
+        public var label: String {
+            switch self {
+            case .draft: return "Draft"
+            case .balanced: return "Balanced"
+            case .quality: return "Quality"
+            case .custom: return "Custom"
+            }
+        }
+        /// One-line spec for the popover row (resolution · spp · oversample).
+        public var detail: String {
+            switch self {
+            case .draft: return "854×480 · 2 spp"
+            case .balanced: return "1280×720 · 8 spp"
+            case .quality: return "1920×1080 · 16 spp · 2×"
+            case .custom: return "Custom values"
+            }
+        }
+        /// SF Symbol for the popover row.
+        public var symbol: String {
+            switch self {
+            case .draft: return "speedometer"
+            case .balanced: return "sparkle"
+            case .quality: return "wand.and.stars"
+            case .custom: return "slider.horizontal.3"
+            }
+        }
+    }
+
+    /// Standard preview buffer tiers. The metal layer scales the buffer to the
+    /// window (`.resizeAspect`), so users reason in tiers rather than free pixel
+    /// sizes; arbitrary widths buy nothing. `nearest(to:)` maps a custom (w,h)
+    /// back to the closest tier for the popover's resolution menu.
+    public enum PreviewResolution: String, CaseIterable, Sendable, Equatable {
+        case p480, p720, p1080, p1440, p4k
+
+        public var width: Int {
+            switch self {
+            case .p480: return 854
+            case .p720: return 1280
+            case .p1080: return 1920
+            case .p1440: return 2560
+            case .p4k: return 3840
+            }
+        }
+        public var height: Int {
+            switch self {
+            case .p480: return 480
+            case .p720: return 720
+            case .p1080: return 1080
+            case .p1440: return 1440
+            case .p4k: return 2160
+            }
+        }
+        public var label: String {
+            switch self {
+            case .p480: return "480p"
+            case .p720: return "720p"
+            case .p1080: return "1080p"
+            case .p1440: return "1440p"
+            case .p4k: return "4K"
+            }
+        }
+        /// Closest tier by pixel count to the given buffer size (deterministic;
+        /// iterates the small fixed `allCases` array — rule #2 safe).
+        public static func nearest(width w: Int, height h: Int) -> PreviewResolution {
+            let target = Double(w) * Double(h)
+            var best = PreviewResolution.p480
+            var bestErr = Double.infinity
+            for r in PreviewResolution.allCases {
+                let err = abs(Double(r.width) * Double(r.height) - target)
+                if err < bestErr { bestErr = err; best = r }
+            }
+            return best
         }
     }
 
