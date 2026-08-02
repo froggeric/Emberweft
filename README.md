@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.2.0 — CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, and a native SwiftUI app with a library browser + click-to-play are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.3.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, and a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback) are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4, v0.2.0):**
+**Works now (M0–M4 complete, v0.3.0):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -27,14 +27,13 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 - Animation: seamless sheep **loops** (pure affine rotation) + smooth **transitions** between genomes, alternating endlessly — the Electric Sheep sequence
 - **Motion blur** — faithful `temporal_samples` port (`--temporal-samples N`); box / gaussian / exp temporal filters
 - Complete flam3 variation coverage — all **99 of 99** variations ported to CPU + Metal and validated ≥38 dB vs `flam3` (the classic set, the 16 special-sauce variations, the trig family, and the parametric/RNG remainder through `pre_blur`)
-- **Native SwiftUI app** (`emberweft-gui`) — a library browser with thumbnails over a curated 24-genome seed bundle (or any folder you open), click-to-play realtime preview, and persisted settings. Thumbnails render on a background Metal queue (off-main, no UI freeze).
+- **Native SwiftUI studio** (`emberweft-gui`): a `NavigationSplitView` sidebar browser (All / Library / ★ Liked / Imported / Folders), multi-select with bulk actions, tri-state sentiment (👍/○/👎), search + filter (sentiment / category / palette), drag-and-drop import, collections/playlists with drag reorder, and a non-modal click-to-play playback window. Thumbnails render on a background Metal queue (off-main, no UI freeze); settings persist.
 
 **Planned (M5+):**
 - macOS screensaver bundle
 - Long-form export (MP4/MOV) for music videos and installations
 - Music-video mode: offline + realtime audio-reactive
 - Multi-resolution: 720p / 1080p / 1440p / 4K; landscape & vertical
-- Search/filter, drag-drop import, favorites, and a metadata editor in the app
 
 <!-- Screenshots placeholder: app window, screensaver preview, export dialog -->
 
@@ -60,8 +59,10 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.1.7** | ✅ Done | Transition-faithfulness audit (no remaining INTERP gaps) + Camera.scale log-space (perceptual, Weber-Fechner) |
 | **v0.1.8–v0.1.9** | ✅ Done | Loop→transition boundary: port flam3's seqflag shortcut (v0.1.8), revert the offline sharp-frame regression (v0.1.9) |
 | **v0.1.10** | ✅ Done | **Fix:** seamless boundaries — clip one-sided variation "leaks" (the blur-invariant over-bright at loop↔transition boundaries) |
-| **v0.2.0** | ✅ Done | **M4:** SwiftUI app + library browser + click-to-play (off-main Metal thumbnails); `curate` CLI |
-| M5 | **Current** | macOS screensaver bundle |
+| **v0.2.0** | ✅ Done | **M4 (part 1):** SwiftUI app first slice: library browser + click-to-play (off-main Metal thumbnails); `curate` CLI |
+| **v0.3.0** | ✅ Done | **M4 complete:** sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections + reorder, non-modal playback window |
+| M4 | ✅ Done | Native SwiftUI generative-flame studio |
+| M5 | Current | macOS screensaver bundle |
 | M6 | Planned | Export pipeline (incl. long-form) + codecs |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
@@ -86,7 +87,7 @@ swift run emberweft --list-backends
 swift run emberweft-gui      # launch the SwiftUI app
 ```
 
-Browse the curated seed library (or **Open Directory…** → point at `genomes/electric-sheep/sheep/` for the full flock), click a thumbnail to play it in a realtime window. Thumbnails render off-main (Metal background queue) so the UI never freezes; settings (backend, quality, target FPS) persist across launches.
+The sidebar switches between **All** (unified), **Library** (curated 24-genome bundle), **★ Liked**, **Imported**, and each folder you open (**Open Directory…** → point at `genomes/electric-sheep/sheep/` for the full flock; open several at once). **Drag-and-drop** `.flam3` files in to import them. Click a thumbnail to open a non-modal realtime playback window (browse and rate while it plays); **filter** by name / sentiment / category / palette; **multi-select** (`⌘`/shift/`⌘A`) for bulk Like/Dislike or to **Save as Collection**; mark each genome with a tri-state **sentiment** (👍/○/👎). Collections play as a loop+transition sequence in their own window. Keyboard: Space, Esc, `+`/`0`/`−`, `⌘1–4`, `⌘?`. Thumbnails render off-main (Metal background queue) so the UI never freezes; settings persist across launches.
 
 `--backend cpu` is the default for the CLI. `metal` is used when a Metal device is available (check with `--list-backends`). `animate` honors `--temporal-samples N` for motion blur (defaults to the genome's value on CPU; capped at 64 on Metal).
 
@@ -233,4 +234,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 are complete (v0.2.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the native SwiftUI app + library browser all work today. M5 (macOS screensaver) is next — see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 are complete (v0.3.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).

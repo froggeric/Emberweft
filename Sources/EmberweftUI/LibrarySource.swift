@@ -7,4 +7,6 @@ public enum LibrarySource: Sendable, Hashable {
     case bundle
     /// A genome discovered under a user-opened directory root.
     case directory(URL)
+    /// A genome dragged-and-dropped into the app's `Imported` folder.
+    case imported
 }

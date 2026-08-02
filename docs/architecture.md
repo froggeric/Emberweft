@@ -156,11 +156,24 @@ It depends on `FlameKit`, `FlameReference`, `FlameRenderer`, `FlamePlayer` and a
   the app provides them.
 - **`ThumbnailService`** — renders small posters off-main (see below), downscales,
   caches (bounded `NSCache` + disk). Excludes degenerate genomes.
-- **`LibraryIndex` / `LibraryEntry` / `CuratorRank` / `AppPreferences`** — the
-  library scan (reuses `FeatureCache`'s pure walk), lazy cached genome parse, the
-  ranking sidecar schema, and JSON-persisted settings.
+- **Library + metadata model:** `LibraryIndex` / `LibraryEntry` / `LibrarySource`
+  / `LibraryFilter` / `CuratorRank` / `AppPreferences` (multi-folder sources, the
+  filter, the ranking sidecar schema, JSON-persisted settings + density).
+- **`MetadataStore` / `GenomeMetadata`:** the tri-state sentiment store
+  (`-1`/`0`/`+1`), `metadata.json` schema v2, and the v1 `favorite → +1` migration.
+- **`CollectionsStore` / `GenomeCollection` / `CollectionEntry`:** create / rename
+  / delete / add / remove / reorder, persisted to `collections.json`; entries carry
+  source + id so a removed folder is skipped, not crashed.
+- **`ImportKit`:** pure, testable import planning: path-traversal-safe filename
+  sanitize, dedup, batch plan (parse-before-copy lives in `AppModel`).
+- **`FacetCache`:** per-genome heuristic category + palette-hue facet (derived
+  from the rendered thumbnail's dominant pixels), so every genome is categorizeable
+  and palette-filterable even without a curated rank.
+- **`SequencePlaybackViewModel`:** drives the validated `PlaybackDispatcher` over
+  a collection's genomes (`Schedule(librarySize:, selector: Sequential)`, loop +
+  transition segments) for the Play-as-Sequence window.
 - **`RGBAImage+CGImage`** — the upright CGImage/NSImage bridging (distinct from
-  `FlameUI.makeCGImage`'s layer-oriented flip — see CLAUDE.md gotcha).
+  `FlameUI.makeCGImage`'s layer-oriented flip, see CLAUDE.md gotcha).
 
 **Off-main Metal (no UI freeze):** thumbnails use `MetalRenderer.renderOffMain`,
 which runs the fused pipeline on a dedicated background `DispatchQueue` with its
@@ -183,19 +196,37 @@ FlameExport handles long-form output:
 
 Export runs offscreen compute (no `MTKView`), fully CPU-detached from rendering.
 
-### App (SwiftUI User Interface)
+### App (SwiftUI User Interface, M4)
 
-**Purpose:** Interactive library browser and player controls
+**Purpose:** Interactive genome-library studio and player
 
-The App target provides the main application:
+The `EmberweftGUI` executable target (`emberweft-gui`) is a thin SwiftUI shell over
+`EmberweftUI` + `AppModel` (the `@MainActor @Observable` app-wide state: preferences,
+the library index, thumbnail service, metadata store, collections store, palette
+facets, multi-selection, and per-section load + rendered-id state). It provides:
 
-- **Library Browser** — Grid/list of genomes with thumbnail previews
-- **Player View** — Fullscreen playback with transport controls
-- **Settings Panel** — Quality presets, cache size, export options
-- **Genome Inspector** — View/edit .flam3 XML with validation
-- **Screen Saver Preferences** — Integration with macOS System Settings
+- **`NavigationSplitView` studio:** a sidebar of destinations (All / Library /
+  Liked / Imported, plus one row per opened folder and one per collection) drives a
+  single detail grid (one section at a time). `⌘1–4` jump; density S/M/L persists.
+- **Grid browser:** a `LazyVGrid` of `ThumbnailCell` (off-main Metal thumbnails,
+  category pill, hover selection tick, hover-revealed tri-state sentiment bar plus
+  an always-on badge), skeleton loading, and destination-aware
+  `ContentUnavailableView` empty/error states.
+- **Multi-select + collections:** click / `⌘` / shift / `⌘A` selection with a
+  bottom-floating selection bar (bulk Like/Dislike, Save as Collection, Add to);
+  collections with rename / delete / add / remove and a custom in-app drag reorder.
+- **Non-modal playback windows:** a value-driven `WindowGroup(for: PlaybackRoute.self)`
+  (one window per genome; browse and rate while it plays) and a second
+  `WindowGroup(for: CollectionPlaybackRoute.self)` that plays a collection as a
+  loop+transition sequence via the M3 `PlaybackDispatcher`. Transport: play/pause,
+  scrub, `←`/`→` frame-step, frame/time readouts, sentiment bar.
+- **Search & filter:** `.searchable` plus a filter popover (sentiment / category /
+  palette) with an active-count badge and removable active-filter chips.
 
-SwiftUI views are backed by view models that interact with FlamePlayer and FlameRenderer via Swift 6 actor boundaries.
+SwiftUI views are backed by `AppModel` and the `EmberweftUI` models, crossing into
+`FlamePlayer` and `FlameRenderer` via Swift 6 actor boundaries. A bundled-executable
+`AppDelegate` sets the activation policy so the app becomes the key app on launch
+(see the CLAUDE.md gotcha).
 
 ### ScreenSaver (macOS Bundle)
 

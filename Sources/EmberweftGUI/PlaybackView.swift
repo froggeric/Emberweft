@@ -12,25 +12,48 @@ struct PlaybackWindow: View {
     @State private var vm = PlaybackViewModel()
     @State private var loadError: String?
     @State private var degenerate = false
+    @State private var showKeyboardHelp = false
 
     var body: some View {
         VStack(spacing: 0) {
             FlameUIView(vm.sinkView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .contentShape(Rectangle())
+                .onTapGesture { vm.togglePlaying() }
+                .accessibilityAdjustableAction { _ in vm.togglePlaying() }
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
-        .task(id: entry.id) {
-            await start()
-        }
+        .task(id: entry.id) { await start() }
         .onDisappear { vm.beginStop() }
+        // Keyboard: Space toggles play/pause, Esc closes.
+        .background {
+            // Hidden buttons carry the keyboard shortcuts: Space/Esc + set-semantics
+            // sentiment (+ = like, - = dislike, 0 = neutral) for the playing genome,
+            // and ←/→ to scrub one frame.
+            Group {
+                Button("Play/Pause") { vm.togglePlaying() }
+                    .keyboardShortcut(" ", modifiers: [])
+                Button("Close") { close() }
+                    .keyboardShortcut(.escape, modifiers: [])
+                Button("Like") { model.metadataStore.setSentiment(1, for: entry) }
+                    .keyboardShortcut("=", modifiers: [])
+                Button("Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
+                    .keyboardShortcut("-", modifiers: [])
+                Button("Neutral") { model.metadataStore.setSentiment(0, for: entry) }
+                    .keyboardShortcut("0", modifiers: [])
+                Button("Scrub back one frame") { Task { await vm.nudgeFrame(-1) } }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
+                Button("Scrub forward one frame") { Task { await vm.nudgeFrame(1) } }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
+            }
+            .hidden()
+        }
         .alert("Could not open genome", isPresented: Binding(
             get: { loadError != nil }, set: { if !$0 { loadError = nil } })) {
             Button("Close") { dismiss() }
-        } message: {
-            Text(loadError ?? "")
-        }
+        } message: { Text(loadError ?? "") }
         .alert("Degenerate genome", isPresented: $degenerate) {
             Button("Open anyway", role: .destructive) { Task { await forceStart() } }
             Button("Cancel", role: .cancel) { dismiss() }
@@ -40,33 +63,94 @@ struct PlaybackWindow: View {
     }
 
     private var bar: some View {
-        HStack {
-            Text(entry.displayName).font(.headline)
-            Spacer()
-            if vm.isPlaying {
-                Label("Playing", systemImage: "play.fill").foregroundStyle(.green)
+        HStack(spacing: 14) {
+            Button { vm.togglePlaying() } label: {
+                Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title3)
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(vm.isPlaying ? "Pause" : "Play")
+            .accessibilityHint("Space")
+
+            Slider(value: Binding(get: { vm.position },
+                                  set: { p in Task { await vm.scrub(to: p) } }),
+                   in: 0...1)
+            .accessibilityLabel("Loop position")
+            .accessibilityValue("\(Int(vm.position * 100)) percent")
+            .accessibilityHint("Scrub the loop; ←/→ step one frame")
+
+            frameReadout
+
+            Divider().frame(height: 22)
+
+            Text(entry.displayName).font(.headline).lineLimit(1)
+            SentimentBar(entry: entry).frame(width: 160)
+            keyboardHelpButton
             Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)
     }
 
-    /// Stop playback deterministically, then dismiss. Awaiting `stop()` before
-    /// `dismiss()` guarantees the dispatcher is quiesced (no orphaned GPU work)
-    /// even though the view-model is `@State` that SwiftUI tears down on dismiss.
-    private func close() {
-        Task { await vm.stop(); dismiss() }
+    private var keyboardHelpButton: some View {
+        Button {
+            showKeyboardHelp.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+        }
+        .buttonStyle(.borderless)
+        .popover(isPresented: $showKeyboardHelp) {
+            KeyboardHelpView(includesLibrary: false)
+        }
+        .accessibilityLabel("Keyboard shortcuts")
     }
+
+    /// Frame + time readout for the transport (P8 mapping, P6 visible state).
+    /// `frame N/total` derives from `position * framesPerSegment`; `M:SS / M:SS`
+    /// elapsed/total derives from `targetFPS`. Monospaced digits so the readout
+    /// doesn't jitter as `position` changes per frame.
+    private var frameReadout: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("frame \(currentFrame)/\(vm.framesPerSegment)")
+            Text("\(timeString(elapsedSeconds)) / \(timeString(totalSeconds))")
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .frame(minWidth: 108)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Frame \(currentFrame) of \(vm.framesPerSegment), \(timeString(elapsedSeconds)) of \(timeString(totalSeconds))")
+    }
+
+    /// Current loop frame index, clamped to `[0, framesPerSegment]`.
+    private var currentFrame: Int {
+        let f = Int((vm.position * Double(vm.framesPerSegment)).rounded())
+        return min(max(f, 0), vm.framesPerSegment)
+    }
+
+    /// Total loop duration in seconds (`framesPerSegment / targetFPS`).
+    private var totalSeconds: Double {
+        vm.targetFPS > 0 ? Double(vm.framesPerSegment) / vm.targetFPS : 0
+    }
+
+    /// Elapsed seconds within the loop (`position * total`).
+    private var elapsedSeconds: Double {
+        vm.position * totalSeconds
+    }
+
+    /// `M:SS` formatting (clamps negatives/non-finite to `0:00`).
+    private func timeString(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let s = Int(seconds.rounded())
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// Stop deterministically, then dismiss.
+    private func close() { Task { await vm.stop(); dismiss() } }
 
     private func start() async {
         do {
             let flame = try await model.libraryIndex.loadGenome(for: entry)
-            if !flame.isRenderable {
-                degenerate = true
-                return
-            }
-            await begin(flame: flame)
+            if !flame.isRenderable { degenerate = true; return }
+            begin(flame: flame)
         } catch {
             loadError = "\(error.localizedDescription)"
         }
@@ -74,17 +158,15 @@ struct PlaybackWindow: View {
 
     private func forceStart() async {
         if let flame = try? await model.libraryIndex.loadGenome(for: entry) {
-            await begin(flame: flame)
+            begin(flame: flame)
         }
     }
 
-    private func begin(flame: Flame) async {
-        // Preview renders at a small internal resolution (previewWidth×Height)
-        // with low spp; the CAMetalLayer scales it up to the window. Fast, with
-        // minor softness — independent of the (full-quality) preset.
+    private func begin(flame: Flame) {
         let params = model.prefs.previewParams()
-        await vm.start(flame: flame, params: params,
-                       backend: model.prefs.backend,
-                       targetFPS: Double(model.prefs.targetFPS))
+        vm.load(flame: flame, params: params,
+                backend: model.prefs.backend,
+                targetFPS: Double(model.prefs.targetFPS))
+        vm.play()
     }
 }
