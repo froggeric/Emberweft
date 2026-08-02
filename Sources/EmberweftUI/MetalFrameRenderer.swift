@@ -14,6 +14,11 @@ public struct MetalFrameRenderer: Renderer {
 
     public init() {}
 
+    /// Whether a Metal GPU is available (forwards `MetalRenderer.isAvailable`).
+    /// Exposed so the GUI (which doesn't import `FlameRenderer`) can gate the
+    /// backend picker without a new module dependency.
+    public static var isMetalAvailable: Bool { MetalRenderer.isAvailable }
+
     public func render(flame: Flame, params: RenderParams) async -> RGBA8Image {
         guard MetalRenderer.isAvailable else {
             return Self.blank(width: params.width, height: params.height)
