@@ -94,6 +94,7 @@ struct PreviewQualityPopover: View {
             Divider()
             advancedSection
             Divider()
+            helpFooter
             HStack { Spacer(); resetButton }
         }
         .padding(16)
@@ -145,18 +146,21 @@ struct PreviewQualityPopover: View {
                     }
                 }
                 .pickerStyle(.menu).labelsHidden().frame(width: 120)
+                .help("Internal render size, scaled to fill the window. Larger is sharper up to your display, but lowers FPS, since cost grows with pixel count. Above the window size adds no visible detail.")
             }
 
             LabeledRow("Samples / pixel") {
                 Stepper(value: Binding(get: { effSPP }, set: { applySPP($0) }), in: 1...64) {
                     Text("\(effSPP)").monospacedDigit()
                 }
+                .help("Chaos-game iterations per pixel: the main quality-versus-cost knob. Higher reduces noise and reveals finer detail at roughly proportional render cost; low values look grainy.")
             }
 
             LabeledRow("Oversample") {
                 Stepper(value: Binding(get: { effOversample }, set: { applyOversample($0) }), in: 1...4) {
                     Text("\(effOversample)×").monospacedDigit()
                 }
+                .help("Sub-pixel samples averaged per pixel. Smooths aliased edges, but cost scales with the square (2x is about 4x slower). Use 1 for preview, 2 for high quality.")
             }
 
             Divider()
@@ -170,7 +174,7 @@ struct PreviewQualityPopover: View {
                     }
                 }
                 .pickerStyle(.menu).labelsHidden().frame(width: 120)
-                .accessibilityLabel("Target frame rate")
+                .help("The framerate the preview paces to and the FPS readout is measured against. It does not change image quality; a lower target lets the loop idle between frames, a higher one is smoother if the GPU can keep up.")
             }
 
             LabeledRow("Backend") {
@@ -182,11 +186,21 @@ struct PreviewQualityPopover: View {
                         Text("CPU").tag(AppPreferences.Backend.cpu)
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 120)
+                    .help("Metal renders on the GPU (fast, recommended); CPU is the slower reference oracle. The image is identical either way.")
                 } else {
                     Text("CPU (Metal unavailable)").foregroundStyle(.secondary)
                 }
             }
         }
+    }
+
+    /// Actionable guidance tying the parameters to the live FPS readout, so users
+    /// learn the quality/performance tradeoff by experimenting (no manual needed).
+    private var helpFooter: some View {
+        Text("Watch the bar's FPS readout as you adjust: green is fluid for your target, amber is playable but juddery, red means the GPU can't keep up. Back off samples/pixel or resolution to recover framerate.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var resetButton: some View {

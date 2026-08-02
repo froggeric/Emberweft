@@ -45,8 +45,6 @@ struct PlaybackWindow: View {
                     .keyboardShortcut(" ", modifiers: [])
                 Button("Close") { close() }
                     .keyboardShortcut(.escape, modifiers: [])
-                Button("Preview quality") { showPreviewQuality.toggle() }
-                    .keyboardShortcut(",", modifiers: .command)
                 Button("Like") { model.metadataStore.setSentiment(1, for: entry) }
                     .keyboardShortcut("=", modifiers: [])
                 Button("Dislike") { model.metadataStore.setSentiment(-1, for: entry) }

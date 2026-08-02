@@ -67,8 +67,6 @@ struct CollectionPlaybackWindow: View {
                     .keyboardShortcut("r", modifiers: [])
                 Button("Close") { close() }
                     .keyboardShortcut(.escape, modifiers: [])
-                Button("Preview quality") { showPreviewQuality.toggle() }
-                    .keyboardShortcut(",", modifiers: .command)
             }
             .hidden()
         }
