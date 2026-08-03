@@ -16,6 +16,16 @@ import FlameRenderer
 public actor ExportCoordinator {
     public enum Backend: Sendable { case cpu, metal }
     private let backend: Backend
+    /// When `true` AND `backend == .metal`, `renderFrames` dispatches each frame
+    /// via `MetalRenderer.renderOffMain` / `renderTemporalOffMain` inside a
+    /// `Task.detached` — never touching the MainActor, so it cannot freeze the UI
+    /// (the GUI export path). Default `false`: the CLI path renders via the
+    /// existing `await MainActor.run { MetalRenderer.render(…) }` (byte-for-byte
+    /// unchanged; all single-arg `ExportCoordinator(backend:)` call sites
+    /// preserved). The off-main render cores are byte-identical to the `@MainActor`
+    /// path (pinned by `MetalFrameRendererSmokeTests` + M6-G.1's
+    /// `OffMainTemporalParityTests`); nil ⇒ `.metalUnavailable`.
+    private let useOffMainMetal: Bool
     private var cancelled = false
 
     /// `backend` is the ALREADY-RESOLVED choice. Metal availability + the
@@ -27,7 +37,15 @@ public actor ExportCoordinator {
     /// (the actor's executor is not the main actor). This is why the probe is
     /// hoisted to the caller (spec D3/D15; resolves the prior resolvedBackend
     /// crash).
-    public init(backend: Backend) { self.backend = backend }
+    ///
+    /// `useOffMainMetal` defaults to `false` so every existing single-arg
+    /// `ExportCoordinator(backend:)` call site (the CLI, all `FlameExportTests`)
+    /// keeps the original MainActor dispatch path byte-for-byte. The GUI export
+    /// path (M6-G.5 `ExportManager`) passes `true` to avoid freezing the UI.
+    public init(backend: Backend, useOffMainMetal: Bool = false) {
+        self.backend = backend
+        self.useOffMainMetal = useOffMainMetal
+    }
 
     /// Single continuous export. Yields progress; on success the file is at
     /// `job.out`. Honors `cancel()` between frames.
@@ -169,7 +187,32 @@ public actor ExportCoordinator {
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             let d = plan.descriptor(for: gf)
             let img: RGBA8Image
-            if useMetal {
+            if useMetal && useOffMainMetal {
+                // GUI export path (M6-G.2): render off-main via
+                // `renderOffMain`/`renderTemporalOffMain` inside a `Task.detached`,
+                // so the MainActor is never blocked (no UI freeze). Field names
+                // mirror the MainActor branch VERBATIM (`d.blend`/`d.blendAt`/
+                // `d.temporal`/`d.sumfilt`; single-vs-temporal via
+                // `plan.temporalSamples > 1` — FramePlan.swift:7-24 has no
+                // `centerTime`/`flame` field). The SAME `budget`
+                // (`ThreadSeedBudget(baseSeed: params.seed)`, built once per export
+                // at the single `ThreadSeedBudget(baseSeed:)` site above) is passed
+                // — `renderOffMain`/`renderTemporalOffMain` select per-pass seeds
+                // internally via `seeds(forPass:threadCount:)`, byte-identical to
+                // the MainActor path. nil ⇒ Metal unavailable / render failed /
+                // non-box temporal (defensive) ⇒ `.metalUnavailable`.
+                let maybeImg: RGBA8Image? = await Task.detached(priority: .userInitiated) {
+                    plan.temporalSamples > 1
+                        ? MetalRenderer.renderTemporalOffMain(
+                            blendAt: d.blendAt, centerTime: d.blend,
+                            temporal: d.temporal, sumfilt: d.sumfilt,
+                            params: params, seedBudget: budget)
+                        : MetalRenderer.renderOffMain(
+                            flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+                }.value
+                guard let offMainImg = maybeImg else { throw ExportError.metalUnavailable }
+                img = offMainImg
+            } else if useMetal {
                 img = await MainActor.run {
                     autoreleasepool {
                         plan.temporalSamples > 1
