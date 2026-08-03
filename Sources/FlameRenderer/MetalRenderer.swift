@@ -92,12 +92,13 @@ public enum MetalRenderer {
     /// byte-identical to CPU. Failing loudly on a no-GPU box rather than
     /// producing garbage.
     @MainActor
-    public static func render(flame: Flame, params: RenderParams) -> RGBA8Image {
+    public static func render(flame: Flame, params: RenderParams,
+                              seedBudget: MetalRenderer.ThreadSeedBudget? = nil) -> RGBA8Image {
         guard isAvailable else {
             fatalError("MetalRenderer.render called when isAvailable is false")
         }
         do {
-            return try renderFused(flame: flame, params: params)
+            return try renderFused(flame: flame, params: params, seedBudget: seedBudget)
         } catch {
             fatalError("Metal render failed: \(error)")
         }
@@ -134,7 +135,8 @@ public enum MetalRenderer {
         centerTime: Double,
         temporal: [(delta: Double, weight: Double)],
         sumfilt: Double,
-        params: RenderParams
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
     ) -> RGBA8Image {
         guard isAvailable else {
             fatalError("MetalRenderer.render(blendAt:…) called when isAvailable is false")
@@ -153,7 +155,8 @@ public enum MetalRenderer {
         do {
             return try renderTemporalFused(
                 blendAt: blendAt, centerTime: centerTime,
-                temporal: temporal, sumfilt: sumfilt, params: params)
+                temporal: temporal, sumfilt: sumfilt, params: params,
+                seedBudget: seedBudget)
         } catch {
             fatalError("Metal temporal render failed: \(error)")
         }
@@ -178,7 +181,8 @@ public enum MetalRenderer {
         queue: MTLCommandQueue,
         psos: (chaos: MTLComputePipelineState, decode: MTLComputePipelineState,
                density: MTLComputePipelineState, log: MTLComputePipelineState,
-               display: MTLComputePipelineState)
+               display: MTLComputePipelineState),
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
     ) throws -> RGBA8Image {
         // Thread `flame.quality.filterRadius` into `params.spatialFilterRadius`
         // before the chaos game iterates — the grid's gutter width depends on
@@ -206,8 +210,8 @@ public enum MetalRenderer {
 
         var fp = MetalHost.buildFrameParams(flame, params)
         fp.hasFinal = finalXform != nil ? 1 : 0
-        let threadSeeds = MetalHost.buildThreadSeeds(seed: params.seed,
-                                                    threadCount: Int(fp.threadCount))
+        let threadSeeds = seedBudget?.seeds(forPass: 0, threadCount: Int(fp.threadCount))
+            ?? MetalHost.buildThreadSeeds(seed: params.seed, threadCount: Int(fp.threadCount))
 
         func buf<T>(_ values: [T]) -> MTLBuffer {
             values.withUnsafeBytes { raw in
@@ -412,7 +416,8 @@ public enum MetalRenderer {
     /// MainActor fused render — the realtime/playback path. Builds the cached
     /// device/queue/PSOs (MainActor-isolated) and delegates to `renderFusedCore`.
     @MainActor
-    static func renderFused(flame: Flame, params: RenderParams) throws -> RGBA8Image {
+    static func renderFused(flame: Flame, params: RenderParams,
+                            seedBudget: MetalRenderer.ThreadSeedBudget? = nil) throws -> RGBA8Image {
         guard let (device, _) = deviceAndLibrary() else {
             throw NSError(domain: "MetalRenderer", code: 10)
         }
@@ -423,7 +428,8 @@ public enum MetalRenderer {
             throw NSError(domain: "MetalRenderer", code: 27)
         }
         return try renderFusedCore(flame: flame, params: params,
-                                   device: device, queue: queue, psos: psos)
+                                   device: device, queue: queue, psos: psos,
+                                   seedBudget: seedBudget)
     }
 
     // MARK: - Off-main (thumbnail) entry
@@ -442,13 +448,15 @@ public enum MetalRenderer {
     /// encode + GPU wait. Returns `nil` if Metal is unavailable or the render
     /// fails (callers fall back; never traps). Used by the thumbnail path.
     nonisolated
-    public static func renderOffMain(flame: Flame, params: RenderParams) -> RGBA8Image? {
+    public static func renderOffMain(flame: Flame, params: RenderParams,
+                                     seedBudget: MetalRenderer.ThreadSeedBudget? = nil) -> RGBA8Image? {
         offMainQueue.sync {
             guard let (device, library, queue) = offMainCache.handles() else { return nil }
             guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
             do {
                 return try renderFusedCore(flame: flame, params: params,
-                                           device: device, queue: queue, psos: psos)
+                                           device: device, queue: queue, psos: psos,
+                                           seedBudget: seedBudget)
             } catch {
                 return nil
             }
@@ -470,7 +478,8 @@ public enum MetalRenderer {
         centerTime: Double,
         temporal: [(delta: Double, weight: Double)],
         sumfilt: Double,
-        params: RenderParams
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
     ) throws -> RGBA8Image {
         precondition(!temporal.isEmpty,
             "renderTemporalFused: temporal must contain at least one sub-sample")
@@ -657,9 +666,9 @@ public enum MetalRenderer {
             // → byte-identity with renderFused's seedsBuf. Metal DOES consume
             // params.seed (unlike the CPU path), so no special N>1 gate is
             // needed — the salt naturally falls out of the loop index.
-            let passSeed = params.seed &+ UInt64(i)
-            let passThreadSeeds = MetalHost.buildThreadSeeds(
-                seed: passSeed, threadCount: perPassThreads)
+            let passThreadSeeds = seedBudget?.seeds(forPass: i, threadCount: perPassThreads)
+                ?? MetalHost.buildThreadSeeds(seed: params.seed &+ UInt64(i),
+                                              threadCount: perPassThreads)
 
             // Per-pass fpLocal: threadCount/ipt/remainder from per-pass budget.
             // camera (cosR/sinR/pixelsPerUnit/center) comes from the PASS flame
