@@ -109,6 +109,15 @@ struct SelectionBar: View {
             }
             .disabled(model.selection.isEmpty)
             .help("Export the selected genomes as videos (skips unrenderable ones)")
+            // The Export sheet is attached to THIS button (not the root HStack)
+            // so it coexists with the root's "Save as Collection…" sheet — SwiftUI
+            // does not reliably present two `.sheet(isPresented:)` on one view, but
+            // two sheets on two DIFFERENT views do. The button is always in the
+            // hierarchy while the sheet could present (`disabled`, not hidden,
+            // while loading), so presentation is reliable.
+            .sheet(isPresented: $showExportSheet) {
+                ExportSheet(source: .batch(items: exportItems))
+            }
             Divider().frame(height: 18)
             Button { model.clearSelection() } label: {
                 Label("Clear", systemImage: "xmark").labelStyle(.titleAndIcon)
@@ -125,9 +134,6 @@ struct SelectionBar: View {
             } onCancel: {
                 newName = ""
             }
-        }
-        .sheet(isPresented: $showExportSheet) {
-            ExportSheet(source: .batch(items: exportItems))
         }
         .alert("Export selected genomes", isPresented: $showExportSkipAlert) {
             if exportItems.isEmpty {
