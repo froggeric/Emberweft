@@ -22,6 +22,7 @@ extension EmberweftCLI {
         var framesPerSegment = 8, segmentCount = 3, loopCycles = 1, seed: UInt64 = 0
         var stagger = 0.0, temporalSamples = 1
         var backend = "cpu", strictBackend = false, force = false
+        var segmentFrames = 0
         var out = "out.mp4", codec = "h264", container = "mp4", bitrate = "auto"
         var resolution = "1080p", fps = 30, quality = "genome"
         // Task 5: 1-frame PNG mastering path (`export ... --frame N --png`) and
@@ -92,9 +93,10 @@ extension EmberweftCLI {
                     guard let v = value() else { return missing("--quality") }
                     quality = v; i += 2
                 case "--segment-frames":
-                    // Parsed but unused until Task 6 wires runLongForm.
+                    // Task 6: chunk size in frames → settings.segmentFrameBudget.
+                    // `runLongForm` dispatches when this is > 0 (else single export).
                     guard let v = value() else { return missing("--segment-frames") }
-                    _ = Int(v); i += 2
+                    segmentFrames = max(0, Int(v) ?? 0); i += 2
                 case "--frame":
                     // 1-frame PNG mastering path (mirrors `animate --frame N`).
                     guard let v = value() else { return missing("--frame") }
@@ -284,10 +286,14 @@ extension EmberweftCLI {
         }
 
         // --- Build + run the job ---
+        // Task 6: `--segment-frames N > 0` selects the long-form (chunked) path;
+        // else the single-export path (today's behavior).
+        settings.segmentFrameBudget = max(0, segmentFrames)
         let job = ExportJob(settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
                             segmentCount: segmentCount, selector: .sequential, seed: seed,
                             loopCycles: loopCycles, stagger: stagger, out: outURL)
         let coord = ExportCoordinator(backend: coordBackend)
+        let longForm = settings.segmentFrameBudget > 0
 
         // SIGINT -> cooperative cancel (one-shot; the loop checks `cancelled` between frames).
         signal(SIGINT, SIG_IGN)
@@ -297,12 +303,16 @@ extension EmberweftCLI {
         defer { sig.cancel() }
 
         do {
-            let stream = await coord.run(job)
+            let stream = longForm ? await coord.runLongForm(job) : await coord.run(job)
             var lastPrint = 0.0
             for try await p in stream {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastPrint > 0.5 || p.currentFrame == p.totalFrames {
-                    EmberweftCLI.err("[export] frame \(p.currentFrame)/\(p.totalFrames)  fps \(String(format: "%.1f", p.renderFPS))\n")
+                    if p.phase == .concatenating {
+                        EmberweftCLI.err("[export] concatenating \(segmentCount) segments…\n")
+                    } else {
+                        EmberweftCLI.err("[export] frame \(p.currentFrame)/\(p.totalFrames)  fps \(String(format: "%.1f", p.renderFPS))\n")
+                    }
                     lastPrint = now
                 }
             }
@@ -310,6 +320,16 @@ extension EmberweftCLI {
         } catch {
             EmberweftCLI.err("error: export failed: \(error)\n")
             try? FileManager.default.removeItem(at: job.partialURL)
+            // Long-form temps are cleaned by the coordinator's `defer`; the
+            // partialURL (concat target) is the only stray an exception can leave.
+            if longForm {
+                let outDir = outURL.deletingLastPathComponent()
+                if let entries = try? FileManager.default.contentsOfDirectory(atPath: outDir.path) {
+                    for e in entries where e.hasPrefix("m6-seg-") {
+                        try? FileManager.default.removeItem(at: outDir.appendingPathComponent(e))
+                    }
+                }
+            }
             return 1
         }
     }
