@@ -70,6 +70,7 @@ final class ExportManagerTests: XCTestCase {
         private let script: Script
         private(set) var cancelCount = 0
         private(set) var runPartialURLs: [URL] = []
+        private(set) var runSegmentCounts: [Int] = []
         private(set) var runBatchCalls: [(jobCount: Int, failFast: Bool)] = []
         private(set) var runBatchOuts: [URL] = []
         private var cancelled = false
@@ -79,6 +80,7 @@ final class ExportManagerTests: XCTestCase {
 
         func run(_ job: ExportJob) async -> AsyncThrowingStream<ExportProgress, Error> {
             runPartialURLs.append(job.partialURL)
+            runSegmentCounts.append(job.segmentCount)
             return AsyncThrowingStream { continuation in
                 // The build closure is `@Sendable`; hop back onto this actor via a
                 // Task to read/write isolated state (mirrors the real coordinator).
@@ -262,9 +264,64 @@ final class ExportManagerTests: XCTestCase {
         await vm.awaitCompletion()
 
         XCTAssertEqual(vm.state, .completed(out))
-        // Sequence routes through a single `run(job)` with segmentCount = flames.count.
+        // Sequence routes through a single `run(job)` with segmentCount = 2N-1.
         let partials = await fake.runPartialURLs
         XCTAssertEqual(partials.count, 1)
+    }
+
+    // MARK: - Sequence segmentCount (the "3 of 5" truncation fix)
+
+    /// `Schedule` alternates loop/transition by segment-id parity (seg0=loop(g0),
+    /// seg1=trans(g0→g1), seg2=loop(g1), …). A full pass through N genomes (each
+    /// looped once + transitions between consecutive ones) = N loops + (N−1)
+    /// transitions = `2N − 1` segments. Passing only N walked the first N segments
+    /// = loop,trans,loop,trans,loop = ⌈(N+1)/2⌉ genomes (3 of 5) — the bug.
+    func testExportSequenceSegmentCountCoversAllGenomes() async {
+        // N → expected segmentCount == 2N-1 (N=1 → single loop; N=3 → 5; N=5 → 9).
+        let cases: [(n: Int, expected: Int)] = [(1, 1), (2, 3), (3, 5), (5, 9)]
+        for (n, expected) in cases {
+            let vm = ExportManager()
+            useNoOpSleepHooks(vm)
+            let fake = installFake(vm, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
+            let flames = (0..<n).map { _ in renderableFlame() }
+
+            await vm.exportSequence(flames: flames, displayName: "seq\(n)",
+                                    out: outURL("seq\(n)"), seed: 1)
+            await vm.awaitCompletion()
+
+            let counts = await fake.runSegmentCounts
+            XCTAssertEqual(counts, [expected],
+                "N=\(n) must yield segmentCount == \(expected) (2N-1), got \(counts)")
+        }
+    }
+
+    /// `skipNotice` surfaces a silent `isRenderable` drop (transparency only —
+    /// the export continues with the renderable subset). Nil when nothing is
+    /// filtered.
+    func testExportSequenceSkipNoticeWhenSomeGenomesUnrenderable() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        _ = installFake(vm, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
+        let bad = Flame(
+            camera: Camera(center: SIMD2<Double>(.nan, .nan), scale: .nan),
+            xforms: [Xform(weight: 1, variations: [Variation(name: "linear", weight: 1)])])
+        let flames = [renderableFlame(), bad, renderableFlame(), bad]   // 2 of 4 renderable
+
+        await vm.exportSequence(flames: flames, displayName: "mixed", out: outURL(), seed: 1)
+        await vm.awaitCompletion()
+
+        XCTAssertNotNil(vm.skipNotice, "skipNotice must be set when some genomes are filtered")
+        XCTAssertTrue(vm.skipNotice?.contains("2 of 4") ?? false,
+            "skipNotice must report the skip count, got: \(vm.skipNotice ?? "nil")")
+
+        // And nil when nothing is filtered:
+        let vm2 = ExportManager()
+        useNoOpSleepHooks(vm2)
+        _ = installFake(vm2, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
+        await vm2.exportSequence(flames: [renderableFlame(), renderableFlame()],
+                                 displayName: "clean", out: outURL("b"), seed: 2)
+        await vm2.awaitCompletion()
+        XCTAssertNil(vm2.skipNotice, "skipNotice must be nil when no genomes are filtered")
     }
 
     func testStateMachineBatchSuccessTransitionsToCompletedDir() async {
@@ -610,9 +667,9 @@ final class ExportManagerTests: XCTestCase {
         XCTAssertEqual(vm.state, .completed(dir))
         let outs = await fake.runBatchOuts
         XCTAssertEqual(outs.count, 2, "both colliding items must produce distinct jobs")
-        XCTAssertEqual(outs[0].lastPathComponent, "sheep")
-        XCTAssertEqual(outs[1].lastPathComponent, "sheep-2",
-            "within-batch name collision must get a -2 suffix")
+        XCTAssertEqual(outs[0].lastPathComponent, "sheep.mp4")
+        XCTAssertEqual(outs[1].lastPathComponent, "sheep-2.mp4",
+            "within-batch name collision must get a -2 suffix (extension preserved)")
         XCTAssertNotEqual(outs[0], outs[1])
     }
 
@@ -630,6 +687,7 @@ final class ExportManagerTests: XCTestCase {
         XCTAssertEqual(vm.state, .idle)
         XCTAssertEqual(vm.snapshot, .empty)
         XCTAssertEqual(vm.sourceLabel, "")
+        XCTAssertNil(vm.skipNotice, "reset must clear skipNotice")
     }
 
     func testResetIsNoOpWhileRunning() async {

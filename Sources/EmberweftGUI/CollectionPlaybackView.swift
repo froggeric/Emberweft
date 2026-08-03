@@ -64,6 +64,12 @@ struct CollectionPlaybackWindow: View {
             // (the dispatcher captures params + paces to targetFPS at build time).
             vm.updateParams(prefs: model.prefs)
         }
+        .onChange(of: model.exportManager.state) { _, newState in
+            // Pause the realtime preview when an export starts (frees the GPU for
+            // the export and avoids a janky preview during the encode). No
+            // auto-resume — the owner restarts playback manually.
+            if newState == .running { vm.pause() }
+        }
         .onDisappear { vm.beginStop() }
         // Keyboard: Space toggles play/pause, R restarts, Esc closes.
         .background {

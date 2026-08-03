@@ -75,6 +75,11 @@ struct ExportProgressSurface: View {
                 .help("Finish the in-flight frame, then stop and discard the partial file.")
             }
             runningStatusLabel(snap: snap)
+            if let notice = em.skipNotice {
+                Text(notice)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

@@ -84,6 +84,13 @@ public final class ExportManager {
     /// A transient label for the source (display name / count), for the banner.
     public private(set) var sourceLabel: String = ""
 
+    /// Transparency notice when an export silently dropped unrenderable genomes
+    /// (`renderable.count < flames.count`). Nil when nothing was filtered. Set in
+    /// `exportSequence`/`exportBatch`; cleared in `reset()`. (Behavior is
+    /// unchanged — the export continues with the renderable subset; this only
+    /// surfaces the skip so it isn't a silent shortening of the timeline.)
+    public private(set) var skipNotice: String?
+
     // The editable config (bound two-way by the sheet):
     public var codec: ExportSettings.Codec = .h264
     public var container: ExportSettings.Container = .mp4
@@ -184,7 +191,14 @@ public final class ExportManager {
     }
 
     /// Export a sequence (loop + transitions) as one continuous encode. Routed
-    /// to `coordinator.run(job)` with `segmentCount == flames.count`.
+    /// to `coordinator.run(job)` with `segmentCount == 2N-1`.
+    ///
+    /// `Schedule` alternates loop/transition by segment-id parity (seg0=loop(g0),
+    /// seg1=trans(g0→g1), seg2=loop(g1), …). A full pass through N genomes (each
+    /// looped once + transitions between consecutive ones) = N loops + (N−1)
+    /// transitions = `2N − 1` segments. Passing only `renderable.count` (N) walked
+    /// the first N segments = loop,trans,loop,trans,loop = ⌈(N+1)/2⌉ genomes (the
+    /// "3 of 5" truncation bug). N=1 → 1 segment (the single-loop case).
     public func exportSequence(flames: [Flame], displayName: String, out: URL, seed: UInt64) async {
         guard canStart else { return }
         let renderable = flames.filter(\.isRenderable)
@@ -192,13 +206,15 @@ public final class ExportManager {
             state = .failed("No renderable genomes in the sequence.")
             return
         }
+        skipNotice = skipNoticeFor(dropped: flames.count - renderable.count, total: flames.count)
         let baseFlame = renderable[0]   // first renderable (matches CLI renderable[0])
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let settings = resolveSettings(baseFlame: baseFlame, backend: backend)
         let framesPerSegment = max(1, Int(loopDurationSeconds * Double(fps)))
+        let segmentCount = max(1, 2 * renderable.count - 1)
         let job = ExportJob(
             settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
-            segmentCount: renderable.count, selector: .sequential, seed: seed,
+            segmentCount: segmentCount, selector: .sequential, seed: seed,
             loopCycles: 1, stagger: 0.0, out: out)
         startExport(.runJob(job: job), label: displayName, backend: backend)
     }
@@ -214,6 +230,7 @@ public final class ExportManager {
             state = .failed("No renderable genomes in the selection.")
             return
         }
+        skipNotice = skipNoticeFor(dropped: items.count - renderable.count, total: items.count)
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let framesPerSegment = max(1, Int(loopDurationSeconds * Double(fps)))
         var jobs: [ExportJob] = []
@@ -260,6 +277,7 @@ public final class ExportManager {
             state = .idle
             snapshot = .empty
             sourceLabel = ""
+            skipNotice = nil
         }
     }
 
@@ -295,21 +313,37 @@ public final class ExportManager {
 
     /// Resolve a batch item's `out` via `BatchPath.resolve` (the D13 gate) and
     /// dedupe within the batch + against existing files with a `-2/-3` suffix.
+    ///
+    /// `BatchPath.resolve` returns the bare stem with NO extension (it's a generic
+    /// name resolver; the GUI adds the container extension, unlike single/sequence
+    /// where `NSSavePanel` supplies `.mp4`). The extension is appended here on
+    /// both the resolved and sanitized-fallback paths, BEFORE `dedupeOut` so the
+    /// deduped `-2/-3` suffix keeps it (mirrors the CLI batch naming). The CLI's
+    /// batch path is unaffected — it doesn't route through this method.
     private func resolveBatchOut(name: String, baseDir: URL, usedNames: inout Set<String>) -> URL {
+        let ext = container == .mov ? "mov" : "mp4"
         // BatchPath.resolve rejects absolute / `..` / hidden / illegal chars.
         // On rejection (shouldn't happen for curated names) fall back to a safe
         // sanitized leaf so the batch never aborts on one bad name.
         let resolved: URL
         if let ok = try? BatchPath.resolve(name, base: baseDir) {
-            resolved = ok
+            resolved = ok.appendingPathExtension(ext)
         } else {
             let safe = name.unicodeScalars
                 .filter { CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-").contains($0) }
                 .map(String.init)
                 .joined()
-            resolved = baseDir.appendingPathComponent(safe.isEmpty ? "output" : safe)
+            resolved = baseDir
+                .appendingPathComponent(safe.isEmpty ? "output" : safe)
+                .appendingPathExtension(ext)
         }
         return dedupeOut(resolved, usedNames: &usedNames)
+    }
+
+    /// The transparency notice for silent `isRenderable` skips, or nil when
+    /// nothing was filtered (`dropped == 0`).
+    private func skipNoticeFor(dropped: Int, total: Int) -> String? {
+        dropped > 0 ? "Skipped \(dropped) of \(total) genomes (unrenderable)." : nil
     }
 
     /// Append `-2`, `-3`, … to avoid collisions within the batch and with
