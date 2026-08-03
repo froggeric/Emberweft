@@ -38,12 +38,12 @@ final class AnimateCommandTests: XCTestCase {
     // MARK: - Tests
 
     /// AC: `--frames 8 --segments 3` writes exactly 3*8 = 24 PNGs + manifest.
-    func testWritesCorrectPNGCountAndManifest() throws {
+    func testWritesCorrectPNGCountAndManifest() async throws {
         let a = tmp(genomeA, name: "anim_basic_a.flam3")
         let b = tmp(genomeB, name: "anim_basic_b.flam3")
         let out = freshOut("basic")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
             "--frames", "8", "--segments", "3",
             "--selector", "sequential", "--seed", "0",
@@ -116,10 +116,10 @@ final class AnimateCommandTests: XCTestCase {
     /// AC: A single genome renders a loop-only sequence (--segments 1): exit 0,
     /// `segments*frames` PNGs + manifest. (Transitions need ≥2 genomes; a loop
     /// needs only one.)
-    func testSingleSheepLoopSucceeds() throws {
+    func testSingleSheepLoopSucceeds() async throws {
         let a = tmp(genomeA, name: "anim_loop.flam3")
         let out = freshOut("loop")
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path,
             "--frames", "4", "--segments", "1",
             "--backend", "cpu", "--size", "16x16", "--quality", "10",
@@ -133,11 +133,11 @@ final class AnimateCommandTests: XCTestCase {
 
     /// AC: A single genome with --segments > 1 (transitions) → non-zero exit
     /// (transitions need ≥2 genomes to morph between).
-    func testSize1InputErrors() throws {
+    func testSize1InputErrors() async throws {
         let a = tmp(genomeA, name: "anim_single.flam3")
         let out = freshOut("single")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path,
             "--frames", "4", "--segments", "2", "--out", out.path,
         ])
@@ -145,10 +145,10 @@ final class AnimateCommandTests: XCTestCase {
     }
 
     /// AC: Size-0 input → non-zero exit.
-    func testSize0InputErrors() throws {
+    func testSize0InputErrors() async throws {
         let out = freshOut("empty")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate",
             "--frames", "4", "--segments", "2", "--out", out.path,
         ])
@@ -157,7 +157,7 @@ final class AnimateCommandTests: XCTestCase {
 
     /// AC: G2 byte-determinism — two runs produce byte-identical manifest.json
     /// and pixel-identical PNGs (CPU single-threaded).
-    func testManifestAndPNGsByteStableAcrossRuns() throws {
+    func testManifestAndPNGsByteStableAcrossRuns() async throws {
         let a = tmp(genomeA, name: "anim_stab_a.flam3")
         let b = tmp(genomeB, name: "anim_stab_b.flam3")
         let out1 = freshOut("stab1")
@@ -169,8 +169,8 @@ final class AnimateCommandTests: XCTestCase {
             "--size", "16x16", "--quality", "10",
         ]
 
-        let code1 = EmberweftCLI.run(["emberweft", "animate", a.path, b.path] + args + ["--out", out1.path])
-        let code2 = EmberweftCLI.run(["emberweft", "animate", a.path, b.path] + args + ["--out", out2.path])
+        let code1 = await EmberweftCLI.run(["emberweft", "animate", a.path, b.path] + args + ["--out", out1.path])
+        let code2 = await EmberweftCLI.run(["emberweft", "animate", a.path, b.path] + args + ["--out", out2.path])
         XCTAssertEqual(code1, 0)
         XCTAssertEqual(code2, 0)
 
@@ -190,14 +190,14 @@ final class AnimateCommandTests: XCTestCase {
     }
 
     /// AC: No boundary duplicate/drop — total PNG count = segments * framesPerSegment.
-    func testNoBoundaryDuplicateOrDrop() throws {
+    func testNoBoundaryDuplicateOrDrop() async throws {
         let a = tmp(genomeA, name: "anim_bound_a.flam3")
         let b = tmp(genomeB, name: "anim_bound_b.flam3")
         let out = freshOut("boundary")
 
         let segments = 4
         let frames = 5
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
             "--frames", "\(frames)", "--segments", "\(segments)",
             "--seed", "1", "--backend", "cpu", "--out", out.path,
@@ -218,12 +218,12 @@ final class AnimateCommandTests: XCTestCase {
     }
 
     /// AC: Sequential selector needs no cache and works with just 2 genomes.
-    func testSequentialSelectorNoCache() throws {
+    func testSequentialSelectorNoCache() async throws {
         let a = tmp(genomeA, name: "anim_seq_a.flam3")
         let b = tmp(genomeB, name: "anim_seq_b.flam3")
         let out = freshOut("seq")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
             "--frames", "2", "--segments", "2",
             "--selector", "sequential",
@@ -247,12 +247,12 @@ final class AnimateCommandTests: XCTestCase {
     }
 
     /// AC: `--stagger` is recorded as a top-level field in the manifest.
-    func testStaggerTopLevel() throws {
+    func testStaggerTopLevel() async throws {
         let a = tmp(genomeA, name: "anim_stag_a.flam3")
         let b = tmp(genomeB, name: "anim_stag_b.flam3")
         let out = freshOut("stagger")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
             "--frames", "2", "--segments", "2",
             "--stagger", "0.5",
@@ -270,7 +270,7 @@ final class AnimateCommandTests: XCTestCase {
     /// with a clear message and does NOT silently rebuild (no
     /// `--rebuild-cache`). The library dir is left untouched (no
     /// `.feature_cache/` written).
-    func testSimilaritySelectorAbsentCacheErrors() throws {
+    func testSimilaritySelectorAbsentCacheErrors() async throws {
         let a = tmp(genomeA, name: "anim_sim_a.flam3")
         let b = tmp(genomeB, name: "anim_sim_b.flam3")
         // A library dir containing the genomes but NO `.feature_cache/`.
@@ -281,7 +281,7 @@ final class AnimateCommandTests: XCTestCase {
         try genomeB.data(using: .utf8)!.write(to: library.appendingPathComponent("b.flam3"))
         let out = freshOut("sim_absent")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
             "--frames", "2", "--segments", "2",
             "--selector", "similarity",
@@ -335,12 +335,12 @@ final class AnimateCommandTests: XCTestCase {
     /// the CPU renderer and produces non-black PNGs. Exercises out-of-range
     /// sub-times (real ES genomes: `temporal_filter_width="1.2"` → sub-times
     /// span `mapping.blend ± 0.6`, e.g. `0.25 ± 0.6 = [-0.35, 0.85]`).
-    func testTemporalSamples4CPUIsNonBlack() throws {
+    func testTemporalSamples4CPUIsNonBlack() async throws {
         let g0 = try realFixture("electricsheep.248.00256")
         let g1 = try realFixture("electricsheep.248.00000")
         let out = freshOut("temporal_cpu")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g0.path, g1.path,
             "--frames", "2", "--segments", "2",
             "--temporal-samples", "4",
@@ -372,14 +372,14 @@ final class AnimateCommandTests: XCTestCase {
     /// AC: `--temporal-samples 4 --backend metal` dispatches the Metal temporal
     /// fused path and produces non-black PNGs. Skipped on GPU-less machines /
     /// under the bash sandbox (`MTLCreateSystemDefaultDevice()` returns nil).
-    func testTemporalSamples4MetalIsNonBlack() throws {
-        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+    func testTemporalSamples4MetalIsNonBlack() async throws {
+        let metalOK = await MainActor.run { MetalRenderer.isAvailable }
         try XCTSkipUnless(metalOK, "Metal unavailable")
         let g0 = try realFixture("electricsheep.248.00256")
         let g1 = try realFixture("electricsheep.248.00000")
         let out = freshOut("temporal_metal")
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g0.path, g1.path,
             "--frames", "4", "--segments", "2",
             "--temporal-samples", "4",
@@ -408,7 +408,7 @@ final class AnimateCommandTests: XCTestCase {
     /// no-flag path — the N==1 branch falls through to `render(flame:
     /// blendAt(mapping.blend), params:)`, which equals the pre-blur path's
     /// `render(flame: renderedFlame, params:)`. CPU single-threaded → bit-stable.
-    func testTemporalSamples1IsByteIdenticalToNoFlag() throws {
+    func testTemporalSamples1IsByteIdenticalToNoFlag() async throws {
         let a = tmp(genomeA, name: "anim_ts1_a.flam3")
         let b = tmp(genomeB, name: "anim_ts1_b.flam3")
         let out1 = freshOut("ts1_explicit")
@@ -419,10 +419,10 @@ final class AnimateCommandTests: XCTestCase {
             "--seed", "0", "--backend", "cpu",
             "--size", "16x16", "--quality", "10",
         ]
-        let code1 = EmberweftCLI.run([
+        let code1 = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
         ] + args + ["--temporal-samples", "1", "--out", out1.path])
-        let code2 = EmberweftCLI.run([
+        let code2 = await EmberweftCLI.run([
             "emberweft", "animate", a.path, b.path,
         ] + args + ["--out", out2.path])
         XCTAssertEqual(code1, 0)
@@ -445,8 +445,8 @@ final class AnimateCommandTests: XCTestCase {
     /// AC: `--temporal-samples N` where N > 64 on Metal is capped to 64 with a
     /// printed stderr note (NOT silent). The note is observable via `EmberweftCLI.err`.
     /// Expects 8 PNGs (frames×segments = 4×2) on Metal after capping.
-    func testTemporalSamplesCappedTo64OnMetalWithNote() throws {
-        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+    func testTemporalSamplesCappedTo64OnMetalWithNote() async throws {
+        let metalOK = await MainActor.run { MetalRenderer.isAvailable }
         try XCTSkipUnless(metalOK, "Metal unavailable")
         let g0 = try realFixture("electricsheep.248.00256")
         let g1 = try realFixture("electricsheep.248.00000")
@@ -458,7 +458,7 @@ final class AnimateCommandTests: XCTestCase {
         EmberweftCLI.err = { captured += $0 }
         defer { EmberweftCLI.err = originalErr }
 
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g0.path, g1.path,
             "--frames", "2", "--segments", "2",
             "--temporal-samples", "1000",       // way over the Metal cap of 64
@@ -487,8 +487,8 @@ final class AnimateCommandTests: XCTestCase {
     /// observable via image (slow), so we only assert the cap-note path here.
     /// `err` capture proves the defaulting kicked in (without it, N would stay
     /// at the parse-time default of 1 and no note would be printed).
-    func testTemporalSamplesDefaultsToGenomeValueOnMetal() throws {
-        let metalOK = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+    func testTemporalSamplesDefaultsToGenomeValueOnMetal() async throws {
+        let metalOK = await MainActor.run { MetalRenderer.isAvailable }
         try XCTSkipUnless(metalOK, "Metal unavailable")
         let g0 = try realFixture("electricsheep.248.00256")
         let g1 = try realFixture("electricsheep.248.00000")
@@ -507,7 +507,7 @@ final class AnimateCommandTests: XCTestCase {
         defer { EmberweftCLI.err = originalErr }
 
         // NOTE: no `--temporal-samples` flag — relies on the genome default (1000).
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g0.path, g1.path,
             "--frames", "2", "--segments", "2",
             "--seed", "0", "--backend", "metal", "--out", out.path,
@@ -539,7 +539,7 @@ final class AnimateCommandTests: XCTestCase {
     /// `centerTime = blend = 1.0`; with `width=1.2, N=4`, sub-times are
     /// `[0.4, 0.8, 1.2, 1.6]` — two of four are > 1 (the boundary case where
     /// clamping vs not-clamping diverges).
-    func testLoopBlendUnclampedInTemporalPath() throws {
+    func testLoopBlendUnclampedInTemporalPath() async throws {
         let g = try realFixture("electricsheep.248.00256")
         let flame = try XCTUnwrap(Flam3Parser.parse(Data(contentsOf: g)).first,
                                   "fixture parse failed")
@@ -572,7 +572,7 @@ final class AnimateCommandTests: XCTestCase {
         // Passing the same sheep twice satisfies the ≥2-sheep guard; with
         // `--segments 1` only segment 0 (loop) is emitted.
         let out = freshOut("loop_unclamped_cli")
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g.path, g.path,
             "--frames", "1", "--segments", "1",
             "--temporal-samples", "4",
@@ -605,7 +605,7 @@ final class AnimateCommandTests: XCTestCase {
     ///       (centerTime=0.75) is byte-identical to the direct scaled-delta
     ///       render — proves the CLI applies the 1/fps scaling, not the raw
     ///       frame-unit deltas.
-    func testTemporalBlurDeltaScaledToBlendUnits() throws {
+    func testTemporalBlurDeltaScaledToBlendUnits() async throws {
         let g = try realFixture("electricsheep.248.00256")
         let flame = try XCTUnwrap(Flam3Parser.parse(Data(contentsOf: g)).first,
                                   "fixture parse failed")
@@ -652,7 +652,7 @@ final class AnimateCommandTests: XCTestCase {
         // must match the FIX render exactly. If the CLI used raw deltas (bug), it
         // would match bugBlur instead. CPU single-threaded → byte-deterministic.
         let out = freshOut("loop_cli_scaled")
-        let code = EmberweftCLI.run([
+        let code = await EmberweftCLI.run([
             "emberweft", "animate", g.path, g.path,
             "--frames", "4", "--segments", "1",
             "--temporal-samples", "4",

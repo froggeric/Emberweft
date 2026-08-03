@@ -15,8 +15,20 @@ public enum EmberweftCLI {
     public nonisolated(unsafe) static var out: (String) -> Void = { Swift.print($0, terminator: "") }
     public nonisolated(unsafe) static var err: (String) -> Void = { FileHandle.standardError.write($0.data(using: .utf8)!) }
 
+    /// `async` (and `@MainActor`) so `emberweft export` can drive the
+    /// `ExportCoordinator` — whose Metal path renders via `await MainActor.run`
+    /// (the temporal Metal path is MainActor-only; a synchronous export that
+    /// blocked the main thread would deadlock that hop). `@MainActor` is
+    /// required, not just `async`: the existing sync subcommands
+    /// (`listBackends`/`render`/`animate`) reach Metal through
+    /// `MainActor.assumeIsolated`, which traps unless the caller is ON the main
+    /// actor. Top-level code in `main.swift` is `@MainActor`-isolated, so
+    /// `await run(...)` stays on the main actor and those subcommands keep
+    /// working unchanged. `export` itself is nonisolated `async` (it hops off
+    /// the main actor, freeing it to service the coordinator's Metal hops).
+    @MainActor
     @discardableResult
-    public static func run(_ argv: [String]) -> Int32 {
+    public static func run(_ argv: [String]) async -> Int32 {
         let args = Array(argv.dropFirst())
         guard let cmd = args.first else { printHelp(); return 0 }
         switch cmd {
@@ -27,6 +39,7 @@ public enum EmberweftCLI {
         case "validate": return validate(args.dropFirst().first)
         case "render": return render(Array(args.dropFirst()))
         case "animate": return animate(Array(args.dropFirst()))
+        case "export": return await export(Array(args.dropFirst()))   // async dispatch
         case "curate": return curate(Array(args.dropFirst()))
         case "_feature-score": return featureScore(Array(args.dropFirst()))
         default:
@@ -40,6 +53,7 @@ public enum EmberweftCLI {
         Usage:
           emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N] [--backend cpu|metal]
           emberweft animate  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--selector sequential|similarity] [--seed N] [--stagger F] [--backend cpu|metal] [--out DIR] [--size WxH] [--quality N]
+          emberweft export  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--seed N] [--backend cpu|metal] [--codec h264|hevc] [--resolution 720p|1080p|1440p|4k] [--fps 24|25|30|48|50|60] [--out FILE.mp4] [--quality genome|N] [--temporal-samples N] [--loop-cycles N] [--stagger F] [--container mp4|mov] [--bitrate auto|N] [--force] [--strict-backend]
           emberweft validate <genome.flam3>
           emberweft curate   [--library DIR] [--out DIR] [--size WxH] [--spp N] [--seed N] [--backend cpu|metal] [--sample N] [--top N] [--no-render]
           emberweft info     <genome.flam3>

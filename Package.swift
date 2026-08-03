@@ -70,7 +70,7 @@ let package = Package(
         // Testable `emberweft` CLI engine library (render / validate / info).
         .target(
             name: "EmberweftCLI",
-            dependencies: ["FlameKit", "FlameReference", "FlameRenderer"],
+            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlameExport"],
             path: "Sources/EmberweftCLI"
         ),
         // `emberweft` executable — thin wrapper over the EmberweftCLI library.

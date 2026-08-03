@@ -36,7 +36,12 @@ public final class PixelBufferPool: @unchecked Sendable {
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
             kCVPixelBufferMetalCompatibilityKey: true
         ]
-        CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+        let poolStatus = CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+        // Surface a clean failure (OOM / unsupported format) instead of trapping
+        // on the force-unwrap of `pool!` in `acquire` later. The export sizes are
+        // modest; this fires only on genuine resource exhaustion.
+        precondition(poolStatus == kCVReturnSuccess,
+            "PixelBufferPool: CVPixelBufferPoolCreate failed (\(poolStatus)) for \(width)×\(height)")
     }
 
     deinit { if let pool { CVPixelBufferPoolFlush(pool, .excessBuffers) } }
@@ -60,8 +65,10 @@ public final class PixelBufferPool: @unchecked Sendable {
         var pb: CVPixelBuffer?
         // 3-arg form (allocator, pool, out). The 4-arg `...WithAuxAttributes`
         // variant is unneeded — the pool already carries the per-buffer attrs.
-        CVPixelBufferPoolCreatePixelBuffer(nil, pool!, &pb)
-        return pb!                   // pool-backed; nil only on exhausted memory
+        let bufStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool!, &pb)
+        precondition(bufStatus == kCVReturnSuccess && pb != nil,
+            "PixelBufferPool: CVPixelBufferPoolCreatePixelBuffer failed (\(bufStatus))")
+        return pb!
     }
 
     /// Non-blocking slot try (synchronous — escapes the async `wait()` ban).

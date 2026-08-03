@@ -104,13 +104,22 @@ public final class VideoEncoder: @unchecked Sendable {
         started = false
     }
 
+    /// Cancel an in-progress write. `started` guard + `cancelWriting()` are both
+    /// routed through `queue.sync` so the status read/write and the `started`
+    /// flag flip are atomic w.r.t. any other `queue.sync` block (the writer
+    /// lifecycle transitions in `start`/`finish`). In practice the
+    /// `ExportCoordinator` owns one encoder and drives `append`/`cancel`/`finish`
+    /// from its actor (which serializes them), so there is no real concurrency
+    /// here — but the `queue.sync` keeps that invariant local to the encoder
+    /// rather than trusting every caller. The file removal is idempotent
+    /// (`try?`) and outside the lock: it does not depend on encoder state.
     public func cancel() {
-        guard started, let writer else { return }
         queue.sync {
+            guard started, let writer else { return }
             if writer.status == .writing { writer.cancelWriting() }
+            started = false
         }
         try? FileManager.default.removeItem(at: outputURL)
-        started = false
     }
 
     private static func autoBitrate(codec: AVVideoCodecType, res: ExportSettings.Resolution, fps: Int) -> Int {

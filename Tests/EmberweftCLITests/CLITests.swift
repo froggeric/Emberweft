@@ -15,40 +15,42 @@ final class CLITests: XCTestCase {
     </flame></flames>
     """
 
-    func testVersion() {
-        let code = EmberweftCLI.run(["emberweft", "--version"])
+    func testVersion() async {
+        let code = await EmberweftCLI.run(["emberweft", "--version"])
         XCTAssertEqual(code, 0)
     }
-    func testValidateGood() {
+    func testValidateGood() async throws {
         let url = tmp(goodXml)
-        XCTAssertEqual(EmberweftCLI.run(["emberweft", "validate", url.path]), 0)
+        let code = await EmberweftCLI.run(["emberweft", "validate", url.path])
+        XCTAssertEqual(code, 0)
     }
-    func testValidateBad() {
+    func testValidateBad() async throws {
         let url = tmp("<flames><flame>")
-        XCTAssertNotEqual(EmberweftCLI.run(["emberweft", "validate", url.path]), 0)
+        let code = await EmberweftCLI.run(["emberweft", "validate", url.path])
+        XCTAssertNotEqual(code, 0)
     }
-    func testRenderWritesPNG() throws {
+    func testRenderWritesPNG() async throws {
         let url = tmp(goodXml)
         let out = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("o.png")
         try? FileManager.default.removeItem(at: out)
-        let code = EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
+        let code = await EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
                                      "--size", "16x16", "--quality", "20"])
         XCTAssertEqual(code, 0)
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
     }
 
-    func testListBackends() {
-        let code = EmberweftCLI.run(["emberweft", "--list-backends"])
+    func testListBackends() async {
+        let code = await EmberweftCLI.run(["emberweft", "--list-backends"])
         XCTAssertEqual(code, 0)
     }
 
-    func testRenderMetalBackendWhenAvailable() throws {
-        let metalAvailable = MainActor.assumeIsolated { MetalRenderer.isAvailable }
+    func testRenderMetalBackendWhenAvailable() async throws {
+        let metalAvailable = await MainActor.run { MetalRenderer.isAvailable }
         guard metalAvailable else { return }   // skip on GPU-less machines
         let url = tmp(goodXml)
         let out = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("m.png")
         try? FileManager.default.removeItem(at: out)
-        let code = EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
+        let code = await EmberweftCLI.run(["emberweft", "render", url.path, "-o", out.path,
                                      "--size", "16x16", "--quality", "20", "--backend", "metal"])
         XCTAssertEqual(code, 0)
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
