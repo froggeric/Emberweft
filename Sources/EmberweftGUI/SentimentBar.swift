@@ -1,5 +1,6 @@
 import SwiftUI
 import EmberweftUI
+import FlameKit
 
 /// Tri-state sentiment control (−1 dislike / 0 neutral / +1 like), direct-set.
 /// Redundant color + glyph + left→right mapping onto the negative→positive
@@ -68,6 +69,16 @@ struct SelectionBar: View {
     @State private var showCreateSheet = false
     @State private var newName = ""
 
+    /// Batch-export state (spec §4.8). The selection is async-loaded into
+    /// `exportItems` deterministically (sorted by `GenomeCollectionAppOrder.key` —
+    /// rule #2: never persist `Set` iteration order), dropping unparseable /
+    /// non-renderable genomes; skips are surfaced via an alert before the sheet.
+    @State private var isLoadingExport = false
+    @State private var exportItems: [(flame: Flame, name: String)] = []
+    @State private var exportSkipCount = 0
+    @State private var showExportSheet = false
+    @State private var showExportSkipAlert = false
+
     var body: some View {
         HStack(spacing: 12) {
             Text("\(model.selection.count) selected").font(.body).monospacedDigit()
@@ -84,6 +95,21 @@ struct SelectionBar: View {
             }
             addToSelectionMenu
             Divider().frame(height: 18)
+            Button {
+                Task { await loadSelectionForExport() }
+            } label: {
+                if isLoadingExport {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading…")
+                    }
+                } else {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                }
+            }
+            .disabled(model.selection.isEmpty)
+            .help("Export the selected genomes as videos (skips unrenderable ones)")
+            Divider().frame(height: 18)
             Button { model.clearSelection() } label: {
                 Label("Clear", systemImage: "xmark").labelStyle(.titleAndIcon)
             }
@@ -99,6 +125,53 @@ struct SelectionBar: View {
             } onCancel: {
                 newName = ""
             }
+        }
+        .sheet(isPresented: $showExportSheet) {
+            ExportSheet(source: .batch(items: exportItems))
+        }
+        .alert("Export selected genomes", isPresented: $showExportSkipAlert) {
+            if exportItems.isEmpty {
+                // Nothing renderable — no sheet to follow.
+                Button("OK", role: .cancel) {}
+            } else {
+                Button("Export \(exportItems.count)") { showExportSheet = true }
+                Button("Cancel", role: .cancel) {}
+            }
+        } message: {
+            if exportItems.isEmpty {
+                Text("None of the \(exportSkipCount) selected genome\(exportSkipCount == 1 ? "" : "s") could be loaded for export (unparseable or degenerate).")
+            } else {
+                Text("Skipped \(exportSkipCount) genome\(exportSkipCount == 1 ? "" : "s") that could not be loaded or rendered. \(exportItems.count) will be exported.")
+            }
+        }
+    }
+
+    /// Async-load the selection into `exportItems` for the batch Export sheet
+    /// (spec §4.8). Mirrors `saveFromSelection()`'s deterministic sort
+    /// (`GenomeCollectionAppOrder.key` — rule #2: never persist `Set` order): loads
+    /// each genome via `libraryIndex.loadGenome(for:)`, drops unparseable /
+    /// non-renderable ones, and surfaces the skip count via an alert (confirm-to-
+    /// proceed when partial; an "all skipped" notice when nothing is exportable).
+    private func loadSelectionForExport() async {
+        isLoadingExport = true
+        defer { isLoadingExport = false }
+        let sorted = model.selection
+            .sorted { GenomeCollectionAppOrder.key($0) < GenomeCollectionAppOrder.key($1) }
+        var items: [(flame: Flame, name: String)] = []
+        var skips = 0
+        for entry in sorted {
+            if let flame = try? await model.libraryIndex.loadGenome(for: entry), flame.isRenderable {
+                items.append((flame: flame, name: entry.displayName))
+            } else {
+                skips += 1
+            }
+        }
+        exportItems = items
+        exportSkipCount = skips
+        if items.isEmpty || skips > 0 {
+            showExportSkipAlert = true
+        } else {
+            showExportSheet = true
         }
     }
 

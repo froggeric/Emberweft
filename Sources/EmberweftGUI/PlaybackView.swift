@@ -14,6 +14,12 @@ struct PlaybackWindow: View {
     @State private var degenerate = false
     @State private var showKeyboardHelp = false
     @State private var showPreviewQuality = false
+    /// The genome loaded for playback (nil while loading / on failure). Set in
+    /// `begin(flame:)` — the shared loader called by BOTH `start()` and the "Open
+    /// anyway" degenerate path — so Export is enabled as soon as a flame is live,
+    /// regardless of how. Drives the Export sheet's `.single` source (spec §4.8).
+    @State private var loadedFlame: Flame?
+    @State private var showExportSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +32,13 @@ struct PlaybackWindow: View {
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
+        .overlay(alignment: .top) {
+            // Non-blocking export-progress banner (spec §4.7). Mounted in all
+            // three window types — the main window is NOT always open, and an
+            // export is most often started from a playback window. Self-hides
+            // (returns EmptyView) when `exportManager.state == .idle`.
+            ExportProgressSurface()
+        }
         .task(id: entry.id) { await start() }
         .onChange(of: previewKey) {
             // Live re-apply: the single-genome loop picks up new params next frame
@@ -99,11 +112,25 @@ struct PlaybackWindow: View {
 
             Text(entry.displayName).font(.headline).lineLimit(1)
             SentimentBar(entry: entry).frame(width: 160)
+            Divider().frame(height: 22)
+            Button {
+                showExportSheet = true
+            } label: {
+                Label("Export…", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(loadedFlame == nil)
+            .help("Export this genome as a video")
             keyboardHelpButton
             Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)
+        .sheet(isPresented: $showExportSheet) {
+            if let flame = loadedFlame {
+                ExportSheet(source: .single(flame: flame, name: entry.displayName))
+            }
+        }
     }
 
     private var keyboardHelpButton: some View {
@@ -187,6 +214,7 @@ struct PlaybackWindow: View {
     }
 
     private func begin(flame: Flame) {
+        loadedFlame = flame
         let params = model.prefs.previewParams()
         vm.load(flame: flame, params: params,
                 backend: model.prefs.backend,

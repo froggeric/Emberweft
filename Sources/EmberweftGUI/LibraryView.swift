@@ -320,6 +320,15 @@ struct LibraryView: View {
                         .padding(.bottom, 20).transition(.opacity)
                 }
             }
+            .overlay(alignment: .top) {
+                // Non-blocking export-progress banner (spec §4.7 / G8). Mounted in
+                // all three window types — the main window is NOT always open, and
+                // an export is most often started from a playback window. Top
+                // alignment so it never collides with the bottom SelectionBar.
+                // Self-hides (returns EmptyView) when `exportManager.state == .idle`.
+                ExportProgressSurface()
+                    .padding(.top, 10)
+            }
             .animation(.snappy, value: model.selection.isEmpty)
             .animation(.snappy, value: filter)
             .animation(.snappy, value: destination)

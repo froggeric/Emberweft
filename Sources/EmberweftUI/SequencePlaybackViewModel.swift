@@ -54,6 +54,12 @@ public final class SequencePlaybackViewModel {
     /// dispatcher paces frames internally; this reports the achieved cadence).
     public private(set) var measuredFPS: Double = 0
 
+    /// Read-only view of the loaded flames (M6 export wiring — spec §4.8). The
+    /// collection window resolves + loads genomes up front in `load(flames:prefs:)`;
+    /// this exposes them to the Export sheet without a behavior change. Empty while
+    /// loading / when the collection has no renderable genomes.
+    public var resolvedFlames: [Flame] { flames }
+
     private var flames: [Flame] = []
     private var dispatcher: PlaybackDispatcher?
     private var runTask: Task<Void, Never>?
