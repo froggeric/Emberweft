@@ -14,7 +14,11 @@ import Foundation
 /// Design: a memo keyed by `(passIndex, threadCount)` wrapping
 /// `MetalHost.buildThreadSeeds`. The renderer keeps computing `perPassThreads`
 /// itself (no formula duplication); the budget just caches the result. The pass
-/// seed for pass `i` is `baseSeed &+ UInt64(i)` — matching `renderTemporalFused`.
+/// seed for pass `i` is `baseSeed &+ UInt64(i)`, matching `renderTemporalFused`.
+///
+/// Byte-identity contract: callers MUST set `baseSeed` to the render's
+/// `params.seed` for the budget path to match the `nil` (realtime) path, which
+/// seeds pass `i` with `params.seed &+ UInt64(i)`. (`ExportCoordinator` does this.)
 public extension MetalRenderer {
     final class ThreadSeedBudget: @unchecked Sendable {
         public let baseSeed: UInt64

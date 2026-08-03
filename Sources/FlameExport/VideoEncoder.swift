@@ -189,5 +189,4 @@ public enum ExportError: Error, Sendable {
     case metalUnavailable
     case genomeUnparseable
     case diskFull
-    case overwriteNeedsForce
 }

@@ -238,7 +238,6 @@ public actor ExportCoordinator {
         let chunkExt = job.settings.container == .mov ? "mov" : "mp4"
 
         var segStart = 0
-        var chunkIndex = 0
         while segStart < totalSegs {
             // Honor cancel between chunks (avoids starting a fresh encoder for a
             // cancelled run). Per-frame cancel is checked inside `renderFrames`.
@@ -262,7 +261,6 @@ public actor ExportCoordinator {
                 encoder.cancel(); try? FileManager.default.removeItem(at: tempURL); throw error
             }
             segStart = segEnd
-            chunkIndex += 1
         }
 
         // --- Concatenate via AVMutableComposition + passthrough (no re-encode) ---

@@ -6,14 +6,14 @@
       "id": 0,
       "nativeTaskId": "10",
       "subject": "Task 0: Doc housekeeping — supersede preliminary export note",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Mark docs/export/export-pipeline.md as superseded by the M6 spec.\n\n**Files:** Modify docs/export/export-pipeline.md (prepend SUPERSEDED banner).\n\n**Acceptance Criteria:** export-pipeline.md begins with a SUPERSEDED banner pointing to the M6 spec; no other file changes.\n\n**Verify:** head -6 docs/export/export-pipeline.md shows the banner.\n\n```json:metadata\n{\"files\": [\"docs/export/export-pipeline.md\"], \"verifyCommand\": \"head -6 docs/export/export-pipeline.md\", \"acceptanceCriteria\": [\"SUPERSEDED banner present pointing to M6 spec\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 1,
       "nativeTaskId": "11",
       "subject": "Task 1: FramePlan + isRenderable/TemporalFilter moves + animate refactor",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Extract animate's per-frame recipe into pure FramePlan (FlameKit); move Flame.isRenderable + TemporalFilter to FlameKit; refactor animate to consume FramePlan byte-identically.\n\n**Files:** Create Sources/FlameKit/{GenomeHealth,TemporalFilter,FramePlan}.swift + Tests/FlameKitTests/{FramePlan,GenomeHealth}Tests.swift; delete Sources/EmberweftUI/GenomeHealth.swift + Sources/FlameReference/TemporalFilter.swift; modify FlameReference.swift (re-export), AnimateCommand.swift, CurateCommand.swift.\n\n**Acceptance Criteria:** isRenderable in FlameKit (bounds [1e-3,4000]); TemporalFilter in FlameKit re-exported; FramePlan.descriptor pure + temporal delta scaling correct; animate --frame 5 byte-identical pre/post refactor; parity suite green.\n\n**Verify:** swift test --filter FlameKitTests && make test-parity.\n\n```json:metadata\n{\"files\": [\"Sources/FlameKit/GenomeHealth.swift\", \"Sources/FlameKit/TemporalFilter.swift\", \"Sources/FlameKit/FramePlan.swift\", \"Sources/EmberweftCLI/AnimateCommand.swift\", \"Sources/EmberweftCLI/CurateCommand.swift\"], \"verifyCommand\": \"swift test --filter FlameKitTests && make test-parity\", \"acceptanceCriteria\": [\"isRenderable in FlameKit bounds preserved\", \"TemporalFilter moved + re-exported\", \"FramePlan pure + temporal scaling\", \"animate byte-identical\", \"parity green\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -21,7 +21,7 @@
       "id": 2,
       "nativeTaskId": "12",
       "subject": "Task 2: ThreadSeedBudget + threadSeeds pass-in (acceleration)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Cache Metal host-side threadSeeds (compute once per export, not per frame), byte-identically; realtime untouched.\n\n**Files:** Create Sources/FlameRenderer/ThreadSeedBudget.swift + Tests/FlameRendererTests/ThreadSeedBudgetTests.swift; modify MetalRenderer.swift (renderFusedCore, renderTemporalFused, render entries, renderOffMain).\n\n**Acceptance Criteria:** ThreadSeedBudget memoizes buildThreadSeeds by (pass,threadCount), thread-safe; nil vs budget byte-identical (single + temporal N=8); realtime path untouched; parity green.\n\n**Verify:** swift test --filter FlameRendererTests.ThreadSeedBudgetTests && make test-parity.\n\n```json:metadata\n{\"files\": [\"Sources/FlameRenderer/ThreadSeedBudget.swift\", \"Sources/FlameRenderer/MetalRenderer.swift\"], \"verifyCommand\": \"swift test --filter FlameRendererTests.ThreadSeedBudgetTests && make test-parity\", \"acceptanceCriteria\": [\"memo by (pass,threadCount) thread-safe\", \"nil vs budget byte-identical single+temporal\", \"realtime untouched\", \"parity green\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -29,7 +29,7 @@
       "id": 3,
       "nativeTaskId": "13",
       "subject": "Task 3: PixelBufferPool + VideoEncoder",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Encode sink — pooled IOSurface CVPixelBuffers (RGBA->BGRA, top-first, premult preserved) + AVAssetWriter wrapper (start/append/finish/cancel, isReady backpressure, CMTime CFR).\n\n**Files:** Create Sources/FlameExport/{ExportSettings,PixelBufferPool,VideoEncoder}.swift + Tests/FlameExportTests/{PixelBufferPool,VideoEncoder}Tests.swift; replace FlameExport.swift stub; modify Package.swift (FlameExport += FlameReference; +FlameExportTests).\n\n**Acceptance Criteria:** RGBA->BGRA swap correct; premult preserved; orientation upright; pool caps in-flight 3; 10 frames decode-back at correct fps/res; cancel deletes partial.\n\n**Verify:** swift test --filter FlameExportTests.\n\n```json:metadata\n{\"files\": [\"Sources/FlameExport/ExportSettings.swift\", \"Sources/FlameExport/PixelBufferPool.swift\", \"Sources/FlameExport/VideoEncoder.swift\", \"Package.swift\"], \"verifyCommand\": \"swift test --filter FlameExportTests\", \"acceptanceCriteria\": [\"RGBA->BGRA swap\", \"premult preserved\", \"orientation upright\", \"pool cap 3\", \"decode-back\", \"cancel deletes partial\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -37,7 +37,7 @@
       "id": 4,
       "nativeTaskId": "14",
       "subject": "Task 4: ExportCoordinator (single export) + emberweft export + core DoD",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2, 3],
       "description": "**Goal:** End-to-end single export — ExportCoordinator actor (FramePlan->renderer->VideoEncoder, off-main, progress+cancel) + emberweft export CLI + disk precheck/atomic-handoff/codec-probe/Metal->CPU fallback. The M6 core DoD.\n\n**Files:** Create Sources/FlameExport/{ExportCoordinator,ExportProgress}.swift + Sources/EmberweftCLI/ExportCommand.swift + Tests/{FlameExportTests/ExportCoordinatorTests, EmberweftCLITests/ExportCommandTests}.swift; modify CLI.swift, Package.swift (EmberweftCLI += FlameExport), main.swift (await). NOTE: export MUST be async — sync export blocking main thread deadlocks await MainActor.run (Metal+temporal has no off-main path).\n\n**Acceptance Criteria:** export <one genome> --segments 1 --out x.mp4 -> playable upright mp4, frame 0 matches animate --frame 0; frame-pixel determinism (two runs byte-identical); overwrite needs --force; atomic handoff on failure; metal falls back to cpu (or --strict-backend exits 1); degenerate genome skipped; genome-count guards exit 2.\n\n**Verify:** swift test --filter FlameExportTests.ExportCoordinatorTests,EmberweftCLITests.ExportCommandTests.\n\n```json:metadata\n{\"files\": [\"Sources/FlameExport/ExportCoordinator.swift\", \"Sources/FlameExport/ExportProgress.swift\", \"Sources/EmberweftCLI/ExportCommand.swift\", \"Sources/EmberweftCLI/CLI.swift\", \"Sources/EmberweftApp/main.swift\"], \"verifyCommand\": \"swift test --filter FlameExportTests.ExportCoordinatorTests,EmberweftCLITests.ExportCommandTests\", \"acceptanceCriteria\": [\"playable upright mp4 matching animate frame\", \"frame-pixel determinism\", \"overwrite needs --force\", \"atomic handoff\", \"metal fallback\", \"degenerate skipped\", \"guards exit 2\"], \"modelTier\": \"hard\"}\n```"
     },
@@ -45,7 +45,7 @@
       "id": 5,
       "nativeTaskId": "15",
       "subject": "Task 5: Presets + resolutions + H.264/HEVC + bitrate + HEVC fallback",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Full quality/resolution/codec matrix + HEVC fallback; add export --frame N --png and the cross-command byte-identity pin (export vs animate).\n\n**Files:** Modify Sources/EmberweftCLI/ExportCommand.swift (HEVC probe, --frame/--png); create Tests/FlameExportTests/ExportPresetsTests.swift.\n\n**Acceptance Criteria:** .genome export --frame 5 --png byte-identical to animate --frame 5 (readPNG); 720p/1080p/1440p/4k correct dims; HEVC fallback-or-error (test skips on capable hosts); --bitrate reflected in track bitrate.\n\n**Verify:** swift test --filter FlameExportTests.ExportPresetsTests.\n\n```json:metadata\n{\"files\": [\"Sources/EmberweftCLI/ExportCommand.swift\"], \"verifyCommand\": \"swift test --filter FlameExportTests.ExportPresetsTests\", \"acceptanceCriteria\": [\".genome byte-identity with animate\", \"resolution dims\", \"HEVC fallback/error skips on capable hosts\", \"bitrate reflected\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -53,7 +53,7 @@
       "id": 6,
       "nativeTaskId": "16",
       "subject": "Task 6: Long-form segment + concat",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** ExportCoordinator.runLongForm — chunk on Schedule-segment edges, encode each to temp .mov, concatenate via AVMutableComposition passthrough; temps cleaned on every exit path.\n\n**Files:** Modify Sources/FlameExport/ExportCoordinator.swift (runLongForm); create Tests/FlameExportTests/ExportLongFormTests.swift.\n\n**Acceptance Criteria:** concat duration == sum of chunk durations; splice frames match standalone (no dup/drop/black); temps cleaned on success/cancel/failure; chunks on whole segments.\n\n**Verify:** swift test --filter FlameExportTests.ExportLongFormTests.\n\n```json:metadata\n{\"files\": [\"Sources/FlameExport/ExportCoordinator.swift\"], \"verifyCommand\": \"swift test --filter FlameExportTests.ExportLongFormTests\", \"acceptanceCriteria\": [\"duration == sum\", \"splice continuity\", \"temps cleaned\", \"whole-segment chunks\"], \"modelTier\": \"hard\"}\n```"
     },
@@ -61,7 +61,7 @@
       "id": 7,
       "nativeTaskId": "17",
       "subject": "Task 7: Batch queue",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** ExportCoordinator.runBatch(jobs:failFast:) — serial, continue-by-default or --fail-fast, per-job + aggregate progress, cancel = current + remaining.\n\n**Files:** Modify Sources/FlameExport/ExportCoordinator.swift (runBatch, BatchProgress); modify Sources/EmberweftCLI/ExportCommand.swift (--jobs manifest, --fail-fast, path sanitization); create Tests/FlameExportTests/ExportBatchTests.swift.\n\n**Acceptance Criteria:** jobs run in input order, all outputs exist; continue-on-failure (exit 1, recorded); fail-fast stops remaining; cancel scope current+remaining; manifest out paths sanitized + under base dir.\n\n**Verify:** swift test --filter FlameExportTests.ExportBatchTests.\n\n```json:metadata\n{\"files\": [\"Sources/FlameExport/ExportCoordinator.swift\", \"Sources/EmberweftCLI/ExportCommand.swift\"], \"verifyCommand\": \"swift test --filter FlameExportTests.ExportBatchTests\", \"acceptanceCriteria\": [\"in-order, all outputs\", \"continue-on-failure\", \"fail-fast\", \"cancel scope\", \"path sanitization\"], \"modelTier\": \"hard\"}\n```"
     }
