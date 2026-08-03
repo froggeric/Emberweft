@@ -63,7 +63,7 @@ let package = Package(
         // `emberweft-gui` executable — thin SwiftUI shell over EmberweftUI.
         .executableTarget(
             name: "EmberweftGUI",
-            dependencies: ["EmberweftUI", "FlameKit"],
+            dependencies: ["EmberweftUI", "FlameKit", "FlameExport"],
             path: "Sources/EmberweftGUI",
             resources: [.copy("CuratedLibrary")]
         ),

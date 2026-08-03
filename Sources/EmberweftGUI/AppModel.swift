@@ -19,6 +19,11 @@ final class AppModel {
     let collectionsStore: CollectionsStore
     let facets = FacetCache()
 
+    /// The export view-model (M6-G.5). Held on AppModel so it survives sheet /
+    /// window teardown mid-export (spec §4.4 / G9 — avoids the M4 sheet-teardown
+    /// leak). Wired into source windows in M6-G.8.
+    let exportManager = ExportManager()
+
     /// The bundled curated library resource root (`CuratedLibrary/`).
     private let bundleRoot: URL?
 
