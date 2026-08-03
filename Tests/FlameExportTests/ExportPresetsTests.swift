@@ -16,8 +16,12 @@ final class ExportPresetsTests: XCTestCase {
             .appendingPathComponent("Goldens/genomes/sierpinski.flam3").path
     }
     private func sierpinskiTS4() -> String {
+        // Lives under Tests/Goldens/fixtures/ (NOT genomes/) — it's a derived
+        // test fixture (sierpinski + temporal_samples="4"), not a frozen golden
+        // genome. GoldenGenomeTests scans Tests/Goldens/genomes/ as an exact
+        // curated 6-member set; a fixtures/ sibling is invisible to it.
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Goldens/genomes/sierpinski_ts4.flam3").path
+            .appendingPathComponent("Goldens/fixtures/sierpinski_ts4.flam3").path
     }
     private func tmp(_ ext: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("m6-\(UUID().uuidString).\(ext)")
