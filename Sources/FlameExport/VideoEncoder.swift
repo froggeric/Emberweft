@@ -130,6 +130,57 @@ public final class VideoEncoder: @unchecked Sendable {
         let fpsMult = fps >= 60 ? 1.5 : 1.0
         return Int(Double(base) * mult * fpsMult) * 1_000_000
     }
+
+    /// True iff this host can encode `codec`. Used by `ExportCommand`'s HEVC
+    /// fallback AND by capability tests. Probes by constructing a throwaway
+    /// writer+input at 64x48 and appending one black frame; if
+    /// `startWriting`/append/`finishWriting` leaves `writer.status == .completed`,
+    /// the codec is accepted. Any `.failed` status means the codec is unavailable
+    /// on this host. Cheap (one frame at 64x48; output goes to a temp file that
+    /// is removed in `defer`). `VTIsHardwareDecodeSupported`-style APIs probe
+    /// DECODE, not encode, and are unreliable for this — a real encode is the
+    /// only ground truth `AVAssetWriter` exposes.
+    public static func canEncode(_ codec: ExportSettings.Codec) -> Bool {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("m6probe-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        var s = ExportSettings()
+        s.codec = codec; s.container = .mov
+        s.resolution = .custom(width: 64, height: 48); s.fps = 30
+        guard let writer = try? AVAssetWriter(outputURL: tmp, fileType: .mov) else { return false }
+        let codecType: AVVideoCodecType = codec == .hevc ? .hevc : .h264
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: codecType,
+            AVVideoWidthKey: 64, AVVideoHeightKey: 48,
+        ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ])
+        writer.add(input)
+        guard writer.startWriting() else { return false }
+        writer.startSession(atSourceTime: .zero)
+        // One black frame.
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 64, 48,
+                            kCVPixelFormatType_32BGRA, nil, &pb)
+        if let pb { adaptor.append(pb, withPresentationTime: CMTime(value: 0, timescale: 30)) }
+        input.markAsFinished()
+        // Drive finishWriting synchronously via a semaphore (probe is one-shot).
+        // The `Box` is `@unchecked Sendable` to satisfy Swift 6's
+        // captured-var-mutation check: the write happens-before the read via
+        // `sem.wait()` (single completion-handler fire), so it's race-free.
+        // Same idiom the enclosing `VideoEncoder` class uses for its own
+        // `@unchecked Sendable` annotation.
+        final class Box: @unchecked Sendable { var ok = false }
+        let box = Box()
+        let sem = DispatchSemaphore(value: 0)
+        writer.finishWriting { box.ok = (writer.status == .completed); sem.signal() }
+        sem.wait()
+        return box.ok
+    }
 }
 
 public enum ExportError: Error, Sendable {

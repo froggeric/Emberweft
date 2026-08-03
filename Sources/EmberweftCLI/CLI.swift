@@ -53,7 +53,8 @@ public enum EmberweftCLI {
         Usage:
           emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N] [--backend cpu|metal]
           emberweft animate  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--selector sequential|similarity] [--seed N] [--stagger F] [--backend cpu|metal] [--out DIR] [--size WxH] [--quality N]
-          emberweft export  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--seed N] [--backend cpu|metal] [--codec h264|hevc] [--resolution 720p|1080p|1440p|4k] [--fps 24|25|30|48|50|60] [--out FILE.mp4] [--quality genome|N] [--temporal-samples N] [--loop-cycles N] [--stagger F] [--container mp4|mov] [--bitrate auto|N] [--force] [--strict-backend]
+          emberweft export  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--seed N] [--backend cpu|metal] [--codec h264|hevc] [--resolution 720p|1080p|1440p|4k] [--fps 24|25|30|48|50|60] [--out FILE.mp4] [--quality genome|N] [--temporal-samples N] [--loop-cycles N] [--stagger F] [--container mp4|mov] [--bitrate auto|N] [--frame N --png FILE.png] [--force] [--strict-backend]
+            (--codec hevc on a host without HEVC encode errors exit 1; the default h264 codec is always available)
           emberweft validate <genome.flam3>
           emberweft curate   [--library DIR] [--out DIR] [--size WxH] [--spp N] [--seed N] [--backend cpu|metal] [--sample N] [--top N] [--no-render]
           emberweft info     <genome.flam3>

@@ -1,6 +1,7 @@
 import Foundation
 import FlameKit
 import FlameExport
+import FlameReference   // ReferenceRenderer (1-frame PNG mastering path)
 import FlameRenderer   // MetalRenderer.isAvailable (probe) — @MainActor
 
 extension EmberweftCLI {
@@ -23,6 +24,14 @@ extension EmberweftCLI {
         var backend = "cpu", strictBackend = false, force = false
         var out = "out.mp4", codec = "h264", container = "mp4", bitrate = "auto"
         var resolution = "1080p", fps = 30, quality = "genome"
+        // Task 5: 1-frame PNG mastering path (`export ... --frame N --png`) and
+        // explicit-only-flag tracking (so the PNG path can default to the
+        // genome's native size when --resolution is not passed — the
+        // byte-identity-with-animate pin, AC1).
+        var onlyFrame: Int? = nil
+        var png = false
+        var resolutionExplicit = false
+        var codecExplicit = false
         var i = 0
         while i < args.count {
             let tok = args[i]
@@ -62,7 +71,7 @@ extension EmberweftCLI {
                     guard let v = value() else { return missing("--codec") }
                     let lv = v.lowercased()
                     guard lv == "h264" || lv == "hevc" else { EmberweftCLI.err("error: --codec must be h264|hevc\n"); return 2 }
-                    codec = lv; i += 2
+                    codec = lv; codecExplicit = true; i += 2
                 case "--container":
                     guard let v = value() else { return missing("--container") }
                     let lv = v.lowercased()
@@ -73,7 +82,7 @@ extension EmberweftCLI {
                     bitrate = v; i += 2
                 case "--resolution":
                     guard let v = value() else { return missing("--resolution") }
-                    resolution = v.lowercased(); i += 2
+                    resolution = v.lowercased(); resolutionExplicit = true; i += 2
                 case "--fps":
                     guard let v = value() else { return missing("--fps") }
                     let n = Int(v) ?? -1
@@ -86,6 +95,11 @@ extension EmberweftCLI {
                     // Parsed but unused until Task 6 wires runLongForm.
                     guard let v = value() else { return missing("--segment-frames") }
                     _ = Int(v); i += 2
+                case "--frame":
+                    // 1-frame PNG mastering path (mirrors `animate --frame N`).
+                    guard let v = value() else { return missing("--frame") }
+                    onlyFrame = Int(v); i += 2
+                case "--png": png = true; i += 1
                 case "--force": force = true; i += 1
                 case "--strict-backend": strictBackend = true; i += 1
                 default:
@@ -145,6 +159,21 @@ extension EmberweftCLI {
         default: settings.resolution = .p1080
         }
 
+        // --- HEVC availability probe + fallback (Task 5 AC3) ---
+        // H.264 is universally available on the target, so we only probe when
+        // the resolved codec is HEVC. If the host can't encode HEVC:
+        //   - explicit `--codec hevc` → exit 1 (the user asked for it by name)
+        //   - default codec (only reachable if a future default flips to HEVC)
+        //     → fall back to H.264 with a stderr notice
+        if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {
+            if codecExplicit {
+                EmberweftCLI.err("error: HEVC (H.265) encode is not available on this host; use --codec h264\n")
+                return 1
+            }
+            EmberweftCLI.err("notice: HEVC encode unavailable on this host; falling back to H.264\n")
+            settings.codec = .h264
+        }
+
         // --- Destination overwrite guard (D13) ---
         let outURL = URL(fileURLWithPath: out)
         if FileManager.default.fileExists(atPath: out) && !force {
@@ -167,6 +196,63 @@ extension EmberweftCLI {
             }
         } else {
             coordBackend = .cpu
+        }
+
+        // --- 1-frame PNG mastering path (Task 5 AC1) ---
+        // `export ... --frame N --png` renders only global frame N to a PNG via
+        // the SAME FramePlan + backend dispatch as `animate --frame N` (no
+        // VideoEncoder, no coordinator). This is the cross-command byte-identity
+        // pin: same genome/seed/size/temporal → byte-identical PNG. To honor
+        // that pin at default settings, the PNG path uses the genome's native
+        // size when --resolution is NOT explicitly passed (animate has no
+        // --resolution flag and defaults to the genome's `size` attr). An
+        // explicit --resolution still wins and overrides the genome size.
+        if let onlyFrame, png {
+            var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
+                                    selector: Sequential(seed: seed), seed: seed)
+            let plan = FramePlan(schedule: &schedule, segmentCount: segmentCount, flames: renderable,
+                                 loopCycles: loopCycles, stagger: stagger,
+                                 temporalSamples: max(1, settings.temporalSamples))
+            guard onlyFrame >= 0, onlyFrame < plan.totalFrames else {
+                EmberweftCLI.err("error: --frame \(onlyFrame) out of range (0..\(plan.totalFrames - 1))\n")
+                return 2
+            }
+            let d = plan.descriptor(for: onlyFrame)
+            // Genome-native size unless --resolution was explicit (byte-identity
+            // with `animate`, which has no resolution tiers).
+            let pw: Int, ph: Int
+            if resolutionExplicit {
+                pw = settings.resolution.width; ph = settings.resolution.height
+            } else {
+                pw = max(1, renderable[0].size.x); ph = max(1, renderable[0].size.y)
+            }
+            let (spp, os) = settings.quality.resolvedSamplesPerPixel(for: renderable[0])
+            let params = RenderParams(seed: seed, width: pw, height: ph,
+                                      oversample: os, samplesPerPixel: spp)
+            let img: RGBA8Image
+            switch coordBackend {
+            case .metal:
+                img = await MainActor.run {
+                    autoreleasepool {
+                        settings.temporalSamples > 1
+                            ? MetalRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                                   temporal: d.temporal, sumfilt: d.sumfilt, params: params)
+                            : MetalRenderer.render(flame: d.blendAt(d.blend), params: params)
+                    }
+                }
+            case .cpu:
+                img = settings.temporalSamples > 1
+                    ? ReferenceRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                               temporal: d.temporal, sumfilt: d.sumfilt, params: params)
+                    : ReferenceRenderer.render(flame: d.blendAt(d.blend), params: params)
+            }
+            // Ensure the parent directory exists (mirrors animate's createDirectory).
+            let parent = outURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            do { try img.writePNG(to: outURL) }
+            catch { EmberweftCLI.err("error: cannot write \(out): \(error)\n"); return 1 }
+            EmberweftCLI.out("wrote frame \(onlyFrame) (\(pw)×\(ph)) to \(out)\n")
+            return 0
         }
 
         // --- Build + run the job ---
