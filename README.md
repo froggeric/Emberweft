@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.4.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and video export to MP4/MOV (`emberweft export`, H.264 + HEVC, long-form, batch) are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.4.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and video export to MP4/MOV via the `emberweft export` CLI (H.264 + HEVC, long-form, batch; GUI export sheet pending) are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -65,7 +65,7 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.4.0** | ✅ Done | **M6:** `emberweft export` to MP4/MOV (H.264 + HEVC), long-form concat, batch; `FramePlan` extraction; `ThreadSeedBudget` acceleration |
 | M4 | ✅ Done | Native SwiftUI generative-flame studio |
 | M5 | Current | macOS screensaver bundle |
-| M6 | ✅ Done | Export pipeline + codecs (shipped in v0.4.0) |
+| M6 | In progress | Export pipeline + codecs: **engine + CLI shipped v0.4.0**; GUI export sheet + progress UI pending |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
 
@@ -261,4 +261,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 and M6 are complete (v0.4.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and video export to MP4/MOV (`emberweft export`, H.264 + HEVC, long-form, batch) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 are complete; M6's export engine + CLI shipped (v0.4.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and video export to MP4/MOV (`emberweft export`, H.264 + HEVC, long-form, batch) all work today. The M6 GUI export sheet, and M5 (the macOS screensaver bundle), are next: see the [roadmap](docs/engineering/roadmap.md).

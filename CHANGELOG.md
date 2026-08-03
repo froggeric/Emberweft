@@ -15,7 +15,9 @@ segment+concat, and batch. It reuses the proven CPU/Metal renderers through a
 pure `FramePlan`; only the sink changes (PNG writer -> AVAssetWriter). Frame
 pixels are byte-identical to `animate` (pinned for sharp and motion-blurred
 genomes); the encoded file is not byte-stable across machines, so `animate` to
-PNG remains the byte-exact mastering path. Engine parity is unchanged.
+PNG remains the byte-exact mastering path. Engine parity is unchanged. **The GUI
+export sheet + progress UI (the roadmap M6 DoD's progress-UI items) is a
+follow-up slice, not in this release.**
 
 ### Added
 - **`emberweft export`** — drives the deterministic renderers through a pure
