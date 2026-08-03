@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.3.2: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, and a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings) are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.4.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and video export to MP4/MOV (`emberweft export`, H.264 + HEVC, long-form, batch) are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4 complete, v0.3.2):**
+**Works now (M0–M4 + M6 complete, v0.4.0):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -28,12 +28,11 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 - **Motion blur** — faithful `temporal_samples` port (`--temporal-samples N`); box / gaussian / exp temporal filters
 - Complete flam3 variation coverage — all **99 of 99** variations ported to CPU + Metal and validated ≥38 dB vs `flam3` (the classic set, the 16 special-sauce variations, the trig family, and the parametric/RNG remainder through `pre_blur`)
 - **Native SwiftUI studio** (`emberweft-gui`): a `NavigationSplitView` sidebar browser (All / Library / ★ Liked / Imported / Folders), multi-select with bulk actions, tri-state sentiment (👍/○/👎), search + filter (sentiment / category / palette), drag-and-drop import, collections/playlists with drag reorder, and a non-modal click-to-play playback window. Thumbnails render on a background Metal queue (off-main, no UI freeze); settings persist.
+- **Video export** (`emberweft export`): render flame animations directly to MP4/MOV (H.264 + HEVC) via AVFoundation, with progress, cancellation, long-form segment+concat, and batch (`--jobs`). Frames are byte-identical to `animate` (`--frame N --png` mastering path).
 
-**Planned (M5+):**
+**Planned (M5, M7+):**
 - macOS screensaver bundle
-- Long-form export (MP4/MOV) for music videos and installations
 - Music-video mode: offline + realtime audio-reactive
-- Multi-resolution: 720p / 1080p / 1440p / 4K; landscape & vertical
 
 <!-- Screenshots placeholder: app window, screensaver preview, export dialog -->
 
@@ -63,9 +62,10 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.3.0** | ✅ Done | **M4 complete:** sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections + reorder, non-modal playback window |
 | **v0.3.1** | ✅ Done | **M4 polish:** configurable preview presets + live FPS readout (both playback windows); `testFiniteDeterministicRenders` crash fix (`intTrunc` guard) |
 | **v0.3.2** | ✅ Done | **M4 polish:** distinct preview/export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target |
+| **v0.4.0** | ✅ Done | **M6:** `emberweft export` to MP4/MOV (H.264 + HEVC), long-form concat, batch; `FramePlan` extraction; `ThreadSeedBudget` acceleration |
 | M4 | ✅ Done | Native SwiftUI generative-flame studio |
 | M5 | Current | macOS screensaver bundle |
-| M6 | Planned | Export pipeline (incl. long-form) + codecs |
+| M6 | ✅ Done | Export pipeline + codecs (shipped in v0.4.0) |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
 
@@ -133,6 +133,31 @@ ffmpeg -framerate 30 -i flock/%06d.png -c:v libx264 -pix_fmt yuv420p -movflags +
 - **Re-render a single frame** after a change with `--frame N` (writes only `00000N.png`, skips the rest): render it, copy it over the old PNG in the sequence, re-mux.
 
 Full flag reference + the `sheep_loop`/`sheep_edge` mapping: [docs/rendering/animation.md](docs/rendering/animation.md).
+
+## Exporting video (M6)
+
+`emberweft export` renders flame animations directly to MP4/MOV via AVFoundation. It reuses the same deterministic renderers as `animate`, so exported frames are byte-identical to `animate --frame N` (the `--frame N --png` path is the byte-exact mastering pin). The encoded file is NOT byte-stable across machines/OS versions; for byte-exact mastering use `animate` to PNG + ffmpeg.
+
+```bash
+# A single sheep loop to MP4
+swift run -c release emberweft export sheep.flam3 --segments 1 --frames 160 \
+  --backend metal --resolution 1080p --fps 30 --quality genome \
+  --temporal-samples 32 --out loop.mp4
+
+# An edge (loop A -> morph A->B -> loop B)
+swift run -c release emberweft export a.flam3 b.flam3 --segments 3 --frames 160 \
+  --backend metal --resolution 1080p --temporal-samples 32 --out edge.mp4
+
+# Long-form (chunked + passthrough concat) and batch
+swift run -c release emberweft export flock/*.flam3 --segment-frames 1600 --out long.mp4
+swift run -c release emberweft export --jobs manifest.json --out /tmp/batch/ --fail-fast
+```
+
+- `--codec h264|hevc` (default h264; HEVC falls back to H.264 on unsupported hardware, or errors with `--strict-backend`).
+- `--quality genome` (faithful default, byte-matches `animate`) or `--quality N` (samples-per-pixel).
+- `--temporal-samples N` for motion blur (defaults to the genome's value; essential for seamless transitions).
+- `--segment-frames N` enables long-form (chunked render + passthrough concat, no re-encode).
+- `--jobs manifest.json` runs a batch serially (continue-on-failure by default, or `--fail-fast`); each `out` is path-sanitized under `--out`.
 
 ## Validation
 
@@ -236,4 +261,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 are complete (v0.3.2):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, and the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 and M6 are complete (v0.4.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and video export to MP4/MOV (`emberweft export`, H.264 + HEVC, long-form, batch) all work today. M5 (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).

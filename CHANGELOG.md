@@ -7,6 +7,46 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.4.0] — M6 export pipeline (video export)
+
+The `emberweft export` command: render flame animations directly to MP4/MOV
+(H.264 + HEVC) via AVFoundation, with progress, cancellation, long-form
+segment+concat, and batch. It reuses the proven CPU/Metal renderers through a
+pure `FramePlan`; only the sink changes (PNG writer -> AVAssetWriter). Frame
+pixels are byte-identical to `animate` (pinned for sharp and motion-blurred
+genomes); the encoded file is not byte-stable across machines, so `animate` to
+PNG remains the byte-exact mastering path. Engine parity is unchanged.
+
+### Added
+- **`emberweft export`** — drives the deterministic renderers through a pure
+  `FramePlan` and encodes to video via `AVAssetWriter`: `--codec h264|hevc`,
+  `--resolution 720p|1080p|1440p|4k`, `--fps`, `--quality genome|N`,
+  `--temporal-samples`, `--bitrate`, `--container`, `--segment-frames`
+  (long-form), `--jobs` (batch) + `--fail-fast`, `--frame N --png`
+  (byte-exact single-frame mastering), `--force`, `--strict-backend`.
+- **`FramePlan` / `FrameDescriptor` (FlameKit)** — pure extraction of
+  `animate`'s per-frame recipe; `animate` refactored to use it (byte-identical).
+- **`MetalRenderer.ThreadSeedBudget`** — memoizes the Metal per-thread ISAAC
+  seeds so an export computes them once instead of per frame (byte-identical;
+  realtime untouched).
+- **`ExportCoordinator` (FlameExport, actor)** — off-main render + encode with
+  progress, cooperative cancel, atomic partial-to-final handoff, disk precheck,
+  HEVC-availability fallback, and a degenerate-genome gate.
+- **Long-form** segment+concat (`AVMutableComposition` passthrough; temps
+  cleaned on every exit path) and **batch** (serial; continue or `--fail-fast`;
+  path-sanitized manifest).
+
+### Changed
+- `Flame.isRenderable` and `TemporalFilter` moved down to FlameKit (pure; one
+  shared definition for CLI, export, and GUI).
+- `EmberweftCLI.run` is now `@MainActor async` (and `main.swift` awaits it) so
+  `export` can drive the coordinator without blocking the main actor.
+
+### Fixed
+- Export frames are byte-identical to `animate --frame N` for motion-blurred
+  (`temporal_samples` > 1) genomes, not just sharp ones: `export` now honors the
+  genome's default `temporal_samples`, matching `animate`.
+
 ## [v0.3.2] — Settings clarity, per-parameter help, and a `dist` target
 
 Post-v0.3.1 polish on the GUI studio and build. The engine is unchanged.
