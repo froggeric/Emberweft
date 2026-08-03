@@ -25,6 +25,9 @@ extension EmberweftCLI {
         var segmentFrames = 0
         var out = "out.mp4", codec = "h264", container = "mp4", bitrate = "auto"
         var resolution = "1080p", fps = 30, quality = "genome"
+        // Task 7: batch queue (`--jobs manifest.json` + `--fail-fast`).
+        var jobsPath: String? = nil
+        var failFast = false
         // Task 5: 1-frame PNG mastering path (`export ... --frame N --png`) and
         // explicit-only-flag tracking (so the PNG path can default to the
         // genome's native size when --resolution is not passed — the
@@ -104,12 +107,34 @@ extension EmberweftCLI {
                 case "--png": png = true; i += 1
                 case "--force": force = true; i += 1
                 case "--strict-backend": strictBackend = true; i += 1
+                case "--fail-fast": failFast = true; i += 1   // Task 7: batch abort-on-first-failure
+                case "--jobs":
+                    // Task 7: JSON manifest of per-job entries (see `--help` for
+                    // the schema). Dispatches `ExportCoordinator.runBatch`.
+                    guard let v = value() else { return missing("--jobs") }
+                    jobsPath = v; i += 2
                 default:
                     EmberweftCLI.err("error: unknown flag: \(tok)\n"); return 2
                 }
             } else {
                 genomes.append(tok); i += 1
             }
+        }
+
+        // --- Task 7: batch dispatch (`--jobs manifest.json`) ---
+        // Branch BEFORE the single-path genome guard: a batch manifest carries
+        // its own per-job genomes, so the top-level genome list is typically
+        // empty. Encoder settings (codec/res/fps/quality/container/bitrate) are
+        // resolved once from the top-level flags and applied batch-wide; each
+        // manifest entry supplies its own genome + sanitized `out` + optional
+        // render-identity overrides. Exit code: `failures.isEmpty ? 0 : 1`.
+        if let jobsPath {
+            return await runBatchExport(
+                manifestPath: jobsPath, baseOut: out, codec: codec, container: container,
+                fps: fps, quality: quality, temporalSamples: temporalSamples, bitrate: bitrate,
+                resolution: resolution, segmentFrames: segmentFrames, framesPerSegment: framesPerSegment,
+                segmentCount: segmentCount, seed: seed, loopCycles: loopCycles, stagger: stagger,
+                backend: backend, strictBackend: strictBackend, force: force, failFast: failFast)
         }
 
         // --- genome-count guard (mirrors AnimateCommand) ---
@@ -146,39 +171,10 @@ extension EmberweftCLI {
         }
 
         // --- Resolve ExportSettings ---
-        var settings = ExportSettings()
-        settings.codec = codec == "hevc" ? .hevc : .h264
-        settings.container = container == "mov" ? .mov : .mp4
-        settings.fps = fps
-        settings.quality = quality == "genome" ? .genome : .spp(Int(quality) ?? flames[0].quality.samplesPerPixel)
-        // Motion-blur default: mirror AnimateCommand exactly. When
-        // `--temporal-samples` is omitted (== 1) and the genome carries a
-        // temporal_samples > 1, use the genome's value; cap on Metal to bound
-        // dispatch overhead. WITHOUT this, `export --frame N --png` renders
-        // SHARP (ts=1) while `animate --frame N` renders MOTION-BLURRED (ts≈100
-        // on real ES genomes) → the cross-command byte-identity pin (AC1) only
-        // holds for sierpinski (which has temporal_samples=1 by parser default),
-        // not for the real flock. Using `renderable[0]` (not `flames[0]`)
-        // because export filters to renderable genomes; all real ES genomes
-        // share the same temporal params, so [0] is representative.
-        var ts = max(1, temporalSamples)
-        if ts == 1, !renderable.isEmpty, renderable[0].quality.temporalSamples > 1 {
-            ts = renderable[0].quality.temporalSamples
-        }
-        let metalTemporalCap = 64
-        if backend == "metal" && ts > metalTemporalCap {
-            EmberweftCLI.err("note: --temporal-samples \(ts) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
-            ts = metalTemporalCap
-        }
-        settings.temporalSamples = ts
-        settings.bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
-        switch resolution {
-        case "720p": settings.resolution = .p720
-        case "1080p": settings.resolution = .p1080
-        case "1440p": settings.resolution = .p1440
-        case "4k": settings.resolution = .p4k
-        default: settings.resolution = .p1080
-        }
+        var settings = Self.resolveExportSettings(
+            codec: codec, container: container, fps: fps, quality: quality,
+            temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
+            segmentFrames: segmentFrames, renderable: renderable, fallbackFlame: flames[0], backend: backend)
 
         // --- HEVC availability probe + fallback (Task 5 AC3) ---
         // H.264 is universally available on the target, so we only probe when
@@ -287,8 +283,8 @@ extension EmberweftCLI {
 
         // --- Build + run the job ---
         // Task 6: `--segment-frames N > 0` selects the long-form (chunked) path;
-        // else the single-export path (today's behavior).
-        settings.segmentFrameBudget = max(0, segmentFrames)
+        // else the single-export path (today's behavior). `segmentFrameBudget`
+        // is set by `resolveExportSettings`.
         let job = ExportJob(settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
                             segmentCount: segmentCount, selector: .sequential, seed: seed,
                             loopCycles: loopCycles, stagger: stagger, out: outURL)
@@ -331,6 +327,252 @@ extension EmberweftCLI {
                 }
             }
             return 1
+        }
+    }
+
+    // MARK: - Task 7 batch helpers
+
+    /// One entry in a `--jobs` manifest JSON array. `genome` and `out` are
+    /// required; the rest are optional per-job render-identity overrides (when
+    /// absent, the top-level CLI value is inherited). Encoder settings
+    /// (codec/res/fps/quality/container/bitrate) are batch-wide from top-level
+    /// flags — keeping a batch codec-coherent is the common case, and it lets
+    /// the HEVC probe + Metal probe run exactly once.
+    fileprivate struct ManifestEntry: Codable {
+        let genome: String
+        let out: String
+        let frames: Int?
+        let segments: Int?
+        let seed: UInt64?
+        let loopCycles: Int?
+        let stagger: Double?
+        let temporalSamples: Int?
+    }
+
+    /// Shared `ExportSettings` resolution for the single and batch paths (Task 7
+    /// extraction: the batch path needs the same codec/quality/temporal cap logic
+    /// as the single path, so the two cannot drift). `renderable`/`fallbackFlame`
+    /// drive the motion-blur default (genome `temporal_samples` when `--temporal-
+    /// samples` is omitted) and the `--quality` fallback; for a batch with no
+    /// top-level genomes, the caller passes the first manifest entry's flames.
+    static func resolveExportSettings(
+        codec: String, container: String, fps: Int, quality: String,
+        temporalSamples: Int, bitrate: String, resolution: String,
+        segmentFrames: Int, renderable: [Flame], fallbackFlame: Flame, backend: String
+    ) -> ExportSettings {
+        var settings = ExportSettings()
+        settings.codec = codec == "hevc" ? .hevc : .h264
+        settings.container = container == "mov" ? .mov : .mp4
+        settings.fps = fps
+        settings.quality = quality == "genome" ? .genome : .spp(Int(quality) ?? fallbackFlame.quality.samplesPerPixel)
+        // Motion-blur default: mirror AnimateCommand exactly. When
+        // `--temporal-samples` is omitted (== 1) and the genome carries a
+        // temporal_samples > 1, use the genome's value; cap on Metal to bound
+        // dispatch overhead. Using `renderable[0]` (not `fallbackFlame`) because
+        // export filters to renderable genomes; all real ES genomes share the
+        // same temporal params, so [0] is representative.
+        var ts = max(1, temporalSamples)
+        if ts == 1, !renderable.isEmpty, renderable[0].quality.temporalSamples > 1 {
+            ts = renderable[0].quality.temporalSamples
+        }
+        let metalTemporalCap = 64
+        if backend == "metal" && ts > metalTemporalCap {
+            EmberweftCLI.err("note: --temporal-samples \(ts) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
+            ts = metalTemporalCap
+        }
+        settings.temporalSamples = ts
+        settings.bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
+        switch resolution {
+        case "720p": settings.resolution = .p720
+        case "1080p": settings.resolution = .p1080
+        case "1440p": settings.resolution = .p1440
+        case "4k": settings.resolution = .p4k
+        default: settings.resolution = .p1080
+        }
+        settings.segmentFrameBudget = max(0, segmentFrames)
+        return settings
+    }
+
+    /// Resolves the batch base dir from `--out`. Per the plan: `--out` when it
+    /// IS a directory (existing, or declared with a trailing `/` — created if
+    /// needed); else the CWD. Manifest `out` names resolve strictly under it.
+    private static func batchBaseDir(out: String) -> URL {
+        let outURL = URL(fileURLWithPath: out)
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: outURL.path, isDirectory: &isDir), isDir.boolValue {
+            return outURL
+        }
+        if out.hasSuffix("/") {
+            try? FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
+            return outURL
+        }
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    }
+
+    /// `--jobs manifest.json` dispatch. Parses the manifest, resolves batch-wide
+    /// `ExportSettings` once (top-level flags + the first entry's genome for the
+    /// temporal default), sanitizes each entry's `out` via `BatchPath.resolve`
+    /// under the base dir, builds `[ExportJob]`, and runs them serially via
+    /// `ExportCoordinator.runBatch`. Exit code: `failures.isEmpty ? 0 : 1`.
+    static func runBatchExport(
+        manifestPath: String, baseOut: String, codec: String, container: String,
+        fps: Int, quality: String, temporalSamples: Int, bitrate: String,
+        resolution: String, segmentFrames: Int, framesPerSegment: Int,
+        segmentCount: Int, seed: UInt64, loopCycles: Int, stagger: Double,
+        backend: String, strictBackend: Bool, force: Bool, failFast: Bool
+    ) async -> Int32 {
+        // Load + decode the manifest.
+        let manifestURL = URL(fileURLWithPath: manifestPath)
+        guard let data = try? Data(contentsOf: manifestURL) else {
+            EmberweftCLI.err("error: cannot read manifest \(manifestPath)\n"); return 2
+        }
+        let entries: [ManifestEntry]
+        do {
+            entries = try JSONDecoder().decode([ManifestEntry].self, from: data)
+        } catch {
+            EmberweftCLI.err("error: invalid manifest \(manifestPath): \(error)\n"); return 2
+        }
+        guard !entries.isEmpty else {
+            EmberweftCLI.err("error: --jobs manifest is empty\n"); return 2
+        }
+
+        // Resolve encoder settings ONCE (batch-wide), using the first entry's
+        // genome for the motion-blur default + quality fallback. Per-entry
+        // `temporalSamples` overrides are applied per-job below.
+        guard let firstFlame = loadFirstFlame(entries[0].genome) else { return 1 }
+        let renderable0 = firstFlame.isRenderable ? [firstFlame] : []
+        let settings = resolveExportSettings(
+            codec: codec, container: container, fps: fps, quality: quality,
+            temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
+            segmentFrames: segmentFrames, renderable: renderable0, fallbackFlame: firstFlame, backend: backend)
+
+        // HEVC availability (probe once — codec is batch-wide).
+        if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {
+            // Mirror the single path's contract: explicit `--codec hevc` on a
+            // host without HEVC → exit 1. (`codec` reached here only via an
+            // explicit `--codec hevc`; the default is h264.)
+            EmberweftCLI.err("error: HEVC (H.265) encode is not available on this host; use --codec h264\n")
+            return 1
+        }
+
+        // Backend availability (probe once via MainActor.run).
+        let metalAvailable = backend == "metal"
+            ? await MainActor.run { MetalRenderer.isAvailable }
+            : false
+        let coordBackend: FlameExport.ExportCoordinator.Backend
+        if backend == "metal" {
+            if metalAvailable {
+                coordBackend = .metal
+            } else if strictBackend {
+                EmberweftCLI.err("error: Metal unavailable and --strict-backend set\n"); return 1
+            } else {
+                EmberweftCLI.err("notice: Metal unavailable; falling back to CPU (--strict-backend to refuse)\n")
+                coordBackend = .cpu
+            }
+        } else {
+            coordBackend = .cpu
+        }
+
+        let baseURL = batchBaseDir(out: baseOut)
+
+        // Build per-entry jobs. Genome load + health-gate + `out` sanitization
+        // happen per entry; a bad entry (unparseable genome, or an `out` that
+        // fails `BatchPath.resolve`) aborts the whole batch up front (exit 2) —
+        // manifest validation is a gate, not a per-job runtime failure.
+        var jobs: [ExportJob] = []
+        jobs.reserveCapacity(entries.count)
+        for (i, e) in entries.enumerated() {
+            // Per-entry genome (load + take first + health-gate inline; the
+            // batch coordinator re-checks `isRenderable`, but loading +
+            // surfacing a parse error here gives a precise manifest error).
+            guard let flame = loadFirstFlame(e.genome) else { return 1 }
+            // Sanitize `out` under the base dir (D13).
+            let outURL: URL
+            do {
+                outURL = try BatchPath.resolve(e.out, base: baseURL)
+            } catch {
+                EmberweftCLI.err("error: manifest entry \(i) has illegal `out` \"\(e.out)\" (\(error)); use a bare filename matching [A-Za-z0-9._-]\n")
+                return 2
+            }
+            // Destination overwrite guard (mirrors the single path; `--force`
+            // skips it). A pre-existing `out` is a fail-stop, not a runtime skip.
+            if FileManager.default.fileExists(atPath: outURL.path) && !force {
+                EmberweftCLI.err("error: \(outURL.path) exists (use --force to overwrite)\n"); return 2
+            }
+            // Per-entry render-identity overrides; inherit the top-level value
+            // when the manifest entry omits the field.
+            var jobSettings = settings
+            if let ts = e.temporalSamples { jobSettings.temporalSamples = max(1, ts) }
+            let jobFrames = e.frames ?? framesPerSegment
+            let jobSegments = e.segments ?? segmentCount
+            let jobSeed = e.seed ?? seed
+            let jobLoop = e.loopCycles ?? loopCycles
+            let jobStagger = e.stagger ?? stagger
+            jobs.append(ExportJob(settings: jobSettings, flames: [flame], framesPerSegment: jobFrames,
+                                  segmentCount: jobSegments, selector: .sequential, seed: jobSeed,
+                                  loopCycles: jobLoop, stagger: jobStagger, out: outURL))
+        }
+
+        EmberweftCLI.err("note: batch of \(jobs.count) job(s) → \(baseURL.path) (fail-fast=\(failFast))\n")
+
+        let coord = ExportCoordinator(backend: coordBackend)
+
+        // SIGINT → cooperative cancel (whole batch). The coordinator's cancel
+        // stops the in-flight job (partial cleaned) AND remaining jobs.
+        signal(SIGINT, SIG_IGN)
+        let sig = DispatchSource.makeSignalSource(signal: SIGINT)
+        sig.setEventHandler { Task { await coord.cancel() } }
+        sig.resume()
+        defer { sig.cancel() }
+
+        var failures: [Int] = []
+        do {
+            let stream = await coord.runBatch(jobs, failFast: failFast)
+            var lastPrint = 0.0
+            for try await p in stream {
+                if p.failed {
+                    failures.append(p.jobIndex)
+                    EmberweftCLI.err("[batch] job \(p.jobIndex + 1)/\(p.totalJobs) FAILED\n")
+                    continue
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastPrint > 0.5
+                    || p.jobFrame == p.jobTotalFrames {
+                    let pct = String(format: "%.0f", p.aggregateFraction * 100)
+                    EmberweftCLI.err("[batch] job \(p.jobIndex + 1)/\(p.totalJobs)  frame \(p.jobFrame)/\(p.jobTotalFrames)  total \(pct)%\n")
+                    lastPrint = now
+                }
+            }
+        } catch {
+            // Cancel surfaces as a thrown error (cancel scope = stop batch); a
+            // mid-batch cancel is not a per-job failure, it is an out-of-band stop.
+            // The in-flight job's partial was already cleaned by the coordinator;
+            // exit nonzero to signal an incomplete batch.
+            EmberweftCLI.err("error: batch stopped: \(error)\n")
+            return 1
+        }
+        if failures.isEmpty {
+            EmberweftCLI.out("batch complete: \(jobs.count) job(s)\n")
+            return 0
+        }
+        EmberweftCLI.err("error: batch finished with \(failures.count) failed job(s): \(failures.map { $0 + 1 })\n")
+        return 1
+    }
+
+    /// Loads the FIRST `<flame>` from a genome file (manifest entries are
+    /// single-genome). Returns nil on read/parse failure (after printing the
+    /// error); callers map that to the appropriate exit code.
+    private static func loadFirstFlame(_ path: String) -> Flame? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            EmberweftCLI.err("error: cannot read \(path)\n"); return nil
+        }
+        do {
+            guard let flame = try Flam3Parser.parse(data).first else {
+                EmberweftCLI.err("error: no <flame> element in \(path)\n"); return nil
+            }
+            return flame
+        } catch {
+            EmberweftCLI.err("error: failed to parse \(path): \(error)\n"); return nil
         }
     }
 }

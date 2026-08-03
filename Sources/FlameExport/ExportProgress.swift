@@ -22,6 +22,65 @@ public struct ExportProgress: Sendable {
     }
 }
 
+/// Per-job + aggregate progress for a batch run (`ExportCoordinator.runBatch`).
+///
+/// `jobFrame`/`jobTotalFrames` mirror the inner `ExportProgress` (currentFrame/
+/// totalFrames); `aggregateFraction` is a pure function of (jobIndex, per-job
+/// frame progress) over `totalJobs` — `(Double(jobIndex) + jobFrame/jobTotalFrames)
+/// / totalJobs` — so it is deterministic and rule-#2-safe (no float sum over a
+/// hashed collection). `failed` records a per-job failure (continue-by-default):
+/// the consumer tallies the failed jobIndexes and computes the batch exit code
+/// (`failures.isEmpty ? 0 : 1`). Exactly one `failed: true` event is emitted per
+/// failed job; successful jobs emit only `failed: false` events.
+public struct BatchProgress: Sendable, Equatable {
+    public let jobIndex: Int
+    public let totalJobs: Int
+    public let jobFrame: Int
+    public let jobTotalFrames: Int
+    public let aggregateFraction: Double
+    public let failed: Bool
+    public init(jobIndex: Int, totalJobs: Int, jobFrame: Int, jobTotalFrames: Int,
+                aggregateFraction: Double, failed: Bool) {
+        self.jobIndex = jobIndex; self.totalJobs = totalJobs
+        self.jobFrame = jobFrame; self.jobTotalFrames = jobTotalFrames
+        self.aggregateFraction = aggregateFraction; self.failed = failed
+    }
+}
+
+/// Resolves a manifest `out` name under a batch base dir, rejecting traversal.
+/// This is the D13 security gate for `--jobs` manifests: a malicious manifest
+/// entry MUST NOT escape the base dir.
+///
+/// Rule: reject absolute paths and any `..`/`.` segment BEFORE flattening to
+/// the leaf (`URL(fileURLWithPath:).lastPathComponent` alone would silently
+/// strip `..`, accepting "../../etc/passwd" as "passwd" — a false pass), then
+/// allowlist the leaf's characters against `[A-Za-z0-9._-]` and reject hidden
+/// (leading `.`) or empty stems. The result is always exactly one clean path
+/// component under `base` — it can never escape `base`.
+public enum BatchPath {
+    public enum BatchPathError: Error, Equatable, Sendable {
+        case traversal      // absolute, `..`/`.` segment, hidden stem, or empty
+        case illegalCharacters
+    }
+
+    public static func resolve(_ raw: String, base: URL) throws -> URL {
+        // Absolute paths and any `..`/`.` segment are traversal, rejected up
+        // front (before `lastPathComponent` could hide them).
+        if raw.hasPrefix("/") { throw BatchPathError.traversal }
+        let comps = raw.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        if comps.contains("..") || comps.contains(".") { throw BatchPathError.traversal }
+        // Flatten declared subdirs to the single leaf (the resolved result is
+        // always `<base>/<leaf>` — one component, never nested outside base).
+        guard let leaf = comps.last else { throw BatchPathError.traversal }   // empty raw
+        if leaf.hasPrefix(".") { throw BatchPathError.traversal }   // hidden stem (.foo)
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+        if leaf.unicodeScalars.contains(where: { !allowed.contains($0) }) {
+            throw BatchPathError.illegalCharacters
+        }
+        return base.appendingPathComponent(leaf)
+    }
+}
+
 /// One export. `flames` are pre-parsed; `schedule` is materialized by the coordinator
 /// via `FramePlan`. `partialURL` is the atomic-encode target (renamed to `out` on success).
 public struct ExportJob: Sendable {

@@ -47,6 +47,45 @@ public actor ExportCoordinator {
 
     public func cancel() async { cancelled = true }
 
+    /// Batch (serial) export. Runs `jobs` in input array order on ONE
+    /// `ExportCoordinator` (self) — Metal is single-device, so serial dispatch
+    /// is both deterministic (rule #2: job order + per-job progress →
+    /// aggregateFraction, no float sum over a hashed collection) and
+    /// thermal-safe. Continue-by-default: a failed job (degenerate genome OR a
+    /// thrown render/encode error) is recorded (`BatchProgress.failed == true`,
+    /// exactly one event per failed job) and the batch proceeds to the next job;
+    /// the batch exit code is `failures.isEmpty ? 0 : 1`. When `failFast` is
+    /// true, the first failure stops the batch (no later jobs start).
+    ///
+    /// Cancel scope = CURRENT job + remaining. A cancel (`coord.cancel()` or
+    /// `Task.isCancelled`) lands between frames in the in-flight job (the inner
+    /// `run`/`runLongForm` per-frame guard throws `ExportError.cancelled`,
+    /// cleaning up that job's partial + temps via the existing atomic-handoff
+    /// path), then propagates here: cancel is ALWAYS a batch stop (regardless of
+    /// `failFast`), and the `cancelled` flag is checked at the top of each job
+    /// iteration so remaining jobs never start.
+    ///
+    /// Per-job work reuses the existing `run`/`runLongForm` streams (selected by
+    /// `settings.segmentFrameBudget > 0`, same dispatch as `ExportCommand`);
+    /// each `ExportProgress` is mapped to a `BatchProgress` with
+    /// `aggregateFraction = (jobIndex + jobFrame/jobTotalFrames) / totalJobs`.
+    public func runBatch(_ jobs: [ExportJob], failFast: Bool) -> AsyncThrowingStream<BatchProgress, Error> {
+        AsyncThrowingStream { continuation in
+            // Same unstructured-Task pattern as `run`/`runLongForm`: captures
+            // `self` (Sendable actor) + the Sendable continuation; `runBatchBody`
+            // is actor-isolated so the `await` hops onto the actor, serializing
+            // batch iteration against any `cancel()` message.
+            Task { [self] in
+                do {
+                    try await self.runBatchBody(jobs, failFast: failFast) { p in continuation.yield(p) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
     /// Long-form (chunked) export. Splits the timeline on Schedule-segment edges
     /// (whole loops/transitions — never mid-segment), encodes each chunk to a
     /// temp `.mov` beside `out`, then concatenates via `AVMutableComposition` +
@@ -264,6 +303,85 @@ public actor ExportCoordinator {
         // on the same volume → rename is atomic.
         if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
         try FileManager.default.moveItem(at: job.partialURL, to: job.out)
+    }
+
+    /// Batch body (actor-isolated). Iterates `jobs.indices` in order. For each
+    /// job: (1) honor cancel at the top (remaining jobs never start once
+    /// cancelled); (2) health-gate `flames` via `isRenderable` — an empty
+    /// renderable set records `failed` and continues (or stops on `failFast`);
+    /// (3) drive the per-job `run`/`runLongForm` sub-stream, mapping each
+    /// `ExportProgress` to a `BatchProgress`. A thrown error from the sub-stream
+    /// is either cancel (always stop the batch) or a render/encode failure
+    /// (record + continue, or stop on `failFast`).
+    ///
+    /// The sub-stream's own unstructured Task calls `await self.runJob(...)` /
+    /// `runLongFormJob(...)`; when this body `for try await`s the sub-stream it
+    /// SUSPENDS, releasing the actor so the sub-stream's Task can re-enter and
+    /// do the per-frame work. Only one sub-stream is alive at a time (serial),
+    /// so there is no reentrancy hazard.
+    private func runBatchBody(_ jobs: [ExportJob], failFast: Bool,
+                              yield: @Sendable (BatchProgress) -> Void) async throws {
+        let total = jobs.count
+        guard total > 0 else { return }
+        for j in jobs.indices {
+            // Cancel scope = remaining jobs: a cancel observed between jobs
+            // short-circuits before any work for job `j` begins.
+            if cancelled || Task.isCancelled { throw ExportError.cancelled }
+            let job = jobs[j]
+
+            // Health gate (mirrors ExportCommand's `flames.filter { isRenderable }`).
+            let renderable = job.flames.filter { $0.isRenderable }
+            if renderable.isEmpty {
+                yield(BatchProgress(jobIndex: j, totalJobs: total, jobFrame: 0, jobTotalFrames: 0,
+                                    aggregateFraction: Double(j) / Double(total), failed: true))
+                if failFast { return }
+                continue
+            }
+            // Rebuild with the filtered flames when some were dropped (keeps the
+            // per-job path's "degenerate genomes skipped" contract; no-op when
+            // all flames are renderable, which is the common case).
+            let effective: ExportJob = renderable.count == job.flames.count ? job
+                : ExportJob(settings: job.settings, flames: renderable, framesPerSegment: job.framesPerSegment,
+                            segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
+                            loopCycles: job.loopCycles, stagger: job.stagger, out: job.out)
+
+            let longForm = job.settings.segmentFrameBudget > 0
+            // Same-actor synchronous call: `run`/`runLongForm` return the stream
+            // immediately and attach their own unstructured Task.
+            let sub = longForm ? self.runLongForm(effective) : self.run(effective)
+            do {
+                for try await p in sub {
+                    let frac = (Double(j) + Double(p.currentFrame) / Double(max(1, p.totalFrames))) / Double(total)
+                    yield(BatchProgress(jobIndex: j, totalJobs: total, jobFrame: p.currentFrame,
+                                        jobTotalFrames: p.totalFrames, aggregateFraction: frac, failed: false))
+                }
+            } catch {
+                // Defensive cleanup of this job's partial + long-form temps. The
+                // inner `runJob`/`runLongFormJob` already cleans on throw; this
+                // catches any stray a stream-error path could leave (the partial
+                // URL is `<out>.partial-<pid>.<ext>`, beside `out` on the same
+                // volume → safe to remove).
+                try? FileManager.default.removeItem(at: effective.partialURL)
+                if longForm {
+                    let outDir = effective.out.deletingLastPathComponent()
+                    if let entries = try? FileManager.default.contentsOfDirectory(atPath: outDir.path) {
+                        for e in entries where e.hasPrefix("m6-seg-") {
+                            try? FileManager.default.removeItem(at: outDir.appendingPathComponent(e))
+                        }
+                    }
+                }
+                // Cancel (cooperative or external) ALWAYS stops the batch — it
+                // is not a recordable failure, it is an out-of-band "stop all".
+                if case ExportError.cancelled = error { throw error }
+                // Otherwise: record the per-job failure and continue, or stop on
+                // `failFast`. The yielded event lets the consumer tally
+                // failures and compute the batch exit code.
+                yield(BatchProgress(jobIndex: j, totalJobs: total, jobFrame: 0, jobTotalFrames: 0,
+                                    aggregateFraction: Double(j) / Double(total), failed: true))
+                if failFast { return }
+                // else: continue to the next job.
+            }
+        }
     }
 
     private func makeSelector(_ spec: SelectorSpec) -> any PairSelector {
