@@ -494,7 +494,7 @@ public enum MetalRenderer {
         seedBudget: MetalRenderer.ThreadSeedBudget? = nil
     ) throws -> RGBA8Image {
         precondition(!temporal.isEmpty,
-            "renderTemporalFused: temporal must contain at least one sub-sample")
+            "renderTemporalFusedCore: temporal must contain at least one sub-sample")
         let center = blendAt(centerTime)
         // Thread the center flame's `filterRadius` into `params.spatialFilterRadius`
         // — quality / display params are frame-level (rect.c:911-937), driven by
