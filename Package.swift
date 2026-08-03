@@ -49,7 +49,7 @@ let package = Package(
         // AVFoundation offline/long-form export.
         .target(
             name: "FlameExport",
-            dependencies: ["FlameRenderer", "FlameKit"],
+            dependencies: ["FlameRenderer", "FlameReference", "FlameKit"],
             path: "Sources/FlameExport"
         ),
         // SwiftUI/AppKit GUI support library: the FlameUI↔SwiftUI bridge,
@@ -97,6 +97,11 @@ let package = Package(
             name: "FlameRendererTests",
             dependencies: ["FlameRenderer", "FlameReference", "FlameKit"],
             path: "Tests/FlameRendererTests"
+        ),
+        .testTarget(
+            name: "FlameExportTests",
+            dependencies: ["FlameExport", "FlameKit", "FlameReference", "FlameRenderer"],
+            path: "Tests/FlameExportTests"
         ),
         .testTarget(
             name: "EmberweftCLITests",
