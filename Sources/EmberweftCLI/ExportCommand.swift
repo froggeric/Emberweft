@@ -420,13 +420,12 @@ extension EmberweftCLI {
         // does NOT cap (64 is not > 64), but `requestedTS != resolved` is still
         // true (the fallback bumped it) — so we re-check the original condition
         // before printing, avoiding a spurious "capped to 64" when ts is already 64.
-        let metalTemporalCap = 64
-        if backend == "metal" && temporalSamples != settings.temporalSamples {
+        if backendEnum == .metal && temporalSamples != settings.temporalSamples {
             let precap = temporalSamples > 1
                 ? temporalSamples
                 : baseFlame.quality.temporalSamples
-            if precap > metalTemporalCap {
-                EmberweftCLI.err("note: --temporal-samples \(precap) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
+            if precap > ExportSettings.metalTemporalCap {
+                EmberweftCLI.err("note: --temporal-samples \(precap) capped to \(ExportSettings.metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
             }
         }
         return settings

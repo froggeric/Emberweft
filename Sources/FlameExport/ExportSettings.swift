@@ -49,6 +49,11 @@ public enum ExportQuality: Codable, Sendable, Equatable {
 }
 
 public extension ExportSettings {
+    /// Metal temporal-samples cap (dispatch-overhead bound). The single source of
+    /// truth: `resolve` applies it and the CLI/GUI cap-notice logic reads it, so
+    /// the two cannot drift apart.
+    public static let metalTemporalCap = 64
+
     /// Resolve a concrete `ExportSettings` from PARSED CLI/GUI inputs, applying:
     ///  - the motion-blur genome-default fallback: `requestedTS == 1` and
     ///    `baseFlame.quality.temporalSamples > 1` ⇒ use the genome value (mirrors
@@ -99,9 +104,8 @@ public extension ExportSettings {
         if ts == 1, baseFlame.quality.temporalSamples > 1 {
             ts = baseFlame.quality.temporalSamples
         }
-        let metalTemporalCap = 64
-        if backend == .metal, ts > metalTemporalCap {
-            ts = metalTemporalCap
+        if backend == .metal, ts > Self.metalTemporalCap {
+            ts = Self.metalTemporalCap
         }
         settings.temporalSamples = ts
         settings.bitrate = bitrate
