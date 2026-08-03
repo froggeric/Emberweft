@@ -355,41 +355,80 @@ extension EmberweftCLI {
     /// drive the motion-blur default (genome `temporal_samples` when `--temporal-
     /// samples` is omitted) and the `--quality` fallback; for a batch with no
     /// top-level genomes, the caller passes the first manifest entry's flames.
+    ///
+    /// Thin caller of the shared `ExportSettings.resolve(…)` (M6-G.3): ALL
+    /// string→enum parsing STAYS HERE (FlameExport cannot call
+    /// `EmberweftCLI.err`, and the GUI builds enums directly from its pickers —
+    /// no strings to parse). The shared resolver owns the motion-blur genome-
+    /// default fallback + the Metal temporal cap (pure + silent); this wrapper
+    /// detects the cap (requested vs resolved) and prints the stderr notice the
+    /// original emitted. Behavior is byte-for-byte identical to the pre-refactor
+    /// implementation (the 3 named existing pins — `testExportGenomeByteMatches
+    /// AnimateFrame5`, `…MotionBlur`, `testTemporalSamples1IsByteIdenticalToNoFlag`
+    /// — are the proof).
     static func resolveExportSettings(
         codec: String, container: String, fps: Int, quality: String,
         temporalSamples: Int, bitrate: String, resolution: String,
         segmentFrames: Int, renderable: [Flame], fallbackFlame: Flame, backend: String
     ) -> ExportSettings {
-        var settings = ExportSettings()
-        settings.codec = codec == "hevc" ? .hevc : .h264
-        settings.container = container == "mov" ? .mov : .mp4
-        settings.fps = fps
-        settings.quality = quality == "genome" ? .genome : .spp(Int(quality) ?? fallbackFlame.quality.samplesPerPixel)
-        // Motion-blur default: mirror AnimateCommand exactly. When
-        // `--temporal-samples` is omitted (== 1) and the genome carries a
-        // temporal_samples > 1, use the genome's value; cap on Metal to bound
-        // dispatch overhead. Using `renderable[0]` (not `fallbackFlame`) because
-        // export filters to renderable genomes; all real ES genomes share the
-        // same temporal params, so [0] is representative.
-        var ts = max(1, temporalSamples)
-        if ts == 1, !renderable.isEmpty, renderable[0].quality.temporalSamples > 1 {
-            ts = renderable[0].quality.temporalSamples
-        }
-        let metalTemporalCap = 64
-        if backend == "metal" && ts > metalTemporalCap {
-            EmberweftCLI.err("note: --temporal-samples \(ts) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
-            ts = metalTemporalCap
-        }
-        settings.temporalSamples = ts
-        settings.bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
+        // --- String → enum parsing (VERBATIM from the original; the resolver
+        // takes parsed enums so this is the ONLY place strings are interpreted) ---
+        let codecEnum: ExportSettings.Codec = codec == "hevc" ? .hevc : .h264
+        let containerEnum: ExportSettings.Container = container == "mov" ? .mov : .mp4
+        // The quality-number defensive fallback uses `fallbackFlame` (NOT
+        // renderable[0]), matching the original line 367 verbatim.
+        let qualityEnum: ExportQuality = quality == "genome"
+            ? .genome
+            : .spp(Int(quality) ?? fallbackFlame.quality.samplesPerPixel)
+        let bitrateEnum: ExportSettings.Bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
+        let resolutionEnum: ExportSettings.Resolution
         switch resolution {
-        case "720p": settings.resolution = .p720
-        case "1080p": settings.resolution = .p1080
-        case "1440p": settings.resolution = .p1440
-        case "4k": settings.resolution = .p4k
-        default: settings.resolution = .p1080
+        case "720p": resolutionEnum = .p720
+        case "1080p": resolutionEnum = .p1080
+        case "1440p": resolutionEnum = .p1440
+        case "4k": resolutionEnum = .p4k
+        default: resolutionEnum = .p1080     // unknown → .p1080 (original line 390)
         }
-        settings.segmentFrameBudget = max(0, segmentFrames)
+        let backendEnum: ExportCoordinator.Backend = backend == "metal" ? .metal : .cpu
+
+        // `baseFlame` for the motion-blur fallback = the first RENDERABLE flame
+        // (the original used `renderable[0]` guarded by `!renderable.isEmpty`,
+        // ExportCommand.swift:375). When `renderable` is empty (only the batch
+        // path with a degenerate first entry), `Flame()` carries the Quality
+        // default `temporalSamples == 1`, so the resolver's fallback condition
+        // (`> 1`) fails — matching the original's `!renderable.isEmpty` guard
+        // byte-for-byte.
+        let baseFlame = renderable.first ?? Flame()
+
+        // Delegate the motion-blur fallback + Metal cap to the shared pure+silent
+        // resolver (single source of truth for CLI + GUI; spec §4.2b).
+        let settings = ExportSettings.resolve(
+            quality: qualityEnum,
+            temporalSamples: temporalSamples,
+            codec: codecEnum, container: containerEnum, fps: fps, bitrate: bitrateEnum,
+            resolution: resolutionEnum, segmentFrameBudget: segmentFrames,
+            baseFlame: baseFlame, backend: backendEnum)
+
+        // --- Metal temporal cap notice (the resolver is SILENT; the CLI prints) ---
+        // Mirrors the original (ExportCommand.swift:378-382) EXACTLY: the notice
+        // fires iff the post-fallback, pre-cap ts > 64 on Metal. We detect the cap
+        // by comparing the requested against the resolved `temporalSamples`, then
+        // reconstruct the pre-cap value for the message (the value that was about
+        // to be capped — what the original's `ts` variable held at line 380). The
+        // `precap > metalTemporalCap` guard covers the edge case where the genome
+        // fallback lands EXACTLY at the cap (e.g. genome ts == 64): the resolver
+        // does NOT cap (64 is not > 64), but `requestedTS != resolved` is still
+        // true (the fallback bumped it) — so we re-check the original condition
+        // before printing, avoiding a spurious "capped to 64" when ts is already 64.
+        let metalTemporalCap = 64
+        if backend == "metal" && temporalSamples != settings.temporalSamples {
+            let precap = temporalSamples > 1
+                ? temporalSamples
+                : baseFlame.quality.temporalSamples
+            if precap > metalTemporalCap {
+                EmberweftCLI.err("note: --temporal-samples \(precap) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
+            }
+        }
         return settings
     }
 
