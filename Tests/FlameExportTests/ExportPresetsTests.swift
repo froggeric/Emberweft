@@ -15,6 +15,10 @@ final class ExportPresetsTests: XCTestCase {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Goldens/genomes/sierpinski.flam3").path
     }
+    private func sierpinskiTS4() -> String {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Goldens/genomes/sierpinski_ts4.flam3").path
+    }
     private func tmp(_ ext: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("m6-\(UUID().uuidString).\(ext)")
     }
@@ -22,6 +26,15 @@ final class ExportPresetsTests: XCTestCase {
     /// AC1: at `.genome`, `export --frame 5 --png` == `animate --frame 5`
     /// (byte-equal RGBA8Image). This is the cross-command determinism pin (§5.2).
     /// Requires Task 5 Step 3 (`--frame`/`--png` wiring).
+    ///
+    /// Scope (minor #1 from the Task 5 review): the pin holds for all-renderable
+    /// input. `AnimateCommand` builds its `FramePlan` from `flames` (all parsed);
+    /// `ExportCommand` builds from `renderable` (filtered for NaN/degenerate
+    /// cameras). For a multi-genome invocation with one degenerate member, the
+    /// two differ in `librarySize`/flame indices → the pin is NOT asserted for
+    /// mixed-quality input (export's filtering is arguably more correct, but
+    /// it's a divergence from animate). This test uses a single all-renderable
+    /// genome so the pin is well-defined.
     func testExportGenomeByteMatchesAnimateFrame5() async throws {
         let pngOut = tmp("png")
         let rc = await EmberweftCLI.export([sierpinski(), "--segments", "1", "--frames", "8",
@@ -37,6 +50,37 @@ final class ExportPresetsTests: XCTestCase {
         let exported = try RGBA8Image.readPNG(from: pngOut)
         let animated = try RGBA8Image.readPNG(from: animDir.appendingPathComponent("000005.png"))
         XCTAssertEqual(exported, animated)   // byte-identical (`.genome` quality, oversample 1)
+        try? FileManager.default.removeItem(at: pngOut)
+        try? FileManager.default.removeItem(at: animDir)
+    }
+
+    /// AC1 (generalized): the byte-identity pin holds for MOTION-BLURRED genomes
+    /// (temporal_samples > 1). This is the pin that actually matters for the real
+    /// flock — real ES genomes carry `temporal_samples≈100` (CLAUDE.md), and
+    /// `animate` defaults to the genome's motion-blur when `--temporal-samples`
+    /// is omitted (AnimateCommand.swift:147-149). `export` MUST mirror that
+    /// default or `export --frame N --png` renders SHARP while `animate --frame N`
+    /// renders MOTION-BLURRED → PNGs differ → pin breaks. sierpinski has
+    /// temporal_samples=1 (parser default), so the sibling test above hides the
+    /// divergence; this test uses sierpinski_ts4 (temporal_samples=4) to expose
+    /// it. CPU backend (Metal temporal is box-only/cap-64; CPU is uncapped and
+    /// faithful). ts=4 keeps the per-frame cost practical (~4x the ts=1 render).
+    func testExportGenomeByteMatchesAnimateFrame5MotionBlur() async throws {
+        let pngOut = tmp("png")
+        let rc = await EmberweftCLI.export([sierpinskiTS4(), "--segments", "1", "--frames", "8",
+                                            "--frame", "5", "--png", "--out", pngOut.path])
+        XCTAssertEqual(rc, 0)
+
+        let animDir = FileManager.default.temporaryDirectory.appendingPathComponent("m6anim-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: animDir, withIntermediateDirectories: true)
+        let rcA = EmberweftCLI.animate([sierpinskiTS4(), "--segments", "1", "--frames", "8",
+                                        "--frame", "5", "--backend", "cpu", "--out", animDir.path])
+        XCTAssertEqual(rcA, 0)
+
+        let exported = try RGBA8Image.readPNG(from: pngOut)
+        let animated = try RGBA8Image.readPNG(from: animDir.appendingPathComponent("000005.png"))
+        XCTAssertEqual(exported, animated,
+                       "export --frame 5 --png must match animate --frame 5 for a temporal_samples>1 genome (motion-blur default)")
         try? FileManager.default.removeItem(at: pngOut)
         try? FileManager.default.removeItem(at: animDir)
     }

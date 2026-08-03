@@ -149,7 +149,26 @@ extension EmberweftCLI {
         settings.container = container == "mov" ? .mov : .mp4
         settings.fps = fps
         settings.quality = quality == "genome" ? .genome : .spp(Int(quality) ?? flames[0].quality.samplesPerPixel)
-        settings.temporalSamples = max(1, temporalSamples)
+        // Motion-blur default: mirror AnimateCommand exactly. When
+        // `--temporal-samples` is omitted (== 1) and the genome carries a
+        // temporal_samples > 1, use the genome's value; cap on Metal to bound
+        // dispatch overhead. WITHOUT this, `export --frame N --png` renders
+        // SHARP (ts=1) while `animate --frame N` renders MOTION-BLURRED (ts≈100
+        // on real ES genomes) → the cross-command byte-identity pin (AC1) only
+        // holds for sierpinski (which has temporal_samples=1 by parser default),
+        // not for the real flock. Using `renderable[0]` (not `flames[0]`)
+        // because export filters to renderable genomes; all real ES genomes
+        // share the same temporal params, so [0] is representative.
+        var ts = max(1, temporalSamples)
+        if ts == 1, !renderable.isEmpty, renderable[0].quality.temporalSamples > 1 {
+            ts = renderable[0].quality.temporalSamples
+        }
+        let metalTemporalCap = 64
+        if backend == "metal" && ts > metalTemporalCap {
+            EmberweftCLI.err("note: --temporal-samples \(ts) capped to \(metalTemporalCap) on Metal (dispatch-overhead bound); use --backend cpu for the full genome value\n")
+            ts = metalTemporalCap
+        }
+        settings.temporalSamples = ts
         settings.bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
         switch resolution {
         case "720p": settings.resolution = .p720
@@ -207,6 +226,15 @@ extension EmberweftCLI {
         // size when --resolution is NOT explicitly passed (animate has no
         // --resolution flag and defaults to the genome's `size` attr). An
         // explicit --resolution still wins and overrides the genome size.
+        //
+        // `--frame` without `--png` is an error (the 1-frame path produces a
+        // PNG by definition; a single-frame .mp4 is not a useful target and
+        // would be silently ignored otherwise — minor #2 from the Task 5
+        // review).
+        if onlyFrame != nil && !png {
+            EmberweftCLI.err("error: --frame requires --png (1-frame PNG mastering path)\n")
+            return 2
+        }
         if let onlyFrame, png {
             var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
                                     selector: Sequential(seed: seed), seed: seed)
