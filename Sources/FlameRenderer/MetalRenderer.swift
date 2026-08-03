@@ -472,13 +472,25 @@ public enum MetalRenderer {
     /// The chaos stage becomes a loop over `temporal`; the decode/DE/log/display
     /// stages are byte-for-byte copies of `renderFused` (they read the
     /// `atomicBuf` AFTER all passes have accumulated into it).
-    @MainActor
-    static func renderTemporalFused(
+    ///
+    /// Actor-agnostic temporal motion-blur core — the temporal twin of
+    /// `renderFusedCore`. Identical body to the former `renderTemporalFused`; the
+    /// three MainActor handles (device/queue/psos) are passed in so it runs
+    /// identically on the MainActor (via `renderTemporalFused`) OR off-main (via
+    /// `renderTemporalOffMain`). Output is byte-identical either way — the GPU
+    /// computation is independent of the encoding thread; only the thread that
+    /// blocks on `waitUntilCompleted` differs (main vs `offMainQueue`).
+    static func renderTemporalFusedCore(
         blendAt: (Double) -> Flame,
         centerTime: Double,
         temporal: [(delta: Double, weight: Double)],
         sumfilt: Double,
         params: RenderParams,
+        device: MTLDevice,
+        queue: MTLCommandQueue,
+        psos: (chaos: MTLComputePipelineState, decode: MTLComputePipelineState,
+               density: MTLComputePipelineState, log: MTLComputePipelineState,
+               display: MTLComputePipelineState),
         seedBudget: MetalRenderer.ThreadSeedBudget? = nil
     ) throws -> RGBA8Image {
         precondition(!temporal.isEmpty,
@@ -489,13 +501,6 @@ public enum MetalRenderer {
         // the center CP. Same as renderFused.
         let params = params.settingSpatialFilterRadius(center.quality.filterRadius)
         let N = temporal.count
-
-        guard let (device, _) = deviceAndLibrary() else {
-            throw NSError(domain: "MetalRenderer", code: 10)
-        }
-        guard let queue = commandQueue else {
-            throw NSError(domain: "MetalRenderer", code: 11)
-        }
 
         let gw = params.gridWidth, gh = params.gridHeight
         let binCount = gw * gh
@@ -613,10 +618,7 @@ public enum MetalRenderer {
         let baseBudget = T / N
         let remBudget = T % N
 
-        // -------- Pipeline states (cached; built once on first frame) --------
-        guard let psos = fusedPipelines() else {
-            throw NSError(domain: "MetalRenderer", code: 27)
-        }
+        // -------- Pipeline states (passed in by the caller) --------
         let chaosPso   = psos.chaos
         let decodePso  = psos.decode
         let densityPso = psos.density
@@ -782,6 +784,77 @@ public enum MetalRenderer {
             dst.baseAddress!.copyMemory(from: outBuf.contents(), byteCount: outBytes)
         }
         return RGBA8Image(width: params.width, height: params.height, pixels: pixels)
+    }
+
+    // MARK: - Realtime (MainActor) temporal entry
+
+    /// MainActor temporal motion-blur render — the realtime/playback path. Builds
+    /// the cached device/queue/PSOs (MainActor-isolated) and delegates to
+    /// `renderTemporalFusedCore`. The thin twin of `renderFused`.
+    @MainActor
+    static func renderTemporalFused(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) throws -> RGBA8Image {
+        guard let (device, _) = deviceAndLibrary() else {
+            throw NSError(domain: "MetalRenderer", code: 10)
+        }
+        guard let queue = commandQueue else {
+            throw NSError(domain: "MetalRenderer", code: 11)
+        }
+        guard let psos = fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
+        }
+        return try renderTemporalFusedCore(blendAt: blendAt, centerTime: centerTime,
+                                           temporal: temporal, sumfilt: sumfilt,
+                                           params: params, device: device, queue: queue,
+                                           psos: psos, seedBudget: seedBudget)
+    }
+
+    // MARK: - Off-main temporal entry (the temporal twin of `renderOffMain`)
+
+    /// Off-main temporal motion-blur render — the temporal twin of `renderOffMain`.
+    /// Runs on `offMainQueue`, never touches the MainActor, so it cannot freeze
+    /// the UI. Used by the GUI export path (motion-blurred exports, zero UI
+    /// freeze). Returns nil iff Metal is unavailable, the render fails, OR
+    /// `temporal` carries a non-box weight (defensive — callers throw on nil; real
+    /// ES genomes are box). Byte-identical to the MainActor `render(blendAt:…)`
+    /// path: the GPU computation is thread-independent (already pinned for the
+    /// single-pass path by `testRenderOffMainMatchesMainActorPath` /
+    /// `…OnRealGenome`; the temporal core is the same code, so the same proof
+    /// applies).
+    nonisolated
+    public static func renderTemporalOffMain(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) -> RGBA8Image? {
+        // Defensive: empty temporal is a never-hit caller invariant (the
+        // coordinator only takes the temporal branch when temporalSamples > 1 ⇒
+        // TemporalFilter.samples ⇒ non-empty), but `try?` below cannot catch the
+        // `precondition(!temporal.isEmpty)` trap in the core. Return nil instead
+        // of letting a background thread trap.
+        guard !temporal.isEmpty else { return nil }
+        // Box guard (defensive). The @MainActor public entry `render(blendAt:)`
+        // fatalErrors on non-box; the off-main path returns nil instead (a
+        // background thread fatalError is undesirable; nil ⇒ coordinator throws
+        // .metalUnavailable).
+        for sub in temporal where sub.weight != 1.0 { return nil }
+        return offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            return try? renderTemporalFusedCore(blendAt: blendAt, centerTime: centerTime,
+                                                temporal: temporal, sumfilt: sumfilt,
+                                                params: params, device: device, queue: queue,
+                                                psos: psos, seedBudget: seedBudget)
+        }
     }
 
     // MARK: - Unfused reference path (per-stage, CPU histogram round-trips)
