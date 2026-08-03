@@ -13,7 +13,7 @@ import FlameRenderer
 /// `ExportCoordinator` is an `actor`: each `run(_:)` is serialized, and the
 /// `VideoEncoder` it owns is single-task within that serialization. Cancel flips
 /// a flag checked at the top of each frame iteration.
-public actor ExportCoordinator {
+public actor ExportCoordinator: ExportCoordinating {
     public enum Backend: Sendable { case cpu, metal }
     private let backend: Backend
     /// When `true` AND `backend == .metal`, `renderFrames` dispatches each frame

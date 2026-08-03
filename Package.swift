@@ -57,7 +57,7 @@ let package = Package(
         // models. Reused by the GUI app (M4) and the screensaver (M5).
         .target(
             name: "EmberweftUI",
-            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer"],
+            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer", "FlameExport"],
             path: "Sources/EmberweftUI"
         ),
         // `emberweft-gui` executable — thin SwiftUI shell over EmberweftUI.
@@ -116,7 +116,7 @@ let package = Package(
         ),
         .testTarget(
             name: "EmberweftUITests",
-            dependencies: ["EmberweftUI", "FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer"],
+            dependencies: ["EmberweftUI", "FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer", "FlameExport"],
             path: "Tests/EmberweftUITests",
             // Fixtures are read via `#file`-relative paths (see FlameKitTests),
             // not `Bundle.module` → exclude rather than declare as resources.
