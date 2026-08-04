@@ -85,13 +85,23 @@ struct ExportSheet: View {
                     .help(qualityHelp)
 
                     Picker("Codec", selection: $em.codec) {
+                        Text("ProRes 422 HQ").tag(ExportSettings.Codec.proRes422HQ)
                         Text("H.264").tag(ExportSettings.Codec.h264)
                         Text("HEVC").tag(ExportSettings.Codec.hevc)
+                    }
+                    .onChange(of: em.codec) { _, newCodec in
+                        // ProRes requires .mov; auto-switch + lock when selected.
+                        // H.264/HEVC allow either .mp4 or .mov (user's choice).
+                        if newCodec.requiresMOVContainer { em.container = .mov }
                     }
                     Picker("Container", selection: $em.container) {
                         Text("MP4").tag(ExportSettings.Container.mp4)
                         Text("MOV").tag(ExportSettings.Container.mov)
                     }
+                    .disabled(em.codec.requiresMOVContainer)
+                    .help(em.codec.requiresMOVContainer
+                          ? "Locked to MOV — ProRes 422 HQ requires a .mov container."
+                          : "Output container.")
                     Stepper("FPS \(em.fps)", value: $em.fps, in: 1...120)
                         .help("Output framerate (also drives frames-per-segment with loop duration).")
                     Picker("Backend", selection: $em.backendChoice) {
@@ -121,6 +131,12 @@ struct ExportSheet: View {
                 Text(notice)
                     .font(.caption)
                     .foregroundStyle(.orange)
+                    .padding(.horizontal, 20).padding(.bottom, 6)
+            }
+            if let notice = codecNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 20).padding(.bottom, 6)
             }
 
@@ -170,6 +186,14 @@ struct ExportSheet: View {
         guard model.exportManager.backendChoice == .metal,
               !MetalFrameRenderer.isMetalAvailable else { return nil }
         return "Metal is unavailable on this machine — the export will use the CPU backend."
+    }
+
+    /// Codec notice. ProRes 422 HQ is the mastering default — it is a
+    /// high-bitrate, visually-lossless codec muxed into `.mov` (large files,
+    /// best quality). H.264/HEVC get no notice.
+    private var codecNotice: String? {
+        guard model.exportManager.codec.isProRes else { return nil }
+        return "ProRes 422 HQ is a high-bitrate mastering codec (.mov, ~220 Mbps at 1080p25). Best quality; large files."
     }
 
     private var qualityHelp: String {

@@ -667,8 +667,8 @@ final class ExportManagerTests: XCTestCase {
         XCTAssertEqual(vm.state, .completed(dir))
         let outs = await fake.runBatchOuts
         XCTAssertEqual(outs.count, 2, "both colliding items must produce distinct jobs")
-        XCTAssertEqual(outs[0].lastPathComponent, "sheep.mp4")
-        XCTAssertEqual(outs[1].lastPathComponent, "sheep-2.mp4",
+        XCTAssertEqual(outs[0].lastPathComponent, "sheep.mov")
+        XCTAssertEqual(outs[1].lastPathComponent, "sheep-2.mov",
             "within-batch name collision must get a -2 suffix (extension preserved)")
         XCTAssertNotEqual(outs[0], outs[1])
     }

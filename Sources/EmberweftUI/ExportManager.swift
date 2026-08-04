@@ -92,8 +92,8 @@ public final class ExportManager {
     public private(set) var skipNotice: String?
 
     // The editable config (bound two-way by the sheet):
-    public var codec: ExportSettings.Codec = .h264
-    public var container: ExportSettings.Container = .mp4
+    public var codec: ExportSettings.Codec = .proRes422HQ
+    public var container: ExportSettings.Container = .mov
     public var resolution: ExportSettings.Resolution = .p1080
     public var fps: Int = 30
     public var qualityChoice: ExportQualityChoice = .genomeDefault

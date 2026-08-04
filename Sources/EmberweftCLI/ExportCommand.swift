@@ -78,8 +78,11 @@ extension EmberweftCLI {
                 case "--codec":
                     guard let v = value() else { return missing("--codec") }
                     let lv = v.lowercased()
-                    guard lv == "h264" || lv == "hevc" else { EmberweftCLI.err("error: --codec must be h264|hevc\n"); return 2 }
-                    codec = lv; codecExplicit = true; i += 2
+                    // Accept both `prores-422-hq` and `prores422hq` spellings.
+                    let normalized = lv == "prores-422-hq" || lv == "prores422hq" ? "prores422hq" : lv
+                    guard normalized == "h264" || normalized == "hevc" || normalized == "prores422hq"
+                    else { EmberweftCLI.err("error: --codec must be h264|hevc|prores-422-hq\n"); return 2 }
+                    codec = normalized; codecExplicit = true; i += 2
                 case "--container":
                     guard let v = value() else { return missing("--container") }
                     let lv = v.lowercased()
@@ -194,6 +197,23 @@ extension EmberweftCLI {
             }
             EmberweftCLI.err("notice: HEVC encode unavailable on this host; falling back to H.264\n")
             settings.codec = .h264
+        }
+
+        // --- ProRes: .mov container requirement + availability probe ---
+        // ProRes 422 HQ requires a `.mov` container (AVAssetWriter rejects it in
+        // `.mp4`). Validate up front with a clear error rather than failing deep
+        // in the encoder. ProRes is reached only via explicit `--codec prores-422-hq`
+        // (the GUI defaults to it, but the CLI default is h264), so an encode
+        // failure is a hard exit 1 (no fallback) — the user asked for it by name.
+        if settings.codec == .proRes422HQ {
+            if settings.container != .mov {
+                EmberweftCLI.err("error: ProRes 422 HQ requires --container mov (AVAssetWriter rejects ProRes in .mp4)\n")
+                return 2
+            }
+            if !VideoEncoder.canEncode(.proRes422HQ) {
+                EmberweftCLI.err("error: ProRes 422 HQ encode is not available on this host; use --codec h264 or --codec hevc\n")
+                return 1
+            }
         }
 
         // --- Destination overwrite guard (D13) ---
@@ -380,7 +400,12 @@ extension EmberweftCLI {
     ) -> ExportSettings {
         // --- String → enum parsing (VERBATIM from the original; the resolver
         // takes parsed enums so this is the ONLY place strings are interpreted) ---
-        let codecEnum: ExportSettings.Codec = codec == "hevc" ? .hevc : .h264
+        let codecEnum: ExportSettings.Codec
+        switch codec {
+        case "hevc": codecEnum = .hevc
+        case "prores422hq": codecEnum = .proRes422HQ
+        default: codecEnum = .h264
+        }
         let containerEnum: ExportSettings.Container = container == "mov" ? .mov : .mp4
         // The quality-number defensive fallback uses `fallbackFlame` (NOT
         // renderable[0]), matching the original line 367 verbatim.
@@ -499,6 +524,19 @@ extension EmberweftCLI {
             // explicit `--codec hevc`; the default is h264.)
             EmberweftCLI.err("error: HEVC (H.265) encode is not available on this host; use --codec h264\n")
             return 1
+        }
+
+        // ProRes: .mov container + availability (probe once — codec is batch-wide).
+        // Mirrors the single path's contract (clear error over a deep encoder fail).
+        if settings.codec == .proRes422HQ {
+            if settings.container != .mov {
+                EmberweftCLI.err("error: ProRes 422 HQ requires --container mov (AVAssetWriter rejects ProRes in .mp4)\n")
+                return 2
+            }
+            if !VideoEncoder.canEncode(.proRes422HQ) {
+                EmberweftCLI.err("error: ProRes 422 HQ encode is not available on this host; use --codec h264 or --codec hevc\n")
+                return 1
+            }
         }
 
         // Backend availability (probe once via MainActor.run).

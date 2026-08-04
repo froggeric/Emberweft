@@ -15,7 +15,7 @@ public struct ExportSettings: Codable, Sendable, Equatable {
     public var metadata: [MetadataItem] = []
     public init() {}
 
-    public enum Codec: String, Codable, Sendable, CaseIterable { case h264, hevc }
+    public enum Codec: String, Codable, Sendable, CaseIterable { case h264, hevc, proRes422HQ }
     public enum Container: String, Codable, Sendable, CaseIterable { case mp4, mov }
     public enum Bitrate: Codable, Sendable, Equatable { case auto; case mbps(Int) }
     public struct MetadataItem: Codable, Sendable, Equatable {
@@ -46,6 +46,17 @@ public enum ExportQuality: Codable, Sendable, Equatable {
         case .spp(let n): (n, 1)
         }
     }
+}
+
+public extension ExportSettings.Codec {
+    /// True for ProRes variants (the mastering codec). ProRes is a fixed
+    /// data-rate codec: it does NOT use the bitrate table and its `.mov`
+    /// container is mandatory (AVAssetWriter rejects ProRes in `.mp4`).
+    public var isProRes: Bool { self == .proRes422HQ }
+
+    /// True iff this codec can ONLY be muxed into a `.mov` container.
+    /// ProRes 422 HQ requires `.mov` (AVAssetWriter fails ProRes in `.mp4`).
+    public var requiresMOVContainer: Bool { isProRes }
 }
 
 public extension ExportSettings {

@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import VideoToolbox      // kVTProfileLevel_HEVC_Main10_AutoLevel (HEVC profile)
 import CoreVideo
 import CoreMedia
 import FlameKit
@@ -30,16 +31,49 @@ public final class VideoEncoder: @unchecked Sendable {
 
     public func start() throws {
         precondition(!started)
+        // ProRes requires a `.mov` container — AVAssetWriter rejects ProRes in
+        // `.mp4` (the writer fails at startWriting/first append). Fail fast with
+        // a descriptive error so the caller can surface "pick .mov" rather than
+        // a deep AVFoundation failure.
+        if settings.codec.requiresMOVContainer && settings.container != .mov {
+            throw ExportError.proResRequiresMOV
+        }
         let fileType: AVFileType = settings.container == .mov ? .mov : .mp4
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
-        let codec: AVVideoCodecType = settings.codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264
+        let codecType: AVVideoCodecType = Self.avCodecType(for: settings.codec)
         var compression: [String: Any] = [:]
-        switch settings.bitrate {
-        case .auto: compression[AVVideoAverageBitRateKey] = Self.autoBitrate(codec: codec, res: settings.resolution, fps: settings.fps)
-        case .mbps(let m): compression[AVVideoAverageBitRateKey] = m * 1_000_000
+        switch settings.codec {
+        case .proRes422HQ:
+            // ProRes variant is selected ENTIRELY via AVVideoCodecType
+            // (.proRes422HQ, underlying "apch"); AVVideoProfileLevelKey does NOT
+            // apply to ProRes (Apple's ProRes codecs have no profile/level
+            // dimension — the codec type IS the variant). Do NOT set
+            // AVVideoAverageBitRateKey: ProRes is a fixed data-rate codec and
+            // supplying a bit rate can confuse encoder revisions; the codec's
+            // own ~220 Mbps @ 1080p25 is the target.
+            break
+        case .h264, .hevc:
+            // High/Main10 profile (8×8 / 10-bit) for fine fractal-flame detail.
+            // AutoLevel lets the encoder pick the level from the resolution.
+            compression[AVVideoProfileLevelKey] = settings.codec == .h264
+                ? AVVideoProfileLevelH264HighAutoLevel
+                : kVTProfileLevel_HEVC_Main10_AutoLevel
+            switch settings.bitrate {
+            case .auto:
+                compression[AVVideoAverageBitRateKey] =
+                    Self.autoBitrate(codec: settings.codec, res: settings.resolution, fps: settings.fps)
+            case .mbps(let m):
+                compression[AVVideoAverageBitRateKey] = m * 1_000_000
+            }
+            // 1-sec GOP (keyframe every `fps` frames AND every 1.0 s) for clean
+            // seeking + the expected-source-fps hint. Do NOT set
+            // AVVideoQualityKey (it conflicts with an explicit average bit rate).
+            compression[AVVideoMaxKeyFrameIntervalKey] = settings.fps
+            compression[AVVideoMaxKeyFrameIntervalDurationKey] = 1.0
+            compression[AVVideoExpectedSourceFrameRateKey] = settings.fps
         }
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: codec,
+            AVVideoCodecKey: codecType,
             AVVideoWidthKey: settings.resolution.width,
             AVVideoHeightKey: settings.resolution.height,
             AVVideoCompressionPropertiesKey: compression
@@ -122,13 +156,34 @@ public final class VideoEncoder: @unchecked Sendable {
         try? FileManager.default.removeItem(at: outputURL)
     }
 
-    private static func autoBitrate(codec: AVVideoCodecType, res: ExportSettings.Resolution, fps: Int) -> Int {
-        // Preliminary Mbps (H.264 ~1.5x HEVC for parity). Tunable.
-        let hevc: [ExportSettings.Resolution: Int] = [.p720: 5, .p1080: 10, .p1440: 16, .p4k: 30]
-        let base = hevc[res] ?? (res.width * res.height >= 3_840 * 2160 ? 30 : 10)
-        let mult = codec == .hevc ? 1.0 : 1.5
+    /// Raised BPP-derived bitrate tiers (Mbps, pre-`*1_000_000`) for "no visible
+    /// degradation on busy fractal-flame content." ProRes returns 0 (sentinel):
+    /// it does NOT use the table — the call site omits `AVVideoAverageBitRateKey`
+    /// (ProRes is a fixed data-rate codec). The `fps≥60 × 1.5` multiplier is
+    /// kept (double the frames → double the bits for the same per-frame quality).
+    /// MUST stay in sync with `ExportCoordinator.autoBitrateMbps` (the disk-
+    /// precheck mirror).
+    private static func autoBitrate(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
+        if codec.isProRes { return 0 }
+        let hevc: [ExportSettings.Resolution: Int] = [.p720: 25, .p1080: 50, .p1440: 80, .p4k: 150]
+        let h264: [ExportSettings.Resolution: Int] = [.p720: 40, .p1080: 80, .p1440: 130, .p4k: 240]
+        let isHEVC = codec == .hevc
+        let table = isHEVC ? hevc : h264
+        let fallback = isHEVC ? 50 : 80
+        let big = isHEVC ? 150 : 240
+        let base = table[res] ?? (res.width * res.height >= 3_840 * 2160 ? big : fallback)
         let fpsMult = fps >= 60 ? 1.5 : 1.0
-        return Int(Double(base) * mult * fpsMult) * 1_000_000
+        return Int(Double(base) * fpsMult) * 1_000_000
+    }
+
+    /// Maps the user-facing `Codec` to AVFoundation's `AVVideoCodecType`. ProRes
+    /// variants are selected entirely via this type (no profile/level key).
+    private static func avCodecType(for codec: ExportSettings.Codec) -> AVVideoCodecType {
+        switch codec {
+        case .h264: return .h264
+        case .hevc: return .hevc
+        case .proRes422HQ: return .proRes422HQ
+        }
     }
 
     /// True iff this host can encode `codec`. Used by `ExportCommand`'s HEVC
@@ -141,17 +196,31 @@ public final class VideoEncoder: @unchecked Sendable {
     /// DECODE, not encode, and are unreliable for this — a real encode is the
     /// only ground truth `AVAssetWriter` exposes.
     public static func canEncode(_ codec: ExportSettings.Codec) -> Bool {
+        // Probe at 64×48 first; some encoder revisions have min-frame-size
+        // quirks (observed on certain ProRes revisions), so bump to 128×72 if
+        // the small probe fails. A real encode is the only ground truth
+        // AVAssetWriter exposes (VTIsHardwareDecodeSupported probes DECODE).
+        if probeEncode(codec, w: 64, h: 48) { return true }
+        return probeEncode(codec, w: 128, h: 72)
+    }
+
+    private static func probeEncode(_ codec: ExportSettings.Codec, w: Int, h: Int) -> Bool {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("m6probe-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: tmp) }
         var s = ExportSettings()
         s.codec = codec; s.container = .mov
-        s.resolution = .custom(width: 64, height: 48); s.fps = 30
+        s.resolution = .custom(width: w, height: h); s.fps = 30
         guard let writer = try? AVAssetWriter(outputURL: tmp, fileType: .mov) else { return false }
-        let codecType: AVVideoCodecType = codec == .hevc ? .hevc : .h264
+        let codecType: AVVideoCodecType
+        switch codec {
+        case .h264: codecType = .h264
+        case .hevc: codecType = .hevc
+        case .proRes422HQ: codecType = .proRes422HQ
+        }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: codecType,
-            AVVideoWidthKey: 64, AVVideoHeightKey: 48,
+            AVVideoWidthKey: w, AVVideoHeightKey: h,
         ])
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -164,7 +233,7 @@ public final class VideoEncoder: @unchecked Sendable {
         writer.startSession(atSourceTime: .zero)
         // One black frame.
         var pb: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, 64, 48,
+        CVPixelBufferCreate(kCFAllocatorDefault, w, h,
                             kCVPixelFormatType_32BGRA, nil, &pb)
         if let pb { adaptor.append(pb, withPresentationTime: CMTime(value: 0, timescale: 30)) }
         input.markAsFinished()
@@ -189,4 +258,8 @@ public enum ExportError: Error, Sendable {
     case metalUnavailable
     case genomeUnparseable
     case diskFull
+    /// ProRes variants require a `.mov` container; AVAssetWriter rejects ProRes
+    /// in `.mp4`. Thrown by `VideoEncoder.start()` (and surfaced by the CLI/GUI)
+    /// so the user picks a `.mov` destination instead.
+    case proResRequiresMOV
 }

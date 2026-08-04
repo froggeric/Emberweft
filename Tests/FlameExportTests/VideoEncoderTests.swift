@@ -140,4 +140,64 @@ final class VideoEncoderTests: XCTestCase {
         XCTAssertGreaterThan(topLuma, 200, "decoded TOP row must be bright (upright, no flip)")
         XCTAssertLessThan(bottomLuma, 40, "decoded BOTTOM row must be dark (upright, no flip)")
     }
+
+    // MARK: - ProRes 422 HQ (encoding overhaul)
+
+    /// `canEncode(.proRes422HQ)` must return true on Apple Silicon (ProRes 422 HQ
+    /// encode is supported). XCTSkip if the host can't — but every target machine
+    /// (Apple Silicon, macOS 26) has it. This is the capability gate the CLI/GUI
+    /// rely on to decide whether to offer ProRes.
+    func testCanEncodeProRes422HQ() throws {
+        try XCTSkipUnless(VideoEncoder.canEncode(.proRes422HQ),
+                          "ProRes 422 HQ encode is not available on this host")
+    }
+
+    /// ProRes in a `.mp4` container must throw `ExportError.proResRequiresMOV` at
+    /// `start()` (AVAssetWriter rejects ProRes in `.mp4`; fail fast with a
+    /// descriptive error rather than a deep encoder failure). No file is created.
+    func testProResInMP4ContainerThrows() throws {
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("m6-prores-mp4-\(UUID().uuidString).mp4")
+        var settings = ExportSettings()
+        settings.codec = .proRes422HQ
+        settings.container = .mp4   // wrong container for ProRes
+        settings.resolution = .custom(width: 64, height: 48); settings.fps = 30
+        let enc = try VideoEncoder(settings: settings, outputURL: out)
+        XCTAssertThrowsError(try enc.start()) { error in
+            XCTAssertEqual(error as? ExportError, .proResRequiresMOV,
+                           "ProRes + .mp4 must throw proResRequiresMOV, got \(error)")
+        }
+        // No partial file left by the guard (it fires before writer creation).
+        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path),
+                       "guard must fire before any file is written")
+    }
+
+    /// ProRes in a `.mov` container must round-trip: encode + decode N frames at
+    /// the codec's native data rate (no `AVVideoAverageBitRateKey` set). Pins
+    /// that the ProRes path actually encodes on this host (skipped if not).
+    func testProResEncodeDecodeBack() async throws {
+        try XCTSkipUnless(VideoEncoder.canEncode(.proRes422HQ),
+                          "ProRes 422 HQ encode is not available on this host")
+        let w = 64, h = 48, fps = 30, n = 5
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("m6-prores-\(UUID().uuidString).mov")
+        var settings = ExportSettings()
+        settings.codec = .proRes422HQ; settings.container = .mov
+        settings.resolution = .custom(width: w, height: h); settings.fps = fps
+        let enc = try VideoEncoder(settings: settings, outputURL: out)
+        try enc.start()
+        for i in 0..<n { try await enc.append(gradient(i, n), atFrame: i) }
+        try await enc.finish()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let asset = AVURLAsset(url: out)
+        let track = try await asset.loadTracks(withMediaType: .video).first!
+        let dims = try await track.load(.naturalSize)
+        XCTAssertEqual(Int(dims.width), w, "naturalSize width")
+        XCTAssertEqual(Int(dims.height), h, "naturalSize height")
+
+        let frames = try await decodeFrames(out)
+        XCTAssertEqual(frames.count, n, "decoded ProRes frame count must equal appended count")
+    }
 }

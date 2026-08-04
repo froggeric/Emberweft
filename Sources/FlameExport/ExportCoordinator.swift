@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation      // AVVideoCodecType for diskPrecheck's bitrate estimate
+import AVFoundation      // AVAssetWriter/AVMutableComposition/AVAssetExportSession
 import FlameKit
 import FlameReference
 import FlameRenderer
@@ -454,8 +454,17 @@ public actor ExportCoordinator: ExportCoordinating {
         let mbps: Int
         switch job.settings.bitrate {
         case .auto:
-            let codec: AVVideoCodecType = job.settings.codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264
-            mbps = Self.autoBitrateMbps(codec: codec, res: job.settings.resolution, fps: fps)
+            if job.settings.codec.isProRes {
+                // ProRes 422 HQ ≈ 220 Mbps @ 1080p25, scaling linearly with
+                // pixels × fps (≈ 0.45 × W×H×fps / (1920×1080×25) Mbps). The
+                // disk guard matters: 4K60 ≈ 1.8 GB/min. ProRes ignores the
+                // bitrate table (autoBitrateMbps returns 0 for it), so the
+                // data-rate is estimated here directly.
+                let pixels = Double(job.settings.resolution.width * job.settings.resolution.height)
+                mbps = max(1, Int(0.45 * pixels * Double(fps) / (1920.0 * 1080.0 * 25.0)))
+            } else {
+                mbps = Self.autoBitrateMbps(codec: job.settings.codec, res: job.settings.resolution, fps: fps)
+            }
         case .mbps(let m):
             mbps = m
         }
@@ -467,13 +476,21 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
-    /// Mirrors `VideoEncoder.autoBitrate` (Mbps, pre-`*1_000_000`). Kept here so
-    /// the disk precheck does not depend on instantiating a `VideoEncoder`.
-    private static func autoBitrateMbps(codec: AVVideoCodecType, res: ExportSettings.Resolution, fps: Int) -> Int {
-        let hevc: [ExportSettings.Resolution: Int] = [.p720: 5, .p1080: 10, .p1440: 16, .p4k: 30]
-        let base = hevc[res] ?? (res.width * res.height >= 3_840 * 2160 ? 30 : 10)
-        let mult = codec == .hevc ? 1.0 : 1.5
+    /// Mirrors `VideoEncoder.autoBitrate` (Mbps, pre-`*1_000_000`) for the disk
+    /// precheck (kept here so it does not depend on instantiating a
+    /// `VideoEncoder`). ProRes returns 0 here — the disk estimate for ProRes is
+    /// computed from the known data rate in `diskPrecheck` (the bitrate table
+    /// does not apply). MUST stay in sync with `VideoEncoder.autoBitrate`.
+    private static func autoBitrateMbps(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
+        if codec.isProRes { return 0 }
+        let hevc: [ExportSettings.Resolution: Int] = [.p720: 25, .p1080: 50, .p1440: 80, .p4k: 150]
+        let h264: [ExportSettings.Resolution: Int] = [.p720: 40, .p1080: 80, .p1440: 130, .p4k: 240]
+        let isHEVC = codec == .hevc
+        let table = isHEVC ? hevc : h264
+        let fallback = isHEVC ? 50 : 80
+        let big = isHEVC ? 150 : 240
+        let base = table[res] ?? (res.width * res.height >= 3_840 * 2160 ? big : fallback)
         let fpsMult = fps >= 60 ? 1.5 : 1.0
-        return Int(Double(base) * mult * fpsMult)
+        return Int(Double(base) * fpsMult)
     }
 }
