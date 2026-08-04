@@ -254,7 +254,16 @@ public actor PlaybackDispatcher {
             if schedule.isLoopToTransitionBoundary(globalFrame: globalFrame) {
                 flame = from
             } else {
-                flame = Transition.blend(from, to, t: mapping.blend)
+                // Velocity-match the transition's rotation to the adjacent loops
+                // (eased boundary — owner decision: animation not parity-bound,
+                // 2026-08-04). Same `rotationVelocityRatio` curve as the offline
+                // `FramePlan` path, so the realtime PREVIEW matches the EXPORT
+                // (both ease the rotation; loops stay linear/seamless). r = the
+                // schedule's transition:loop frame ratio.
+                let r = Double(schedule.transitionFramesPerSegment)
+                       / Double(schedule.framesPerSegment)
+                flame = Transition.blend(from, to, t: mapping.blend,
+                                         rotationVelocityRatio: r)
             }
         }
 
