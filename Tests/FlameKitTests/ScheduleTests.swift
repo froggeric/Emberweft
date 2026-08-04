@@ -200,4 +200,164 @@ final class ScheduleTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Separate loop/transition frame counts (shorter edges)
+
+    // Segments carry their OWN framesPerSegment: loops use `framesPerSegment`,
+    // transitions use `transitionFramesPerSegment` (the per-kind N).
+    func testPerSegmentFramesPerSegmentVariable() {
+        var sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        for id in 0..<10 {
+            let seg = sched.segment(at: id)
+            if seg.kind == .loop {
+                XCTAssertEqual(seg.framesPerSegment, 8, "loop seg \(id) must use loop N")
+            } else {
+                XCTAssertEqual(seg.framesPerSegment, 4, "transition seg \(id) must use transition N")
+            }
+        }
+    }
+
+    // Pair math (L=8, T=4): pairFrames=12. seg0 loop = frames 0..7, seg1 trans =
+    // frames 8..11, seg2 loop = frames 12..19, seg3 trans = frames 20..23.
+    func testPairMathVariableTransitionCount() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        // seg0 loop: frames 0..7
+        for local in 0..<8 {
+            let m = sched.frameToBlend(globalFrame: local)
+            XCTAssertEqual(m.segmentId, 0, "local=\(local)")
+            XCTAssertEqual(m.kind, .loop)
+            XCTAssertEqual(m.blend, Double(local + 1) / 8.0, accuracy: 1e-9, "local=\(local)")
+        }
+        // seg1 transition: frames 8..11
+        for local in 0..<4 {
+            let m = sched.frameToBlend(globalFrame: 8 + local)
+            XCTAssertEqual(m.segmentId, 1, "local=\(local)")
+            XCTAssertEqual(m.kind, .transition)
+            XCTAssertEqual(m.blend, Double(local + 1) / 4.0, accuracy: 1e-9, "local=\(local)")
+        }
+        // seg2 loop: frames 12..19
+        for local in 0..<8 {
+            let m = sched.frameToBlend(globalFrame: 12 + local)
+            XCTAssertEqual(m.segmentId, 2, "local=\(local)")
+            XCTAssertEqual(m.kind, .loop)
+            XCTAssertEqual(m.blend, Double(local + 1) / 8.0, accuracy: 1e-9, "local=\(local)")
+        }
+        // seg3 transition: frames 20..23
+        for local in 0..<4 {
+            let m = sched.frameToBlend(globalFrame: 20 + local)
+            XCTAssertEqual(m.segmentId, 3, "local=\(local)")
+            XCTAssertEqual(m.kind, .transition)
+            XCTAssertEqual(m.blend, Double(local + 1) / 4.0, accuracy: 1e-9, "local=\(local)")
+        }
+    }
+
+    // Trailing loop: segmentCount=5 (ends on loop seg 4). Total = 3*8 + 2*4 = 32.
+    // The final loop (seg 4) occupies frames [28, 32); frame 31 is blend 8/8=1.0.
+    func testTrailingLoopMapsCorrectly() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        // frameOffset: seg 4 starts at frameOffset(ofSegment: 4) = 2*8 + 2*4 = 24.
+        XCTAssertEqual(sched.frameOffset(ofSegment: 4), 24)
+        XCTAssertEqual(sched.totalFrames(segmentCount: 5), 32)
+        // seg4 loop: frames 24..31
+        for local in 0..<8 {
+            let m = sched.frameToBlend(globalFrame: 24 + local)
+            XCTAssertEqual(m.segmentId, 4, "local=\(local) — trailing loop must map to seg 4")
+            XCTAssertEqual(m.kind, .loop, "local=\(local)")
+            XCTAssertEqual(m.blend, Double(local + 1) / 8.0, accuracy: 1e-9, "local=\(local)")
+        }
+        // Last frame of the timeline (frame 31) = blend 1.0.
+        XCTAssertEqual(sched.frameToBlend(globalFrame: 31).blend, 1.0, accuracy: 1e-9)
+        // The frame AFTER the trailing loop (32) would map to a transition slot,
+        // but it is beyond totalFrames so callers never request it.
+        let beyond = sched.frameToBlend(globalFrame: 32)
+        XCTAssertEqual(beyond.segmentId, 5)  // hypothetical seg 5 (doesn't exist in a 5-seg timeline)
+        XCTAssertEqual(beyond.kind, .transition)
+    }
+
+    // blend ∈ (0, 1] never 0, with variable transition count.
+    func testBlendNeverZeroVariable() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        for f in 0..<sched.totalFrames(segmentCount: 5) {
+            let b = sched.frameToBlend(globalFrame: f).blend
+            XCTAssertGreaterThan(b, 0.0, "frame \(f)")
+            XCTAssertLessThanOrEqual(b, 1.0, "frame \(f)")
+        }
+    }
+
+    // totalFrames sums per-kind: loops = ceil(k/2), transitions = floor(k/2).
+    func testTotalFramesPerKindSum() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        // segmentCount=1 (loop only): 1*8 + 0*4 = 8
+        XCTAssertEqual(sched.totalFrames(segmentCount: 1), 8)
+        // segmentCount=2 (loop+trans): 1*8 + 1*4 = 12
+        XCTAssertEqual(sched.totalFrames(segmentCount: 2), 12)
+        // segmentCount=3 (2 loops + 1 trans): 2*8 + 1*4 = 20
+        XCTAssertEqual(sched.totalFrames(segmentCount: 3), 20)
+        // segmentCount=5 (3 loops + 2 trans): 3*8 + 2*4 = 32
+        XCTAssertEqual(sched.totalFrames(segmentCount: 5), 32)
+        // Full N=4 genome pass = 2N-1 = 7 segments: 4 loops + 3 trans = 4*8 + 3*4 = 44
+        XCTAssertEqual(sched.totalFrames(segmentCount: 7), 44)
+    }
+
+    // frameOffset(ofSegment:) = cumulative frames before segment s.
+    func testFrameOffsetCumulative() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        XCTAssertEqual(sched.frameOffset(ofSegment: 0), 0)   // nothing before seg 0
+        XCTAssertEqual(sched.frameOffset(ofSegment: 1), 8)   // seg0 loop (8) before seg 1
+        XCTAssertEqual(sched.frameOffset(ofSegment: 2), 12)  // seg0 loop (8) + seg1 trans (4)
+        XCTAssertEqual(sched.frameOffset(ofSegment: 3), 20)  // + seg2 loop (8)
+        XCTAssertEqual(sched.frameOffset(ofSegment: 4), 24)  // + seg3 trans (4)
+        // totalFrames(segmentCount:) == frameOffset(ofSegment: segmentCount)
+        XCTAssertEqual(sched.totalFrames(segmentCount: 5), sched.frameOffset(ofSegment: 5))
+    }
+
+    // Loop→transition boundary with variable transition count: the first frame of
+    // each transition slot (within == framesPerSegment). L=8, T=4 → pairFrames=12.
+    func testLoopToTransitionBoundaryVariable() {
+        let sched = Schedule(librarySize: 4, framesPerSegment: 8,
+                             transitionFramesPerSegment: 4,
+                             selector: Sequential(seed: 1), seed: 1)
+        // seg1 transition starts at frame 8 (within=8==L → boundary)
+        XCTAssertTrue(sched.isLoopToTransitionBoundary(globalFrame: 8))
+        // seg3 transition starts at frame 20 (pairIndex=1, within=20%12=8==L → boundary)
+        XCTAssertTrue(sched.isLoopToTransitionBoundary(globalFrame: 20))
+        // Loop starts / interior frames are NOT boundaries
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 0))    // seg0 loop start
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 12))   // seg2 loop start
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 5))    // mid seg0 loop
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 10))   // mid seg1 trans
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 11))   // seg1 last frame
+        XCTAssertFalse(sched.isLoopToTransitionBoundary(globalFrame: 24))   // seg4 loop (trailing)
+    }
+
+    // Default (omitted transitionFramesPerSegment) == uniform timeline (today's behavior).
+    func testDefaultTransitionCountIsUniform() {
+        let a = Schedule(librarySize: 4, framesPerSegment: 8,
+                         selector: Sequential(seed: 1), seed: 1)
+        let b = Schedule(librarySize: 4, framesPerSegment: 8,
+                         transitionFramesPerSegment: 8,
+                         selector: Sequential(seed: 1), seed: 1)
+        XCTAssertEqual(a.transitionFramesPerSegment, 8)
+        XCTAssertEqual(a.transitionFramesPerSegment, b.transitionFramesPerSegment)
+        // frameToBlend matches between default and explicit-uniform
+        for f in 0..<24 {
+            XCTAssertEqual(a.frameToBlend(globalFrame: f), b.frameToBlend(globalFrame: f), "frame \(f)")
+        }
+        // totalFrames matches (uniform: segmentCount * N)
+        for k in 1...5 {
+            XCTAssertEqual(a.totalFrames(segmentCount: k), k * 8)
+        }
+    }
 }

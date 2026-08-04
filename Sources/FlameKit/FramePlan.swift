@@ -27,6 +27,7 @@ public struct FrameDescriptor: Sendable {
 /// segment walk at construction so `descriptor(for:)` is pure O(1).
 public struct FramePlan: Sendable {
     public let framesPerSegment: Int
+    public let transitionFramesPerSegment: Int
     public let totalFrames: Int
     public let temporalSamples: Int
     private let schedule: Schedule          // walk materialized in init
@@ -41,6 +42,7 @@ public struct FramePlan: Sendable {
         for id in 0..<segmentCount { _ = s.segment(at: id) }   // populate the walk cache
         self.schedule = s
         self.framesPerSegment = s.framesPerSegment
+        self.transitionFramesPerSegment = s.transitionFramesPerSegment
         self.totalFrames = s.totalFrames(segmentCount: segmentCount)
         self.temporalSamples = max(1, temporalSamples)
         self.flames = flames
@@ -49,6 +51,8 @@ public struct FramePlan: Sendable {
     }
 
     /// Pure O(1). Mirrors AnimateCommand's per-frame construction exactly.
+    /// `segment.framesPerSegment` is the segment's OWN N (loop or transition),
+    /// so the temporal delta scaling `/ fps` uses the correct per-kind N.
     public func descriptor(for globalFrame: Int) -> FrameDescriptor {
         let mapping = schedule.frameToBlend(globalFrame: globalFrame)
         let segment = schedule.segments[mapping.segmentId]

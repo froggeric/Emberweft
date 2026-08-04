@@ -28,6 +28,7 @@ extension EmberweftCLI {
         // --- Parse args: variadic genomes + --flag value pairs ---
         var genomes: [String] = []
         var framesPerSegment = 8
+        var transitionFramesPerSegment: Int? = nil   // --transition-frames (default = framesPerSegment → uniform timeline)
         var segmentCount = 3
         var selectorName = "sequential"
         var seed: UInt64 = 0
@@ -50,6 +51,9 @@ extension EmberweftCLI {
                 case "--frames":
                     guard i + 1 < args.count else { err("error: --frames requires a value\n"); return 2 }
                     framesPerSegment = Int(args[i + 1]) ?? framesPerSegment; i += 2
+                case "--transition-frames":
+                    guard i + 1 < args.count else { err("error: --transition-frames requires a value\n"); return 2 }
+                    transitionFramesPerSegment = Int(args[i + 1]); i += 2
                 case "--segments":
                     guard i + 1 < args.count else { err("error: --segments requires a value\n"); return 2 }
                     segmentCount = Int(args[i + 1]) ?? segmentCount; i += 2
@@ -182,6 +186,7 @@ extension EmberweftCLI {
         var schedule = Schedule(
             librarySize: flames.count,
             framesPerSegment: framesPerSegment,
+            transitionFramesPerSegment: transitionFramesPerSegment,
             selector: selector,
             seed: seed
         )

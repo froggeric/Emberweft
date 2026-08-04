@@ -102,6 +102,12 @@ public final class ExportManager {
     public var temporalSamples: Int = 1
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
     public var loopDurationSeconds: Double = 6.0
+    /// Transition ("edge") duration in seconds ⇒
+    /// `transitionFramesPerSegment = round(transitionDurationSeconds * fps)`.
+    /// Default SHORTER than the loop (3 s vs 6 s) so loops breathe while edges
+    /// stay brief — the owner finds edges less interesting and doesn't want to
+    /// get stuck on them. Tunable via the export sheet stepper.
+    public var transitionDurationSeconds: Double = 3.0
     public var bitrate: ExportSettings.Bitrate = .auto
 
     // MARK: - In-flight state (private)
@@ -183,8 +189,10 @@ public final class ExportManager {
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let settings = resolveSettings(baseFlame: flame, backend: backend)
         let framesPerSegment = max(1, Int(loopDurationSeconds * Double(fps)))
+        let transitionFramesPerSegment = max(1, Int(transitionDurationSeconds * Double(fps)))
         let job = ExportJob(
             settings: settings, flames: [flame], framesPerSegment: framesPerSegment,
+            transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: 1, selector: .sequential, seed: seed,
             loopCycles: 1, stagger: 0.0, out: out)
         startExport(.runJob(job: job), label: displayName, backend: backend)
@@ -211,9 +219,11 @@ public final class ExportManager {
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let settings = resolveSettings(baseFlame: baseFlame, backend: backend)
         let framesPerSegment = max(1, Int(loopDurationSeconds * Double(fps)))
+        let transitionFramesPerSegment = max(1, Int(transitionDurationSeconds * Double(fps)))
         let segmentCount = max(1, 2 * renderable.count - 1)
         let job = ExportJob(
             settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
+            transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: segmentCount, selector: .sequential, seed: seed,
             loopCycles: 1, stagger: 0.0, out: out)
         startExport(.runJob(job: job), label: displayName, backend: backend)
@@ -233,6 +243,7 @@ public final class ExportManager {
         skipNotice = skipNoticeFor(dropped: items.count - renderable.count, total: items.count)
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let framesPerSegment = max(1, Int(loopDurationSeconds * Double(fps)))
+        let transitionFramesPerSegment = max(1, Int(transitionDurationSeconds * Double(fps)))
         var jobs: [ExportJob] = []
         var usedNames = Set<String>()
         for item in renderable {
@@ -240,6 +251,7 @@ public final class ExportManager {
             let out = resolveBatchOut(name: item.name, baseDir: baseDir, usedNames: &usedNames)
             let job = ExportJob(
                 settings: settings, flames: [item.flame], framesPerSegment: framesPerSegment,
+                transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: 1, selector: .sequential, seed: seed,
                 loopCycles: 1, stagger: 0.0, out: out)
             jobs.append(job)

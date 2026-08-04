@@ -70,6 +70,9 @@ public final class SequencePlaybackViewModel {
     /// Read-only outside `load` — the FPS readout's band target.
     public private(set) var targetFPS: Double = 60
     private var framesPerSegment: Int = 160
+    /// Transition ("edge") frames — SHORTER than loops so transitions stay brief
+    /// while loops breathe (the owner finds edges less interesting).
+    private var transitionFramesPerSegment: Int = 80
     private var fpsMeter = FPSMeter()
     private let fpsClock = WallClock()
 
@@ -87,6 +90,7 @@ public final class SequencePlaybackViewModel {
         self.renderer = (prefs.backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
         self.targetFPS = Double(prefs.targetFPS)
         self.framesPerSegment = 160
+        self.transitionFramesPerSegment = 80
         self.sheepCount = flames.count
         self.position = 0
         fpsMeter.reset()
@@ -104,6 +108,7 @@ public final class SequencePlaybackViewModel {
         // by librarySize + seed, independent of any hashed collection.
         var schedule = Schedule(librarySize: flames.count,
                                 framesPerSegment: framesPerSegment,
+                                transitionFramesPerSegment: transitionFramesPerSegment,
                                 selector: Sequential(seed: prefsSeed),
                                 seed: prefsSeed)
         // The dispatcher materializes segments lazily as `globalFrame` advances;

@@ -20,6 +20,7 @@ extension EmberweftCLI {
         // --- Parse args: variadic genomes + --flag value pairs (same shape as AnimateCommand) ---
         var genomes: [String] = []
         var framesPerSegment = 8, segmentCount = 3, loopCycles = 1, seed: UInt64 = 0
+        var transitionFramesPerSegment: Int? = nil   // --transition-frames (default = framesPerSegment → uniform)
         var stagger = 0.0, temporalSamples = 1
         var backend = "cpu", strictBackend = false, force = false
         var segmentFrames = 0
@@ -48,6 +49,9 @@ extension EmberweftCLI {
                 case "--frames":
                     guard let v = value() else { return missing("--frames") }
                     framesPerSegment = Int(v) ?? framesPerSegment; i += 2
+                case "--transition-frames":
+                    guard let v = value() else { return missing("--transition-frames") }
+                    transitionFramesPerSegment = Int(v); i += 2
                 case "--segments":
                     guard let v = value() else { return missing("--segments") }
                     segmentCount = Int(v) ?? segmentCount; i += 2
@@ -133,6 +137,7 @@ extension EmberweftCLI {
                 manifestPath: jobsPath, baseOut: out, codec: codec, container: container,
                 fps: fps, quality: quality, temporalSamples: temporalSamples, bitrate: bitrate,
                 resolution: resolution, segmentFrames: segmentFrames, framesPerSegment: framesPerSegment,
+                transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: segmentCount, seed: seed, loopCycles: loopCycles, stagger: stagger,
                 backend: backend, strictBackend: strictBackend, force: force, failFast: failFast)
         }
@@ -235,6 +240,7 @@ extension EmberweftCLI {
         }
         if let onlyFrame, png {
             var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
+                                    transitionFramesPerSegment: transitionFramesPerSegment,
                                     selector: Sequential(seed: seed), seed: seed)
             let plan = FramePlan(schedule: &schedule, segmentCount: segmentCount, flames: renderable,
                                  loopCycles: loopCycles, stagger: stagger,
@@ -286,6 +292,7 @@ extension EmberweftCLI {
         // else the single-export path (today's behavior). `segmentFrameBudget`
         // is set by `resolveExportSettings`.
         let job = ExportJob(settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
+                            transitionFramesPerSegment: transitionFramesPerSegment,
                             segmentCount: segmentCount, selector: .sequential, seed: seed,
                             loopCycles: loopCycles, stagger: stagger, out: outURL)
         let coord = ExportCoordinator(backend: coordBackend)
@@ -456,6 +463,7 @@ extension EmberweftCLI {
         manifestPath: String, baseOut: String, codec: String, container: String,
         fps: Int, quality: String, temporalSamples: Int, bitrate: String,
         resolution: String, segmentFrames: Int, framesPerSegment: Int,
+        transitionFramesPerSegment: Int?,
         segmentCount: Int, seed: UInt64, loopCycles: Int, stagger: Double,
         backend: String, strictBackend: Bool, force: Bool, failFast: Bool
     ) async -> Int32 {
@@ -547,6 +555,7 @@ extension EmberweftCLI {
             let jobLoop = e.loopCycles ?? loopCycles
             let jobStagger = e.stagger ?? stagger
             jobs.append(ExportJob(settings: jobSettings, flames: [flame], framesPerSegment: jobFrames,
+                                  transitionFramesPerSegment: transitionFramesPerSegment,
                                   segmentCount: jobSegments, selector: .sequential, seed: jobSeed,
                                   loopCycles: jobLoop, stagger: jobStagger, out: outURL))
         }

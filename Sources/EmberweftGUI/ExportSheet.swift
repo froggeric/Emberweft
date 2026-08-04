@@ -106,6 +106,9 @@ struct ExportSheet: View {
                     Stepper("Loop duration \(String(format: "%.1f", em.loopDurationSeconds)) s",
                             value: $em.loopDurationSeconds, in: 0.1...120, step: 0.5)
                         .help("Loop length in seconds. Frames per segment = round(duration × FPS).")
+                    Stepper("Transition duration \(String(format: "%.1f", em.transitionDurationSeconds)) s",
+                            value: $em.transitionDurationSeconds, in: 0.1...120, step: 0.5)
+                        .help("Transition (edge) length in seconds. Shorter than loop keeps edges brief. Transition frames = round(duration × FPS).")
                     Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
                         .help("1 uses the genome default (≈1000 on real ES sheep, motion-blurred). Higher values are sharper but slower. Metal caps at 64.")
                     Stepper("Seed \(seed)", value: $seed, in: 0...1_000_000_000)

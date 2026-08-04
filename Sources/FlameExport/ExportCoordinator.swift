@@ -138,6 +138,7 @@ public actor ExportCoordinator: ExportCoordinating {
         // Build the plan.
         let selector = makeSelector(job.selector)
         var schedule = Schedule(librarySize: job.flames.count, framesPerSegment: job.framesPerSegment,
+                                transitionFramesPerSegment: job.transitionFramesPerSegment,
                                 selector: selector, seed: job.seed)
         let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: job.flames,
                              loopCycles: job.loopCycles, stagger: job.stagger,
@@ -256,6 +257,7 @@ public actor ExportCoordinator: ExportCoordinating {
         try Self.diskPrecheck(job: job)
         let selector = makeSelector(job.selector)
         var schedule = Schedule(librarySize: job.flames.count, framesPerSegment: job.framesPerSegment,
+                                transitionFramesPerSegment: job.transitionFramesPerSegment,
                                 selector: selector, seed: job.seed)
         let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: job.flames,
                              loopCycles: job.loopCycles, stagger: job.stagger,
@@ -263,8 +265,11 @@ public actor ExportCoordinator: ExportCoordinating {
         let budget: MetalRenderer.ThreadSeedBudget? = useMetal ? MetalRenderer.ThreadSeedBudget(baseSeed: params.seed) : nil
 
         // Chunk size in SEGMENTS (AC4: never mid-segment). Each chunk covers
-        // `chunkSegments` whole Schedule segments → chunk frame ranges are
-        // `[segStart*N, (segStart+chunkSegments)*N)` clipped to totalFrames.
+        // `chunkSegments` whole Schedule segments → chunk frame ranges span whole
+        // segments. The chunk SIZE estimate uses the loop N (the larger kind);
+        // the actual frame RANGE is computed from cumulative per-kind offsets via
+        // `schedule.frameOffset(ofSegment:)` so variable transition counts land
+        // on true segment edges (never mid-segment).
         let N = job.framesPerSegment
         let chunkSegments = max(1, job.settings.segmentFrameBudget / N)
         let totalSegs = job.segmentCount
@@ -286,8 +291,8 @@ public actor ExportCoordinator: ExportCoordinating {
             // cancelled run). Per-frame cancel is checked inside `renderFrames`.
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             let segEnd = min(segStart + chunkSegments, totalSegs)
-            let frameStart = segStart * N
-            let frameEnd = min(segEnd * N, totalFrames)
+            let frameStart = schedule.frameOffset(ofSegment: segStart)
+            let frameEnd = min(schedule.frameOffset(ofSegment: segEnd), totalFrames)
             // UUID suffix → unique across concurrent runs (parallel tests / GUI).
             let tempURL = outDir.appendingPathComponent("m6-seg-\(UUID().uuidString).\(chunkExt)")
             temps.append(tempURL)
@@ -383,6 +388,7 @@ public actor ExportCoordinator: ExportCoordinating {
             // all flames are renderable, which is the common case).
             let effective: ExportJob = renderable.count == job.flames.count ? job
                 : ExportJob(settings: job.settings, flames: renderable, framesPerSegment: job.framesPerSegment,
+                            transitionFramesPerSegment: job.transitionFramesPerSegment,
                             segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
                             loopCycles: job.loopCycles, stagger: job.stagger, out: job.out)
 
@@ -438,7 +444,11 @@ public actor ExportCoordinator: ExportCoordinating {
         // bytes; *1.25 -> headroom for VBR peaks + container overhead. The
         // auto-bitrate table mirrors VideoEncoder.autoBitrate at the chosen
         // codec/res/fps so the estimate tracks the encoder's actual target.
-        let totalFrames = job.framesPerSegment * job.segmentCount
+        // Total frames sums per-kind (loops use framesPerSegment, transitions
+        // use transitionFramesPerSegment) — matches `Schedule.totalFrames`.
+        let loops = (job.segmentCount + 1) / 2
+        let trans = job.segmentCount / 2
+        let totalFrames = loops * job.framesPerSegment + trans * job.transitionFramesPerSegment
         let fps = max(1, job.settings.fps)
         let durationSeconds = Double(totalFrames) / Double(fps)
         let mbps: Int

@@ -39,7 +39,7 @@ public struct Segment: Sendable, Equatable {
 ///
 /// Returned by `Schedule.frameToBlend(globalFrame:)` in O(1).
 public struct FrameMapping: Sendable, Equatable {
-    /// The segment this global frame belongs to (`globalFrame / N`).
+    /// The segment this global frame belongs to (derived from the pair structure).
     public let segmentId: Int
     /// The kind of that segment (derivable from `segmentId` parity in O(1)).
     public let kind: Segment.Kind
@@ -54,17 +54,25 @@ public struct FrameMapping: Sendable, Equatable {
 ///
 /// # Frame-counting convention (pinned — off-by-one hazard)
 ///
-/// Emberweft emits `N = framesPerSegment` frames per segment at
-/// `blend = (local + 1) / N` for `local = 0...N-1` (**1-indexed**):
-/// blend ∈ {1/N, 2/N, …, 1.0}; **blend = 0 is never emitted**. Consecutive
-/// segments tile with no duplicate boundary frame: segment k's last frame is
-/// blend = 1.0, segment k+1's first is blend = 1/N.
+/// Emberweft emits `N` frames per segment at `blend = (local + 1) / N` for
+/// `local = 0...N-1` (**1-indexed**): blend ∈ {1/N, 2/N, …, 1.0}; **blend = 0 is
+/// never emitted**. Consecutive segments tile with no duplicate boundary frame:
+/// segment k's last frame is blend = 1.0, segment k+1's first is blend = 1/N.
+/// `N` is **per-kind**: `framesPerSegment` for loops, `transitionFramesPerSegment`
+/// for transitions (loops can be longer than transitions so edges stay brief).
 ///
-///     segmentId = globalFrame / N
-///     local     = globalFrame % N
-///     blend     = Double(local + 1) / Double(N)        // ∈ (0, 1]
+/// Segments alternate loop,transition by id parity, so a loop+transition pair is a
+/// fixed block of `pairFrames = framesPerSegment + transitionFramesPerSegment`:
 ///
-/// Total PNGs emitted over k segments = `k * N` (no boundary duplicate/drop).
+///     pairIndex = globalFrame / pairFrames
+///     within    = globalFrame % pairFrames
+///     if within < framesPerSegment → loop seg id = 2*pairIndex,      N = framesPerSegment
+///     else                         → transition seg id = 2*pairIndex+1, N = transitionFramesPerSegment
+///     blend = Double(local + 1) / Double(N)        // ∈ (0, 1]
+///
+/// Total PNGs emitted over k segments = `loops*framesPerSegment +
+/// transitions*transitionFramesPerSegment` (loops = `ceil(k/2)`, trans =
+/// `floor(k/2)`; no boundary duplicate/drop).
 ///
 /// ## Deliberate divergence from flam3 (NOT a match)
 ///
@@ -127,8 +135,13 @@ public struct FrameMapping: Sendable, Equatable {
 public struct Schedule: Sendable {
     /// Number of genomes in the library.
     public let librarySize: Int
-    /// Frames per segment (`N`).
+    /// Frames per **loop** segment (`N` for loops).
     public let framesPerSegment: Int
+    /// Frames per **transition** segment (`N` for transitions). Defaults to
+    /// `framesPerSegment` (uniform timeline = today's behavior) when the caller
+    /// omits it. Lets transitions ("edges") be shorter than loops so loops can
+    /// breathe while transitions stay brief.
+    public let transitionFramesPerSegment: Int
     /// Seed reserved for selectors that consume one (recorded for reproducibility).
     public let seed: UInt64
 
@@ -147,15 +160,23 @@ public struct Schedule: Sendable {
     /// - Parameters:
     ///   - librarySize: Number of genomes. Must be > 0. Must be > 1 for
     ///     non-degenerate transitions.
-    ///   - framesPerSegment: Frames per segment (`N`). Must be > 0.
+    ///   - framesPerSegment: Frames per **loop** segment (`N` for loops). Must be > 0.
+    ///   - transitionFramesPerSegment: Frames per **transition** segment. Pass
+    ///     `nil` (default) for a uniform timeline (== `framesPerSegment`,
+    ///     today's behavior); pass a smaller value for shorter transitions/edges.
+    ///     Must be > 0 when non-nil.
     ///   - selector: The pair-selection strategy (e.g. `Sequential`).
     ///   - seed: Seed recorded for reproducibility (see class doc).
     public init(librarySize: Int, framesPerSegment: Int,
+                transitionFramesPerSegment: Int? = nil,
                 selector: any PairSelector, seed: UInt64) {
         precondition(librarySize > 0, "librarySize must be > 0")
         precondition(framesPerSegment > 0, "framesPerSegment must be > 0")
+        let t = transitionFramesPerSegment ?? framesPerSegment
+        precondition(t > 0, "transitionFramesPerSegment must be > 0")
         self.librarySize = librarySize
         self.framesPerSegment = framesPerSegment
+        self.transitionFramesPerSegment = t
         self.selector = selector
         self.seed = seed
     }
@@ -165,21 +186,62 @@ public struct Schedule: Sendable {
     /// Map a global frame index to its segment id, kind, and blend.
     ///
     /// Pure and O(1): does not consult the lazy walk cache (kind is derived
-    /// from `segmentId` parity). `blend ∈ (0, 1]`; **never 0**.
+    /// from the pair structure). `blend ∈ (0, 1]`; **never 0**.
+    ///
+    /// Segments strictly alternate loop,transition,loop,transition,…, so a
+    /// loop+transition pair is a fixed block of `pairFrames = framesPerSegment +
+    /// transitionFramesPerSegment`. For a global frame `g`:
+    ///
+    ///     pairIndex = g / pairFrames
+    ///     within    = g % pairFrames
+    ///     if within < framesPerSegment → loop seg id = 2*pairIndex, local = within
+    ///     else                        → transition seg id = 2*pairIndex + 1,
+    ///                                    local = within - framesPerSegment
+    ///     N (denominator) = the segment's own framesPerSegment (loop or transition)
+    ///
+    /// When the timeline ends on a loop (odd `segmentCount`, e.g. `2N−1` for an
+    /// N-genome pass), the final loop's frames fall in the loop slot of the last
+    /// pair (`within < framesPerSegment`), so they map to `id = 2*pairIndex`
+    /// (loop) — they never spill into a non-existent transition. Callers only
+    /// request frames in `[0, totalFrames)`, so the (non-existent) transition slot
+    /// of a trailing-only pair is never reached.
     public func frameToBlend(globalFrame: Int) -> FrameMapping {
         precondition(globalFrame >= 0, "globalFrame must be >= 0")
-        let N = framesPerSegment
-        let segmentId = globalFrame / N
-        let local = globalFrame % N
-        let blend = Double(local + 1) / Double(N)
-        let kind: Segment.Kind = segmentId.isMultiple(of: 2) ? .loop : .transition
-        return FrameMapping(segmentId: segmentId, kind: kind, blend: blend)
+        let L = framesPerSegment
+        let T = transitionFramesPerSegment
+        let pairFrames = L + T
+        let pairIndex = globalFrame / pairFrames
+        let within = globalFrame % pairFrames
+        if within < L {
+            // Loop slot of this pair.
+            let segmentId = 2 * pairIndex
+            let local = within
+            let blend = Double(local + 1) / Double(L)
+            return FrameMapping(segmentId: segmentId, kind: .loop, blend: blend)
+        } else {
+            // Transition slot of this pair.
+            let segmentId = 2 * pairIndex + 1
+            let local = within - L
+            let blend = Double(local + 1) / Double(T)
+            return FrameMapping(segmentId: segmentId, kind: .transition, blend: blend)
+        }
     }
 
-    /// Total PNGs emitted over `segmentCount` segments = `segmentCount * N`.
+    /// Cumulative frame offset of the START of segment `s` (i.e. frames emitted
+    /// by segments `[0, s)`). Loops (even ids) contribute `framesPerSegment`;
+    /// transitions (odd ids) contribute `transitionFramesPerSegment`. O(1), pure.
+    public func frameOffset(ofSegment s: Int) -> Int {
+        precondition(s >= 0, "segment index must be >= 0")
+        let loops = (s + 1) / 2       // even ids in [0, s): 0,2,…
+        let trans = s / 2             // odd ids in [0, s): 1,3,…
+        return loops * framesPerSegment + trans * transitionFramesPerSegment
+    }
+
+    /// Total PNGs emitted over `segmentCount` segments. Loops = `ceil(s/2)`,
+    /// transitions = `floor(s/2)` (segmentCount for a full N-genome pass is `2N−1`).
     public func totalFrames(segmentCount: Int) -> Int {
         precondition(segmentCount >= 0, "segmentCount must be >= 0")
-        return segmentCount * framesPerSegment
+        return frameOffset(ofSegment: segmentCount)
     }
 
     /// True iff `globalFrame` is the **first frame of a transition segment** — the
@@ -196,15 +258,16 @@ public struct Schedule: Sendable {
     /// (`AnimateCommand.blendAt`, `PlaybackDispatcher.renderOneFrame`) render the
     /// fromSheep genome directly when this returns true, matching flam3's shortcut.
     ///
-    /// Pure + O(1) (uses `frameToBlend`, not the lazy segment walk). `globalFrame %
-    /// N == 0` iff it is the first frame of some segment; with `kind ==
-    /// .transition` this isolates the loop→transition start. For `N == 1` every
-    /// frame is a segment start, so a transition's single frame returns A —
-    /// matching flam3's `nframes==1` `frame==0 → blend==0 → seqflag` path.
+    /// Pure + O(1). Uses the pair structure: a boundary is the first frame of a
+    /// transition slot, i.e. `within == framesPerSegment` (the slot's local 0).
+    /// For `transitionFramesPerSegment == 1` the single transition frame returns A
+    /// — matching flam3's `nframes==1` `frame==0 → blend==0 → seqflag` path.
     public func isLoopToTransitionBoundary(globalFrame: Int) -> Bool {
         precondition(globalFrame >= 0, "globalFrame must be >= 0")
-        let m = frameToBlend(globalFrame: globalFrame)
-        return m.kind == .transition && globalFrame % framesPerSegment == 0
+        let pairFrames = framesPerSegment + transitionFramesPerSegment
+        let within = globalFrame % pairFrames
+        // Transition slot starts at `framesPerSegment`; its local 0 == a boundary.
+        return within == framesPerSegment
     }
 
     // MARK: - Level 2: segmentId → Segment — O(1) prefix, amortized O(1) extend
@@ -221,7 +284,9 @@ public struct Schedule: Sendable {
 
     /// Append the next segment per the alternation scheme:
     /// even id → loop(currentSheep); odd id → transition(currentSheep → next),
-    /// advancing `currentSheep` and the selector.
+    /// advancing `currentSheep` and the selector. Loop segments use
+    /// `framesPerSegment`; transition segments use `transitionFramesPerSegment`
+    /// (which may be shorter for brief edges).
     private mutating func appendNextSegment() {
         let id = segments.count
         let kind: Segment.Kind = id.isMultiple(of: 2) ? .loop : .transition
@@ -234,7 +299,7 @@ public struct Schedule: Sendable {
             let nxt = selector.next(from: currentSheep, librarySize: librarySize)
             segments.append(Segment(id: id, kind: .transition,
                                     fromSheep: currentSheep, toSheep: nxt,
-                                    framesPerSegment: framesPerSegment))
+                                    framesPerSegment: transitionFramesPerSegment))
             currentSheep = nxt
         }
     }

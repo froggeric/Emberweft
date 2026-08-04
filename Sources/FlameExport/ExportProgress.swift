@@ -87,6 +87,9 @@ public struct ExportJob: Sendable {
     public let settings: ExportSettings
     public let flames: [Flame]
     public let framesPerSegment: Int
+    /// Frames per **transition** segment. Defaults to `framesPerSegment` (uniform
+    /// timeline) when omitted — preserves today's behavior for existing callers.
+    public let transitionFramesPerSegment: Int
     public let segmentCount: Int
     public let selector: SelectorSpec
     public let seed: UInt64
@@ -95,10 +98,13 @@ public struct ExportJob: Sendable {
     public let out: URL
     public let partialURL: URL
     public init(settings: ExportSettings, flames: [Flame], framesPerSegment: Int,
+                transitionFramesPerSegment: Int? = nil,
                 segmentCount: Int, selector: SelectorSpec, seed: UInt64,
                 loopCycles: Int, stagger: Double, out: URL) {
         self.settings = settings; self.flames = flames
-        self.framesPerSegment = framesPerSegment; self.segmentCount = segmentCount
+        self.framesPerSegment = framesPerSegment
+        self.transitionFramesPerSegment = transitionFramesPerSegment ?? framesPerSegment
+        self.segmentCount = segmentCount
         self.selector = selector; self.seed = seed; self.loopCycles = loopCycles
         self.stagger = stagger; self.out = out
         // Atomic-encode target = `<dir>/<stem>.partial-<pid>.<ext>`. Built from
