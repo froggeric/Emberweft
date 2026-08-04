@@ -180,6 +180,19 @@ final class AnimationParityTests: XCTestCase {
     /// flam3-genome inter mode reads a 2-CP file and emits three `spin_inter`
     /// control points; the middle one is `sheep_edge(parents, frame/nframes, 0, 0)`.
     func testSheepEdgeVsFlam3Inter() throws {
+        // DISABLED (owner decision, 2026-08-04): animation is no longer flam3-parity-bound.
+        // The production animate/export path (FramePlan.descriptor) now eases the transition
+        // rotation via `Transition.blend(..., rotationVelocityRatio: r)`, so its angular
+        // velocity matches the adjacent loops at both boundaries — an INTENTIONAL
+        // divergence from flam3's linear transition rotation (memory:
+        // animation-not-parity-bound). This gate compared the transition vs flam3's LINEAR
+        // rotation, which is no longer a gate. Renderer faithfulness for the NON-rotation
+        // parts of the blend (SpecialSauce.align, .log matrix interp, HSV palette) stays
+        // covered by TransitionTests + Metal↔CPU parity (AnimatedFrameParityTests); loop
+        // vs-flam3 parity (testSheepLoopVsFlam3Rotate) stays in force (loops are unchanged).
+        // The body below is preserved verbatim for reference / future re-baselining.
+        throw XCTSkip("transition vs-flam3 parity disabled: animation is no longer parity-bound (owner decision 2026-08-04); transition rotation is now eased (intentional divergence)")
+
         try Flam3Oracle.require()
 
         let a = try load("heart_disc")

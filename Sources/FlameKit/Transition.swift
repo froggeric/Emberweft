@@ -20,12 +20,15 @@ import Foundation
 /// 5. **`establish_asymmetric_refangles`** — `RefAngles.establish(&cps, ncp: 2)`
 ///    writes the per-xform `wind[col]` anchors used by the `.log` unwrap. Called on
 ///    the PRE-rotation affines (flam3 order: establish at :10627, rotate at :10630).
-/// 6. **Rotate BOTH endpoints** by `t·360°` via `Loop.blend(genome, t:)`. `Loop.blend`
-///    applies `flam3_rotate(genome, t*360, type)` exactly (θ = t·2π, columns-not-rows
-///    convention, `animate != 0` / final-skip / `padding`-under-`.linear`/`.compat`/
-///    `.older` gates). flam3 uses `spun[0].interpolation_type` for BOTH rotations
-///    (flam3.c:10631); we sync `spun1.interpolationType = spun0.interpolationType`
-///    before rotating so the padding gate is identical for both endpoints.
+/// 6. **Rotate BOTH endpoints** by `rotT·360°` via `Loop.blend(genome, t: rotT)`, where
+///    `rotT = rotationCurve(t, r)` — an OPTIONAL velocity-matched ease (`r=1` ⇒
+///    `rotT=t`, the flam3-faithful linear rotation; see `blend(rotationVelocityRatio:)`
+///    + the owner decision of 2026-08-04). `Loop.blend` applies `flam3_rotate(genome,
+///    rotT*360, type)` exactly (θ = rotT·2π, columns-not-rows convention, `animate != 0`
+///    / final-skip / `padding`-under-`.linear`/`.compat`/`.older` gates). flam3 uses
+///    `spun[0].interpolation_type` for BOTH rotations (flam3.c:10631); we sync
+///    `spun1.interpolationType = spun0.interpolationType` before rotating so the
+///    padding gate is identical for both endpoints.
 /// 7. **`flam3_interpolate(spun, 2, smoother(t), stagger)`** —
 ///    `GenomeInterpolator.interpolate(spun0, spun1, t: smoother(t), type: .log,
 ///    stagger:)` with per-xform stagger (option (a): stagger lives inside the
@@ -53,8 +56,20 @@ public enum Transition {
     ///     `b` (after align, within rotation-matrix FP residual ≈1e-16 at the 2π seam).
     ///   - stagger: the genome `stagger` attribute in `[0,1]`; `0` disables per-xform
     ///     desync. Applied only to non-final xforms (final/post xform uses global t).
+    ///   - rotationVelocityRatio: ratio of transition duration to loop duration
+    ///     (`r = transFrames / loopFrames`). The rotation parameter fed to `Loop.blend`
+    ///     in step 6 is `rotationCurve(t, r)` (see that helper). `r = 1.0` (default) ⇒
+    ///     linear `t`, the flam3-faithful behavior, byte-identical to every pre-existing
+    ///     caller that omits it. `r < 1` (a short transition between longer loops) eases
+    ///     the rotation so its real-time angular velocity at BOTH boundaries matches the
+    ///     adjacent loops, eliminating the loop↔transition rotation-velocity ("jarring
+    ///     jerk") jump — an intentional divergence from flam3's linear transition
+    ///     rotation (owner decision, 2026-08-04: animation is no longer flam3-parity-bound).
     /// - Returns: a new interpolated genome; inputs are never mutated (value semantics).
-    public static func blend(_ a: Flame, _ b: Flame, t: Double, stagger: Double = 0) -> Flame {
+    public static func blend(
+        _ a: Flame, _ b: Flame, t: Double, stagger: Double = 0,
+        rotationVelocityRatio r: Double = 1.0
+    ) -> Flame {
         // --- Step 1: clone both parents (value-typing makes assignment a clone). ---
         // --- Step 2: motion fold — no-op (Emberweft has no motion elements). ---
 
@@ -81,13 +96,26 @@ public enum Transition {
         spun0 = cps[0]
         spun1 = cps[1]
 
-        // --- Step 6: rotate BOTH endpoints by t·360° (flam3_rotate, via Loop.blend). ---
+        // --- Step 6: rotate BOTH endpoints by rotT·360° (flam3_rotate, via Loop.blend). ---
         // flam3 rotates spun[1] with spun[0].interpolation_type (flam3.c:10631), so the
         // padding-xform gate uses the SAME type for both endpoints. Sync spun1 to spun0's
         // type before rotating (this is a local copy — the inputs `a`/`b` are untouched).
+        //
+        // Velocity-matched ease (intentional divergence from flam3's linear rotation;
+        // owner decision 2026-08-04 — animation is no longer flam3-parity-bound). The
+        // rotation parameter is `rotT = rotationCurve(t, r) = r·t + (1−r)·smoother(t)`,
+        // NOT the raw `t`. `r=1` ⇒ `rotT = t` (linear, byte-identical to the old path).
+        // `r = transFrames/loopFrames` makes the real-time angular velocity at both
+        // boundaries (rotT'(0) = rotT'(1) = r, since smoother'(0)=smoother'(1)=0) equal
+        // `360°·r/transDuration = 360°/loopDuration` — the adjacent loops' velocity —
+        // eliminating the rotation-velocity jump. The total rotation is unchanged
+        // (rotT(0)=0, rotT(1)=1 ⇒ 0°→360°, so R(360°)=R(0°) keeps the next-loop seam
+        // seamless). ONLY the rotation is eased; the morph (step 7) and palette stay on
+        // `smoother(t)` (UNCHANGED).
         spun1.interpolationType = spun0.interpolationType
-        let spun0Rotated = Loop.blend(spun0, t: t)
-        let spun1Rotated = Loop.blend(spun1, t: t)
+        let rotT = rotationCurve(t, rotationVelocityRatio: r)
+        let spun0Rotated = Loop.blend(spun0, t: rotT)
+        let spun1Rotated = Loop.blend(spun1, t: rotT)
 
         // --- Step 7: flam3_interpolate(spun, 2, smoother(t), stagger) + HSV palette. ---
         // Matrix/via .log with per-xform stagger; temporal smoothing via smoother(t).
@@ -133,5 +161,23 @@ public enum Transition {
         // --- Step 8: strip motion elements — no-op (Emberweft has no motion elements). ---
 
         return result
+    }
+
+    /// Velocity-matched rotation curve for transition endpoints:
+    /// `rotT(t) = r·t + (1−r)·smoother(t)` where `smoother(t) = 3t² − 2t³`.
+    ///
+    /// At `r = 1.0` this is the identity `t` (linear, flam3-faithful — every caller that
+    /// omits `rotationVelocityRatio` is byte-identical to the pre-ease behavior). At
+    /// `r < 1` (a transition shorter than its adjacent loops), the smoothstep term eases
+    /// the rotation so the angular velocity is `r` (not 1) at both boundaries — matching
+    /// the loops' velocity and eliminating the loop↔transition rotation-velocity jump.
+    ///
+    /// Properties: `rotT(0) = 0`, `rotT(1) = 1` (total rotation unchanged ⇒ seam with the
+    /// next loop preserved via `R(360°)=R(0°)`); `rotT'(0) = rotT'(1) = r` (because
+    /// `smoother'(0)=smoother'(1)=0`). Monotonic for `r < 3`: `rotT'(t) = r + (1−r)·6t(1−t)`,
+    /// whose minimum over `[0,1]` is `1.5 − 0.5r > 0`; `r ≥ 3` goes non-monotonic and is
+    /// out of scope (loops are never >3× longer than their transitions in practice).
+    public static func rotationCurve(_ t: Double, rotationVelocityRatio r: Double) -> Double {
+        r * t + (1.0 - r) * BlendMath.smoother(t)
     }
 }

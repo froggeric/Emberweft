@@ -72,13 +72,20 @@ public struct FramePlan: Sendable {
         let kind = segment.kind
         let from = segment.fromSheep
         let to = segment.toSheep
+        // Transition rotation-velocity ratio: transFrames/loopFrames (= transDuration/
+        // loopDuration). Fed to Transition.blend so the eased rotation's angular velocity
+        // at both boundaries matches the adjacent loops (eliminates the rotation-velocity
+        // jump). Loops ignore it (they stay linear for seamlessness). When the timeline is
+        // uniform (transFrames == loopFrames) r = 1.0 ⇒ linear ⇒ byte-identical to before.
+        let rotRatio = Double(transitionFramesPerSegment) / Double(framesPerSegment)
         let blendAt: @Sendable (Double) -> Flame = { t in
             switch kind {
             case .loop:
                 return Loop.blend(flames[from], t: t, cycles: cycles)
             case .transition:
                 return Transition.blend(flames[from], flames[to],
-                                        t: min(max(t, 0.0), 1.0), stagger: stag)
+                                        t: min(max(t, 0.0), 1.0), stagger: stag,
+                                        rotationVelocityRatio: rotRatio)
             }
         }
         return FrameDescriptor(

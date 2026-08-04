@@ -349,6 +349,83 @@ final class TransitionTests: XCTestCase {
     }
 
 
+    // MARK: - rotationCurve (velocity-matched transition rotation ease)
+
+    /// Pins the `Transition.rotationCurve(t, r)` math: the eased rotation parameter
+    /// `rotT = r·t + (1−r)·smoother(t)` that eliminates the loop↔transition
+    /// rotation-velocity jump. See `Transition.blend(rotationVelocityRatio:)` and the
+    /// owner decision of 2026-08-04 (animation is no longer flam3-parity-bound).
+    func testRotationCurveMath() {
+        // r = 1.0 ⇒ identity (linear, flam3-faithful, byte-identical backward compat).
+        for t in stride(from: 0.0, through: 1.0, by: 0.1) {
+            XCTAssertEqual(Transition.rotationCurve(t, rotationVelocityRatio: 1.0), t,
+                           accuracy: 0.0, "r=1.0 must be the identity at t=\(t)")
+        }
+
+        // Endpoints fixed for all r: rotT(0)=0, rotT(1)=1 (total rotation unchanged).
+        for r in [0.25, 0.5, 1.0, 2.0] {
+            XCTAssertEqual(Transition.rotationCurve(0.0, rotationVelocityRatio: r), 0.0,
+                           accuracy: 1e-15, "rotT(0)=0 for r=\(r)")
+            XCTAssertEqual(Transition.rotationCurve(1.0, rotationVelocityRatio: r), 1.0,
+                           accuracy: 1e-15, "rotT(1)=1 for r=\(r)")
+        }
+
+        // r=0.5 symmetry: smoother(0.5)=0.5 ⇒ rotT(0.5) = 0.5·0.5 + 0.5·0.5 = 0.5.
+        XCTAssertEqual(
+            Transition.rotationCurve(0.5, rotationVelocityRatio: 0.5), 0.5, accuracy: 1e-15)
+
+        // Boundary velocity = r: rotT'(0) = rotT'(1) = r (smoother'(0)=smoother'(1)=0,
+        // so the smoothstep term contributes nothing to the slope at the endpoints).
+        // One-sided finite difference; error is O(h)·|1−r| ≈ 3e-6 at h=1e-6.
+        let h = 1e-6
+        for r in [0.25, 0.5, 1.0, 2.0] {
+            let d0 = (Transition.rotationCurve(h, rotationVelocityRatio: r)
+                      - Transition.rotationCurve(0.0, rotationVelocityRatio: r)) / h
+            let d1 = (Transition.rotationCurve(1.0, rotationVelocityRatio: r)
+                      - Transition.rotationCurve(1.0 - h, rotationVelocityRatio: r)) / h
+            XCTAssertEqual(d0, r, accuracy: 1e-4, "rotT'(0) must equal r=\(r)")
+            XCTAssertEqual(d1, r, accuracy: 1e-4, "rotT'(1) must equal r=\(r)")
+        }
+
+        // Monotonic for r < 3 (rotT'(t) = r + (1−r)·6t(1−t), min over [0,1] = 1.5 − 0.5r > 0).
+        let steps = Array(stride(from: 0.0, through: 1.0, by: 0.01))
+        for r in [0.25, 0.5, 1.0, 2.0] {
+            var prev = Transition.rotationCurve(0.0, rotationVelocityRatio: r)
+            var monotonic = true
+            for t in steps.dropFirst() {
+                let v = Transition.rotationCurve(t, rotationVelocityRatio: r)
+                if v < prev - 1e-15 { monotonic = false; break }
+                prev = v
+            }
+            XCTAssertTrue(monotonic, "rotationCurve must be monotonic for r=\(r)")
+        }
+
+        // r > 3 goes non-monotonic near the midpoint (the documented limit; at r=3 the
+        // midpoint derivative is exactly 0 — a flat inflection, still monotonic — and
+        // r=4 reverses). Out of scope in practice (loops are never >3× their transitions).
+        let r = 4.0
+        let mid = Transition.rotationCurve(0.5, rotationVelocityRatio: r)
+        let left = Transition.rotationCurve(0.49, rotationVelocityRatio: r)
+        XCTAssertLessThan(mid, left, "r=\(r) should reverse (non-monotonic) near the midpoint")
+    }
+
+    /// Backward compat at the API surface: `Transition.blend` with the DEFAULT
+    /// rotationVelocityRatio (1.0) is byte-identical to an explicit `r: 1.0`, because
+    /// `rotationCurve(t, 1.0) == t` exactly ⇒ `Loop.blend` receives the same `t` as
+    /// before. Every pre-existing caller that omits the parameter is thus unchanged.
+    func testBlendDefaultRotationRatioIsLinearIdentity() {
+        let a = Self.sampleGenome([Self.x0, Self.x1], palette: Self.rampPalette(0.0))
+        let b = Self.sampleGenome([Self.x1, Self.x0], palette: Self.rampPalette(0.3))
+        let t = 0.35
+        let implicit = Transition.blend(a, b, t: t)
+        let explicit = Transition.blend(a, b, t: t, stagger: 0, rotationVelocityRatio: 1.0)
+        // Coefficient-vector equality (palette excluded — see coeffVector doc).
+        let delta = Self.l2(Self.sub(Self.coeffVector(implicit), Self.coeffVector(explicit)))
+        XCTAssertEqual(delta, 0.0, accuracy: 1e-15,
+                       "default r must be byte-identical to explicit r=1.0")
+    }
+
+
     // MARK: - coefficient-vector helpers (for the continuity test)
 
     /// Flatten a genome's blend-relevant coefficients into a vector (affine 6 per xform
