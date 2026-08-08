@@ -53,13 +53,13 @@ public enum EmberweftCLI {
         Usage:
           emberweft render   <genome.flam3> [-o out.png] [--size WxH] [--quality N] [--seed N] [--backend cpu|metal]
           emberweft animate  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--selector sequential|similarity] [--seed N] [--stagger F] [--backend cpu|metal] [--out DIR] [--size WxH] [--quality N]
-          emberweft export  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--seed N] [--backend cpu|metal] [--codec h264|hevc] [--resolution 720p|1080p|1440p|4k] [--fps 24|25|30|48|50|60] [--out FILE.mp4] [--quality genome|N] [--temporal-samples N] [--loop-cycles N] [--stagger F] [--container mp4|mov] [--bitrate auto|N] [--frame N --png FILE.png] [--force] [--strict-backend] [--segment-frames N]
+          emberweft export  <a.flam3> <b.flam3> … [--frames N] [--segments N] [--seed N] [--backend cpu|metal] [--codec h264|hevc] [--resolution 720p|1080p|1440p|4k] [--fps 24|25|30|48|50|60] [--out FILE.mp4] [--quality genome|N] [--temporal-samples N] [--loop-cycles N] [--stagger F] [--container mp4|mov] [--bitrate auto|N] [--frame N --png FILE.png] [--force] [--strict-backend] [--segment-frames N] [--loop-repeat N]
             (--codec hevc on a host without HEVC encode errors exit 1; the default h264 codec is always available)
             (the encoded .mp4 is NOT byte-stable across machines/OS versions; the frame PIXELS are deterministic. Use `emberweft animate` for byte-exact PNG mastering)
           emberweft export --jobs MANIFEST.json [--out DIR/] [--fail-fast] [shared flags: --backend --codec --resolution --fps --quality --temporal-samples --container --bitrate --segment-frames]
             (batch: runs each manifest entry serially; continue-on-failure by default, or abort on first failure with --fail-fast; exit code is 0 only if every job succeeded)
             manifest schema (a JSON array; `genome` and `out` are required, the rest are optional per-job overrides):
-              [{"genome":"a.flam3","out":"a.mp4","frames":16,"segments":1,"seed":7,"loopCycles":1,"stagger":0.0,"temporalSamples":1}, …]
+              [{"genome":"a.flam3","out":"a.mp4","frames":16,"segments":1,"seed":7,"loopCycles":1,"stagger":0.0,"temporalSamples":1,"loopRepeat":1}, …]
             each `out` is sanitized to a bare filename (allowlist [A-Za-z0-9._-]) and resolved under --out (or CWD); `..`, absolute, and hidden names are rejected
           emberweft validate <genome.flam3>
           emberweft curate   [--library DIR] [--out DIR] [--size WxH] [--spp N] [--seed N] [--backend cpu|metal] [--sample N] [--top N] [--no-render]

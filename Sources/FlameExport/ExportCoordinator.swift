@@ -28,6 +28,17 @@ public actor ExportCoordinator: ExportCoordinating {
     private let useOffMainMetal: Bool
     private var cancelled = false
 
+    /// Test seam: number of images produced by the render dispatch
+    /// (`renderImage`) in this coordinator's lifetime. Counts each frame ONCE —
+    /// a loop repeated `loopRepeatCount`× via the cache still increments this
+    /// once per rendered (cached) frame, not per output append. Pure side-channel
+    /// (no effect on bytes/PTS → byte-identity-safe).
+    internal private(set) var renderCallCount: Int = 0
+    /// Test seam: number of frames appended to the encoder (output frame count).
+    /// A loop repeated `loopRepeatCount`× increments this `loopRepeatCount`× per
+    /// cached frame. Pure side-channel.
+    internal private(set) var appendedFrameCount: Int = 0
+
     /// `backend` is the ALREADY-RESOLVED choice. Metal availability + the
     /// `--strict-backend` fallback/refuse decision are made by `ExportCommand`
     /// (which can `await MainActor.run { MetalRenderer.isAvailable }` from its
@@ -133,6 +144,9 @@ public actor ExportCoordinator: ExportCoordinating {
         let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
                                   oversample: os, samplesPerPixel: spp)
         let useMetal = (backend == .metal)
+        // Loop-repeat memory guard (v0.5.0) — checked BEFORE disk/encoder so a
+        // refused job leaves no partial file. No-op when loopRepeatCount == 1.
+        try Self.checkLoopRepeatMemory(job: job, width: max(1, res.width), height: max(1, res.height))
         // Disk precheck (D13).
         try Self.diskPrecheck(job: job)
         // Build the plan.
@@ -154,7 +168,8 @@ public actor ExportCoordinator: ExportCoordinating {
             // `[0, totalFrames)` into one encoder = byte-identical to the prior
             // inline loop; the extraction only factors the body into a helper.
             try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
-                                   range: 0..<plan.totalFrames, into: encoder, yield: yield)
+                                   range: 0..<plan.totalFrames, loopRepeatCount: job.loopRepeatCount,
+                                   into: encoder, yield: yield)
             try await encoder.finish()
         } catch {
             encoder.cancel(); try? FileManager.default.removeItem(at: job.partialURL); throw error
@@ -174,73 +189,174 @@ public actor ExportCoordinator: ExportCoordinating {
     /// can target the right URL (`job.partialURL` for single, the chunk temp for
     /// long-form). Both `runJob` (range = whole timeline) and `runLongFormJob`
     /// (range = one chunk) call this, so the per-frame code path is identical.
+    ///
+    /// `loopRepeatCount` (v0.5.0): when `> 1`, each **loop** segment in `range`
+    /// is rendered ONCE into a per-segment `[RGBA8Image]` cache, then each cached
+    /// frame is appended `loopRepeatCount`× (a loop is seamless — `R(360°)=R(0°)`
+    /// — so the repeats are invisible). Transition segments are rendered +
+    /// appended once (a morph isn't seamless). A running `outputIndex` (scoped to
+    /// the encoder session) replaces `gf - range.lowerBound` as the append PTS in
+    /// this branch. When `== 1` the EXACT pre-change per-frame loop runs
+    /// byte-for-byte (the cache/replay branch is not entered → every byte-identity
+    /// pin stays green). Determinism (rule #2): each loop frame is rendered once
+    /// and the identical bytes are written `repeatCount`× — no re-render/reseed.
     private func renderFrames(
         plan: FramePlan,
         params: RenderParams,
         budget: MetalRenderer.ThreadSeedBudget?,
         useMetal: Bool,
         range: Range<Int>,
+        loopRepeatCount: Int = 1,
         into encoder: VideoEncoder,
         yield: @Sendable (ExportProgress) -> Void
     ) async throws {
         let start = ProcessInfo.processInfo.systemUptime
-        for gf in range {
+
+        // --- repeat == 1: the byte-for-byte pre-change path (untouched) ---
+        // Every animate↔export byte-identity pin routes through here. The only
+        // change vs the original is the render dispatch is now a call to the
+        // extracted `renderImage` (identical operations, identical order →
+        // identical bytes). Do NOT alter the PTS math or progress values here.
+        if loopRepeatCount <= 1 {
+            for gf in range {
+                if cancelled || Task.isCancelled { throw ExportError.cancelled }
+                let d = plan.descriptor(for: gf)
+                let img = try await renderImage(descriptor: d, plan: plan, params: params,
+                                                budget: budget, useMetal: useMetal)
+                renderCallCount += 1
+                // PTS is LOCAL to this encoder's session (session always starts at
+                // .zero). For `runJob` range.lowerBound == 0 so this is identical to
+                // the prior inline `atFrame: gf`. For a long-form chunk the local
+                // index resets per chunk → each chunk is an independent N-frame
+                // stream; the concat shifts each to its cumulative offset. Passing
+                // the GLOBAL index here would leave a `lowerBound`-frame black gap
+                // at the front of every chunk's stream.
+                try await encoder.append(img, atFrame: gf - range.lowerBound)
+                appendedFrameCount += 1
+                let elapsed = ProcessInfo.processInfo.systemUptime - start
+                yield(ExportProgress(phase: .rendering, currentFrame: gf + 1, totalFrames: plan.totalFrames,
+                                     elapsed: elapsed, renderFPS: elapsed > 0 ? Double(gf + 1) / elapsed : 0))
+            }
+            return
+        }
+
+        // --- repeat > 1: coordinator-level cache + replay (loops only) ---
+        // Walk `range` segment-by-segment. `range` always aligns to segment edges
+        // (`runJob` passes `0..<plan.totalFrames`; long-form chunks split on
+        // segment edges — never mid-segment), so the cursor `gf` is always at a
+        // segment start when the while-body runs. For a loop segment, render its
+        // N frames once into a local cache (cancel-check per render), append each
+        // `loopRepeatCount`× at a running `outputIndex`, then discard the cache.
+        // For a transition segment, render + append each frame once.
+        var outputIndex = 0
+        var rendered = 0
+        var gf = range.lowerBound
+        while gf < range.upperBound {
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             let d = plan.descriptor(for: gf)
-            let img: RGBA8Image
-            if useMetal && useOffMainMetal {
-                // GUI export path (M6-G.2): render off-main via
-                // `renderOffMain`/`renderTemporalOffMain` inside a `Task.detached`,
-                // so the MainActor is never blocked (no UI freeze). Field names
-                // mirror the MainActor branch VERBATIM (`d.blend`/`d.blendAt`/
-                // `d.temporal`/`d.sumfilt`; single-vs-temporal via
-                // `plan.temporalSamples > 1` — FramePlan.swift:7-24 has no
-                // `centerTime`/`flame` field). The SAME `budget`
-                // (`ThreadSeedBudget(baseSeed: params.seed)`, built once per export
-                // at the single `ThreadSeedBudget(baseSeed:)` site above) is passed
-                // — `renderOffMain`/`renderTemporalOffMain` select per-pass seeds
-                // internally via `seeds(forPass:threadCount:)`, byte-identical to
-                // the MainActor path. nil ⇒ Metal unavailable / render failed /
-                // non-box temporal (defensive) ⇒ `.metalUnavailable`.
-                let maybeImg: RGBA8Image? = await Task.detached(priority: .userInitiated) {
-                    plan.temporalSamples > 1
-                        ? MetalRenderer.renderTemporalOffMain(
-                            blendAt: d.blendAt, centerTime: d.blend,
-                            temporal: d.temporal, sumfilt: d.sumfilt,
-                            params: params, seedBudget: budget)
-                        : MetalRenderer.renderOffMain(
-                            flame: d.blendAt(d.blend), params: params, seedBudget: budget)
-                }.value
-                guard let offMainImg = maybeImg else { throw ExportError.metalUnavailable }
-                img = offMainImg
-            } else if useMetal {
-                img = await MainActor.run {
-                    autoreleasepool {
-                        plan.temporalSamples > 1
-                            ? MetalRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
-                                                   temporal: d.temporal, sumfilt: d.sumfilt, params: params, seedBudget: budget)
-                            : MetalRenderer.render(flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+            switch d.kind {
+            case .loop:
+                // Loop segment: spans `framesPerSegment` frames from `gf` (clamped
+                // to range — a trailing partial loop can't happen given the
+                // segment-edge alignment, but the clamp is defensive).
+                let segLen = plan.framesPerSegment
+                let segEnd = min(gf + segLen, range.upperBound)
+                var cache: [RGBA8Image] = []
+                cache.reserveCapacity(segEnd - gf)
+                for f in gf..<segEnd {
+                    if cancelled || Task.isCancelled { throw ExportError.cancelled }
+                    let fd = plan.descriptor(for: f)
+                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
+                                                    budget: budget, useMetal: useMetal)
+                    cache.append(img)
+                    renderCallCount += 1
+                    rendered += 1
+                    let elapsed = ProcessInfo.processInfo.systemUptime - start
+                    yield(ExportProgress(phase: .rendering, currentFrame: rendered,
+                                         totalFrames: plan.totalFrames, elapsed: elapsed,
+                                         renderFPS: elapsed > 0 ? Double(rendered) / elapsed : 0))
+                }
+                // Replay: append each cached frame `loopRepeatCount`×. The cached
+                // bytes are written verbatim (rule #2: identical bytes, no reseed).
+                for img in cache {
+                    for _ in 0..<loopRepeatCount {
+                        try await encoder.append(img, atFrame: outputIndex)
+                        outputIndex += 1
+                        appendedFrameCount += 1
                     }
                 }
-            } else {
-                img = await Task.detached(priority: .userInitiated) {
-                    plan.temporalSamples > 1
-                        ? ReferenceRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
-                                                   temporal: d.temporal, sumfilt: d.sumfilt, params: params)
-                        : ReferenceRenderer.render(flame: d.blendAt(d.blend), params: params)
-                }.value
+                cache.removeAll()
+                gf = segEnd
+            case .transition:
+                // Transition segment: never repeated (a morph isn't seamless).
+                let segLen = plan.transitionFramesPerSegment
+                let segEnd = min(gf + segLen, range.upperBound)
+                for f in gf..<segEnd {
+                    if cancelled || Task.isCancelled { throw ExportError.cancelled }
+                    let fd = plan.descriptor(for: f)
+                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
+                                                    budget: budget, useMetal: useMetal)
+                    renderCallCount += 1
+                    rendered += 1
+                    try await encoder.append(img, atFrame: outputIndex)
+                    outputIndex += 1
+                    appendedFrameCount += 1
+                    let elapsed = ProcessInfo.processInfo.systemUptime - start
+                    yield(ExportProgress(phase: .rendering, currentFrame: rendered,
+                                         totalFrames: plan.totalFrames, elapsed: elapsed,
+                                         renderFPS: elapsed > 0 ? Double(rendered) / elapsed : 0))
+                }
+                gf = segEnd
             }
-            // PTS is LOCAL to this encoder's session (session always starts at
-            // .zero). For `runJob` range.lowerBound == 0 so this is identical to
-            // the prior inline `atFrame: gf`. For a long-form chunk the local
-            // index resets per chunk → each chunk is an independent N-frame
-            // stream; the concat shifts each to its cumulative offset. Passing
-            // the GLOBAL index here would leave a `lowerBound`-frame black gap
-            // at the front of every chunk's stream.
-            try await encoder.append(img, atFrame: gf - range.lowerBound)
-            let elapsed = ProcessInfo.processInfo.systemUptime - start
-            yield(ExportProgress(phase: .rendering, currentFrame: gf + 1, totalFrames: plan.totalFrames,
-                                 elapsed: elapsed, renderFPS: elapsed > 0 ? Double(gf + 1) / elapsed : 0))
+        }
+    }
+
+    /// The 3-branch render dispatch (off-main Metal / MainActor Metal / CPU),
+    /// factored out of `renderFrames` so the repeat=1 and repeat>1 paths share
+    /// one identical render codepath. Field names mirror the original inline
+    /// block verbatim (`d.blend`/`d.blendAt`/`d.temporal`/`d.sumfilt`; single-vs-
+    /// temporal via `plan.temporalSamples > 1`). The SAME `budget` is forwarded.
+    /// Extraction is operation-identical (same calls, same order) → byte-identical
+    /// to the prior inline form (pinned by the animate↔export byte-identity tests).
+    private func renderImage(
+        descriptor d: FrameDescriptor,
+        plan: FramePlan,
+        params: RenderParams,
+        budget: MetalRenderer.ThreadSeedBudget?,
+        useMetal: Bool
+    ) async throws -> RGBA8Image {
+        if useMetal && useOffMainMetal {
+            // GUI export path (M6-G.2): render off-main via
+            // `renderOffMain`/`renderTemporalOffMain` inside a `Task.detached`,
+            // so the MainActor is never blocked (no UI freeze). nil ⇒ Metal
+            // unavailable / render failed ⇒ `.metalUnavailable`.
+            let maybeImg: RGBA8Image? = await Task.detached(priority: .userInitiated) {
+                plan.temporalSamples > 1
+                    ? MetalRenderer.renderTemporalOffMain(
+                        blendAt: d.blendAt, centerTime: d.blend,
+                        temporal: d.temporal, sumfilt: d.sumfilt,
+                        params: params, seedBudget: budget)
+                    : MetalRenderer.renderOffMain(
+                        flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+            }.value
+            guard let offMainImg = maybeImg else { throw ExportError.metalUnavailable }
+            return offMainImg
+        } else if useMetal {
+            return await MainActor.run {
+                autoreleasepool {
+                    plan.temporalSamples > 1
+                        ? MetalRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                               temporal: d.temporal, sumfilt: d.sumfilt, params: params, seedBudget: budget)
+                        : MetalRenderer.render(flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+                }
+            }
+        } else {
+            return await Task.detached(priority: .userInitiated) {
+                plan.temporalSamples > 1
+                    ? ReferenceRenderer.render(blendAt: d.blendAt, centerTime: d.blend,
+                                               temporal: d.temporal, sumfilt: d.sumfilt, params: params)
+                    : ReferenceRenderer.render(flame: d.blendAt(d.blend), params: params)
+            }.value
         }
     }
 
@@ -253,6 +369,8 @@ public actor ExportCoordinator: ExportCoordinating {
         let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
                                   oversample: os, samplesPerPixel: spp)
         let useMetal = (backend == .metal)
+        // Loop-repeat memory guard (v0.5.0) — same gate as single export.
+        try Self.checkLoopRepeatMemory(job: job, width: max(1, res.width), height: max(1, res.height))
         // Disk precheck (D13) — same estimate as single export.
         try Self.diskPrecheck(job: job)
         let selector = makeSelector(job.selector)
@@ -303,7 +421,8 @@ public actor ExportCoordinator: ExportCoordinating {
             try encoder.start()
             do {
                 try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
-                                       range: frameStart..<frameEnd, into: encoder, yield: yield)
+                                       range: frameStart..<frameEnd, loopRepeatCount: job.loopRepeatCount,
+                                       into: encoder, yield: yield)
                 try await encoder.finish()
             } catch {
                 encoder.cancel(); try? FileManager.default.removeItem(at: tempURL); throw error
@@ -390,7 +509,8 @@ public actor ExportCoordinator: ExportCoordinating {
                 : ExportJob(settings: job.settings, flames: renderable, framesPerSegment: job.framesPerSegment,
                             transitionFramesPerSegment: job.transitionFramesPerSegment,
                             segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
-                            loopCycles: job.loopCycles, stagger: job.stagger, out: job.out)
+                            loopCycles: job.loopCycles, stagger: job.stagger, out: job.out,
+                            loopRepeatCount: job.loopRepeatCount)
 
             let longForm = job.settings.segmentFrameBudget > 0
             // Same-actor synchronous call: `run`/`runLongForm` return the stream
@@ -438,6 +558,30 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
+    /// Loop-repeat memory guard (v0.5.0). When `loopRepeatCount > 1`, the
+    /// coordinator caches one loop segment's frames in memory
+    /// (`framesPerSegment × W × H × 4` bytes) before replaying them. This refuses
+    /// the job up front if that cache would exceed the safe threshold: ~50% of
+    /// physical RAM, floored at 2 GB (tiny machines) and ceiling ~12 GB (huge
+    /// machines, so the guard is machine-independent for a given cache size).
+    /// No-op when `loopRepeatCount == 1` (no cache is built). Checked BEFORE
+    /// `diskPrecheck` and encoder creation → no partial file on refusal.
+    private static func checkLoopRepeatMemory(job: ExportJob, width: Int, height: Int) throws {
+        guard job.loopRepeatCount > 1 else { return }
+        let frames = Int64(job.framesPerSegment)
+        let cacheBytes = frames * Int64(width) * Int64(height) * 4
+        let phys = Int64(ProcessInfo.processInfo.physicalMemory)
+        // floor 2 GB, ceiling ~12 GB; target 50% of physical RAM.
+        let floor: Int64 = 2_000_000_000
+        let ceiling: Int64 = 12_000_000_000
+        let threshold = min(max(phys / 2, floor), ceiling)
+        if cacheBytes > threshold {
+            throw ExportError.loopRepeatMemoryExceeded(
+                neededMB: Int(cacheBytes / 1_000_000),
+                availableMB: Int(threshold / 1_000_000))
+        }
+    }
+
     private static func diskPrecheck(job: ExportJob) throws {
         // Estimate per spec D13: ceil(bitrate * durationSeconds / 8 * 1.25) +
         // 25% headroom. bitrate is bits/s; /8 -> bytes/s; *duration -> total
@@ -445,10 +589,13 @@ public actor ExportCoordinator: ExportCoordinating {
         // auto-bitrate table mirrors VideoEncoder.autoBitrate at the chosen
         // codec/res/fps so the estimate tracks the encoder's actual target.
         // Total frames sums per-kind (loops use framesPerSegment, transitions
-        // use transitionFramesPerSegment) — matches `Schedule.totalFrames`.
+        // use transitionFramesPerSegment) — matches `Schedule.totalFrames`,
+        // scaled by `loopRepeatCount` for loops (v0.5.0: a repeated loop emits
+        // `loopRepeatCount`× its frames to disk).
         let loops = (job.segmentCount + 1) / 2
         let trans = job.segmentCount / 2
-        let totalFrames = loops * job.framesPerSegment + trans * job.transitionFramesPerSegment
+        let totalFrames = loops * job.framesPerSegment * job.loopRepeatCount
+            + trans * job.transitionFramesPerSegment
         let fps = max(1, job.settings.fps)
         let durationSeconds = Double(totalFrames) / Double(fps)
         let mbps: Int

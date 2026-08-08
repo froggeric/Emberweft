@@ -252,7 +252,7 @@ public final class VideoEncoder: @unchecked Sendable {
     }
 }
 
-public enum ExportError: Error, Sendable {
+public enum ExportError: Error, Equatable, Sendable {
     case cancelled
     case encodeFailed
     case metalUnavailable
@@ -262,4 +262,10 @@ public enum ExportError: Error, Sendable {
     /// in `.mp4`. Thrown by `VideoEncoder.start()` (and surfaced by the CLI/GUI)
     /// so the user picks a `.mov` destination instead.
     case proResRequiresMOV
+    /// Loop render-once-repeat memory guard (v0.5.0). The per-loop cache
+    /// (`framesPerSegment × W × H × 4` bytes) would exceed the safe threshold
+    /// (~50% of physical RAM, floored 2 GB, ceiling ~12 GB). `neededMB` is the
+    /// estimated cache; `availableMB` is the threshold. Checked BEFORE any
+    /// rendering/encoding starts, so no partial file is left.
+    case loopRepeatMemoryExceeded(neededMB: Int, availableMB: Int)
 }

@@ -101,20 +101,29 @@ public final class ExportManager {
     /// 1 ⇒ genome default (resolved, motion blur); see `ExportSettings.resolve`.
     public var temporalSamples: Int = 1
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
-    /// Default 16 s — the calming band's midpoint (12–20 s): long enough to read
-    /// the structure, short of the ~30 s vigilance-decrement floor, and above ES
-    /// "standard" (~11 s @ 30 fps). Tunable via the export sheet stepper (0.1–120 s).
-    public var loopDurationSeconds: Double = 16.0
+    /// Default 15 s — the owner's optimal loop render length. Combined with
+    /// `loopRepeatCount == 2`, a 15 s loop renders once (15 s of render cost)
+    /// and outputs twice = 30 s perceived, halving the per-second render cost
+    /// while staying seamless (`R(360°)=R(0°)`). Above ES "standard" (~11 s @
+    /// 30 fps) and short of the ~30 s vigilance-decrement floor. Tunable via
+    /// the export sheet stepper (0.1–120 s).
+    public var loopDurationSeconds: Double = 15.0
     /// Transition ("edge") duration in seconds ⇒
     /// `transitionFramesPerSegment = round(transitionDurationSeconds * fps)`.
-    /// Default 5 s — the ES gen-248 edge mode (160 frames ≈ 5.3 s @ 30 fps; gen-248
-    /// edges are 160/320/900, no 128). This is the key anti-jarring lever: a
-    /// transition spins both endpoints a full 360°, so its rotation velocity is
-    /// 360°/transitionDuration and the loop→transition boundary is a velocity jump
-    /// of `loopDuration/transitionDuration` (16/5 ≈ 3.2×, vs 6.7× at a 3 s edge).
-    /// Longer = gentler but more screen time on the morph; 5 s balances both.
-    /// Tunable via the export sheet stepper.
-    public var transitionDurationSeconds: Double = 5.0
+    /// Default 12 s — the owner's optimal edge length. A transition spins both
+    /// endpoints a full 360°, so its rotation velocity is
+    /// 360°/transitionDuration and the loop→transition boundary is a velocity
+    /// jump of `loopDuration/transitionDuration`. At 15 s loop / 12 s edge the
+    /// ratio is ~1.25× (gentle); longer edges trade screen time on the morph
+    /// for a smoother boundary. Tunable via the export sheet stepper.
+    public var transitionDurationSeconds: Double = 12.0
+    /// Loop render-once-repeat (v0.5.0). Default 2 — the owner's "15 s render +
+    /// repeat×2 = 30 s perceived loop" optimal. Each loop segment renders once
+    /// and outputs `loopRepeatCount`× (seamless); transitions never repeat. The
+    /// coordinator refuses a repeat>1 job whose per-loop cache would exceed the
+    /// safe RAM threshold (`ExportError.loopRepeatMemoryExceeded`); the sheet
+    /// surfaces the estimate. 1 = no-op (render every output frame).
+    public var loopRepeatCount: Int = 2
     public var bitrate: ExportSettings.Bitrate = .auto
 
     // MARK: - In-flight state (private)
@@ -201,7 +210,7 @@ public final class ExportManager {
             settings: settings, flames: [flame], framesPerSegment: framesPerSegment,
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: 1, selector: .sequential, seed: seed,
-            loopCycles: 1, stagger: 0.0, out: out)
+            loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
         startExport(.runJob(job: job), label: displayName, backend: backend)
     }
 
@@ -232,7 +241,7 @@ public final class ExportManager {
             settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: segmentCount, selector: .sequential, seed: seed,
-            loopCycles: 1, stagger: 0.0, out: out)
+            loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
         startExport(.runJob(job: job), label: displayName, backend: backend)
     }
 
@@ -260,7 +269,7 @@ public final class ExportManager {
                 settings: settings, flames: [item.flame], framesPerSegment: framesPerSegment,
                 transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: 1, selector: .sequential, seed: seed,
-                loopCycles: 1, stagger: 0.0, out: out)
+                loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
             jobs.append(job)
         }
         startExport(.runBatch(jobs: jobs, baseDir: baseDir),
