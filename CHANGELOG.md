@@ -7,6 +7,59 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.0] — M6 GUI export (the video-export studio)
+
+The export feature is complete: a full GUI export studio plus mastering-quality
+encoding and a refined, calmer animation pacing. The headless `emberweft
+export` CLI gains the same settings. Engine parity is unchanged (no renderer
+math changed; the export↔animate byte-identity pins hold).
+
+### Added
+- **GUI export studio** — an `ExportManager` (`@MainActor @Observable` VM in
+  `EmberweftUI`, held by `AppModel`) drives `ExportCoordinator` off-main (Metal
+  via a new byte-identical `renderTemporalOffMain`, so motion-blurred exports
+  never freeze the UI). Three sources: single genome, collection-as-sequence,
+  multi-select batch. `NSSavePanel`/`NSOpenPanel` destination; a non-blocking
+  progress banner in all window types (Cancel + Show-in-Finder); `ProcessInfo`
+  sleep prevention; and an ETA (EMA-smoothed, "estimating…" cold-start).
+- **ProRes 422 HQ mastering default** — intra-frame, so no smearing on busy
+  fractal content; visually lossless; `.mov` (guarded). H.264/HEVC tiers raised
+  (~5× bitrate, High/Main10 profile, 1-sec GOP) for the `.mp4` alternatives.
+- **Off-main temporal Metal** — `renderTemporalOffMain` (the temporal twin of
+  `renderOffMain`), byte-identical to the `@MainActor` path; the coordinator's
+  `useOffMainMetal` flag (CLI path unchanged). Pinned by `OffMainTemporalParityTests`.
+- **Separate loop/transition durations** — `Schedule` carries
+  `transitionFramesPerSegment` (O(1) pair-math `frameToBlend`); loops and edges
+  can differ. Defaults 15 s loop / 12 s edge (the ES gen-248 edge mode +
+  motion-perception research).
+- **Loop render-once-repeat** — each loop renders once and outputs N× (default
+  2 → 30 s perceived at 15 s render cost; seamless); a RAM guard refuses
+  oversized caches (a disk-cache follow-up for 4K). Transitions never repeat.
+- **Transition rotation velocity-matched easing** — the transition's rotation
+  eases so its velocity matches the adjacent loops at the boundaries (no
+  boundary jerk), enabling short edges with smooth joins. The realtime preview
+  matches the export.
+- **Shared `ExportSettings.resolve(…)`** — pure + silent; CLI and GUI build
+  byte-identical jobs. The `ExportCoordinating` protocol seam (testability);
+  `ExportQualityChoice` (Genome default + Low/Med/High, oversample pinned 1).
+
+### Changed
+- **Animation is no longer flam3-parity-bound** (owner decision): Emberweft may
+  improve on flam3's motion (the rotation easing, the pacing). The vs-flam3
+  transition parity pin is `XCTSkip`'d (loop parity still in force). Renderer
+  faithfulness, determinism (rule #2), and Metal↔CPU parity are unchanged.
+- CLI `export` adds `--codec prores-422-hq`, `--loop-repeat`, `--transition-frames`.
+
+### Fixed
+- Sequence export no longer truncates the timeline (`segmentCount` was
+  `flames.count`; now `2N−1` to cover every genome's loop + the transitions).
+- Batch output now carries the container extension (`<stem>.mp4`).
+- Silent `isRenderable` skips are surfaced in the banner.
+
+### Deferred to M6.1
+- **Pause/resume** (frame-count checkpointing + chunked-encode + concat) and
+  **temporal smoothing** (across-frame histogram EMA for low-spp quality).
+
 ## [v0.4.0] — M6 export pipeline (video export)
 
 The `emberweft export` command: render flame animations directly to MP4/MOV
