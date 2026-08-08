@@ -767,4 +767,112 @@ final class ExportManagerTests: XCTestCase {
         let repeats = await fake.runLoopRepeatCounts
         XCTAssertEqual(repeats, [1], "repeat=1 flows as 1 (no cache/replay)")
     }
+
+    // MARK: - ETA / EMA (v0.5.0 — export progress banner ETA)
+
+    /// Helper: install a scripted `nowProvider` that advances a fixed `dt` seconds
+    /// per call. The EMA is a pure function of these (scripted) instants, so the
+    /// ETA is deterministic (rule #2). Returns the base instant for reference.
+    @discardableResult
+    private func installScriptedClock(_ vm: ExportManager, dt: Double) -> ContinuousClock.Instant {
+        let base = ContinuousClock.now
+        var step = 0
+        vm.nowProvider = {
+            let t = base.advanced(by: .seconds(Double(step) * dt))
+            step += 1
+            return t
+        }
+        return base
+    }
+
+    /// `etaSeconds` is nil during cold-start (fewer than `coldStartFloor`
+    /// rendering snapshots), so the banner shows "estimating…" until the EMA has
+    /// sampled enough frames.
+    func testETAIsNilDuringColdStart() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        installScriptedClock(vm, dt: 0.5)
+        // 7 rendering snapshots < coldStartFloor (8) → etaSeconds stays nil.
+        let snaps = (0..<7).map { i in
+            ExportProgress(phase: .rendering, currentFrame: i, totalFrames: 100,
+                           elapsed: Double(i) * 0.5, renderFPS: 2.0)
+        }
+        installFake(vm, script: .yieldProgress(snaps))
+
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(), seed: 1)
+        await vm.awaitCompletion()
+
+        XCTAssertNil(vm.snapshot.etaSeconds,
+            "etaSeconds must be nil during cold-start (< 8 rendering snapshots)")
+    }
+
+    /// After warm-up (≥ coldStartFloor rendering snapshots at a stable per-frame
+    /// dt) the EMA converges to the true per-frame duration, so
+    /// `etaSeconds ≈ (totalFrames − currentFrame) × dt`.
+    func testETAConvergesAfterWarmup() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let frameDt = 0.5
+        let totalFrames = 100
+        let snapCount = 30   // well past coldStartFloor (8) → EMA converges to frameDt
+        installScriptedClock(vm, dt: frameDt)
+        let snaps = (0..<snapCount).map { i in
+            ExportProgress(phase: .rendering, currentFrame: i + 1, totalFrames: totalFrames,
+                           elapsed: Double(i + 1) * frameDt, renderFPS: 1.0 / frameDt)
+        }
+        installFake(vm, script: .yieldProgress(snaps))
+
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(), seed: 1)
+        await vm.awaitCompletion()
+
+        guard let eta = vm.snapshot.etaSeconds else {
+            return XCTFail("etaSeconds must be non-nil after warm-up (≥ 8 frames)")
+        }
+        let remaining = totalFrames - snapCount
+        let expected = Double(remaining) * frameDt
+        // After 30 frames (1 cold dt=0 + 29 real), EMA is within ~0.2% of frameDt;
+        // allow 5% for floating-point safety.
+        XCTAssertEqual(eta, expected, accuracy: max(expected * 0.05, 0.5),
+            "ETA must converge to remaining × frameDt (\(expected) s), got \(eta) s")
+    }
+
+    /// On a non-rendering phase (`.concatenating`/`.encoding`/`.finalizing`) the
+    /// VM freezes `etaSeconds` at its last computed value (carries it over), so
+    /// the banner can show a stable ETA instead of "estimating…" mid-finalize.
+    /// This also proves the VM does NOT recompute against the non-rendering
+    /// event's frame counts (which would give a different value).
+    func testETAFreezesOnNonRenderingPhase() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let frameDt = 0.5
+        let totalFrames = 100
+        let renderCount = 30
+        installScriptedClock(vm, dt: frameDt)
+        // 30 rendering frames warm the EMA, then a .concatenating event with
+        // DIFFERENT frame counts (currentFrame == totalFrames ⇒ remaining 0).
+        // If the VM recomputed, eta would be ~0; if it froze, eta ≈ the last
+        // rendering ETA (~remaining × frameDt).
+        var events: [ExportProgress] = (0..<renderCount).map { i in
+            ExportProgress(phase: .rendering, currentFrame: i + 1, totalFrames: totalFrames,
+                           elapsed: Double(i + 1) * frameDt, renderFPS: 1.0 / frameDt)
+        }
+        events.append(ExportProgress(phase: .concatenating, currentFrame: 50, totalFrames: 50,
+                                     elapsed: Double(renderCount) * frameDt, renderFPS: 0))
+        installFake(vm, script: .yieldProgress(events))
+
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(), seed: 1)
+        await vm.awaitCompletion()
+
+        XCTAssertEqual(vm.snapshot.phase, .concatenating,
+            "final snapshot must be the .concatenating event")
+        guard let eta = vm.snapshot.etaSeconds else {
+            return XCTFail("etaSeconds must be frozen (non-nil) on a non-rendering phase, not reset to nil")
+        }
+        let remaining = totalFrames - renderCount
+        let expectedFrozen = Double(remaining) * frameDt   // the last rendering ETA
+        XCTAssertGreaterThan(eta, expectedFrozen * 0.5,
+            "frozen ETA (\(eta)) must reflect the last rendering ETA (~\(expectedFrozen)), not the concatenating frame counts (which would recompute to ~0)")
+        XCTAssertEqual(eta, expectedFrozen, accuracy: max(expectedFrozen * 0.05, 0.5),
+            "frozen ETA must equal the last rendering ETA (~\(expectedFrozen) s), got \(eta) s")
+    }
 }

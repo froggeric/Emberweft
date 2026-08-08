@@ -83,7 +83,11 @@ struct ExportProgressSurface: View {
         }
     }
 
-    /// One compact status line: phase — frame / total (fps, elapsed) [batch job].
+    /// One compact status line: phase — frame / total (fps, elapsed, ETA) [batch
+    /// job]. The ETA token is appended after elapsed: "estimating…" during
+    /// cold-start (fewer than `coldStartFloor` rendering samples), "~Xh Ym
+    /// remaining" once the EMA converges, or "Finalizing…" on non-rendering
+    /// phases (encoding/concatenating/finalizing — the render ETA is frozen).
     /// `sourceLabel` (display name / count) is shown on its own line when present
     /// and there's batch context (otherwise the phase line already fits).
     @ViewBuilder
@@ -93,6 +97,7 @@ struct ExportProgressSurface: View {
             Text("frame \(snap.currentFrame) / \(snap.totalFrames)").monospacedDigit()
             Text(String(format: "%.1f fps", snap.renderFPS)).monospacedDigit()
             Text("\(elapsedLabel(snap.elapsed))")
+            Text(etaToken(snap))
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -176,5 +181,28 @@ struct ExportProgressSurface: View {
         if s < 60 { return "\(s) s" }
         let m = s / 60, r = s % 60
         return "\(m) m \(r) s"
+    }
+
+    /// The ETA token appended after elapsed on the status line (v0.5.0). On
+    /// non-rendering phases the render ETA is frozen and the token reads
+    /// "Finalizing…" (catch-all for encoding/concatenating/finalizing). During
+    /// rendering: "estimating…" until the EMA warms past `coldStartFloor`, then a
+    /// smoothed "~Xh Ym remaining" derived from the per-frame EMA.
+    private func etaToken(_ snap: ExportProgressSnapshot) -> String {
+        if snap.phase != .rendering { return "Finalizing…" }
+        guard let eta = snap.etaSeconds else { return "estimating…" }
+        return etaLabel(eta)
+    }
+
+    /// ETA as whole seconds / minutes / hours (mirrors `elapsedLabel`'s whole-
+    /// second style, extended to hours for long exports). The `~` prefix signals
+    /// it's an estimate, not an exact countdown.
+    private func etaLabel(_ eta: TimeInterval) -> String {
+        let total = max(0, Int(eta.rounded()))
+        if total < 60 { return "~\(total) s remaining" }
+        let m = total / 60, r = total % 60
+        if m < 60 { return "~\(m) m \(r) s remaining" }
+        let h = m / 60, mr = m % 60
+        return "~\(h) h \(mr) m remaining"
     }
 }

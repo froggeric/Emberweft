@@ -19,6 +19,14 @@ public enum ExportState: Sendable, Equatable {
 /// type; `fraction` is computed from `currentFrame`/`totalFrames` (deterministic,
 /// rule #2 — no float sum over a hashed collection). `jobIndex`/`totalJobs`
 /// carry batch context (`0`/`1` for single/sequence).
+///
+/// `etaSeconds` is the smoothed (EMA) estimated time-remaining for the current
+/// job (v0.5.0). Nil ⇒ cold-start ("estimating…"): fewer than `coldStartFloor`
+/// rendering snapshots have been sampled. Frozen (carried over) on non-rendering
+/// phases (`.encoding`/`.concatenating`/`.finalizing`) so the banner shows a
+/// stable ETA instead of snapping back to "estimating…" mid-finalize. The static
+/// `snapshot(from:)` mapper produces `etaSeconds == nil` (pure); the VM's EMA
+/// overwrites it per rendering sample. Diagnostic only — does not affect pixels.
 public struct ExportProgressSnapshot: Sendable, Equatable {
     public var phase: ExportProgress.Phase
     public var currentFrame: Int
@@ -27,13 +35,15 @@ public struct ExportProgressSnapshot: Sendable, Equatable {
     public var renderFPS: Double
     public var jobIndex: Int
     public var totalJobs: Int
+    public var etaSeconds: TimeInterval?
 
     public var fraction: Double {
         totalFrames > 0 ? Double(currentFrame) / Double(totalFrames) : 0
     }
 
     public init(phase: ExportProgress.Phase, currentFrame: Int, totalFrames: Int,
-                elapsed: TimeInterval, renderFPS: Double, jobIndex: Int, totalJobs: Int) {
+                elapsed: TimeInterval, renderFPS: Double, jobIndex: Int, totalJobs: Int,
+                etaSeconds: TimeInterval? = nil) {
         self.phase = phase
         self.currentFrame = currentFrame
         self.totalFrames = totalFrames
@@ -41,13 +51,14 @@ public struct ExportProgressSnapshot: Sendable, Equatable {
         self.renderFPS = renderFPS
         self.jobIndex = jobIndex
         self.totalJobs = totalJobs
+        self.etaSeconds = etaSeconds
     }
 
     /// Identity element (no frames yet). `totalJobs == 1` so `fraction` is 0
-    /// (not divide-by-zero).
+    /// (not divide-by-zero); `etaSeconds == nil` (cold-start).
     public static let empty = ExportProgressSnapshot(
         phase: .rendering, currentFrame: 0, totalFrames: 0, elapsed: 0,
-        renderFPS: 0, jobIndex: 0, totalJobs: 1)
+        renderFPS: 0, jobIndex: 0, totalJobs: 1, etaSeconds: nil)
 }
 
 /// User-facing backend picker for the sheet. `.auto` probes `MetalRenderer.isAvailable`
@@ -132,7 +143,25 @@ public final class ExportManager {
     private var consumeTask: Task<Void, Never>?
     private var activityToken: NSObjectProtocol?   // ProcessInfo sleep token (G10)
 
+    // EMA of per-frame wall-clock duration for the ETA estimate (v0.5.0). Lives
+    // in the VM (NOT the coordinator): the coordinator yields raw phase/frame
+    // events; only the VM observes wall-clock cadence and computes a smoothed
+    // time-remaining. Reset in `startExport` and on terminal transitions.
+    // Deterministic (rule #2): the EMA is a pure function of the (scripted/real)
+    // snapshot timestamps via `nowProvider` — no hashed-collection float sums.
+    private var frameSecondsEMA: Double = 0
+    private var lastSnapshotAt: ContinuousClock.Instant?
+    private var renderedSinceStart: Int = 0
+    private var lastComputedETA: TimeInterval? = nil   // carried over on non-rendering phases
+    private let emaAlpha: Double = 0.2          // ~last 8–9 frames dominant (1/alpha ≈ 5)
+    private let coldStartFloor: Int = 8         // < this many samples ⇒ "estimating…"
+
     // MARK: - Test seams
+
+    /// Wall-clock source for the ETA EMA (v0.5.0). Defaults to
+    /// `ContinuousClock.now`; tests install a scripted clock so the EMA is a
+    /// deterministic pure function of the scripted instants (rule #2).
+    internal var nowProvider: () -> ContinuousClock.Instant = { ContinuousClock.now }
 
     /// Factory for the coordinator. Production constructs
     /// `ExportCoordinator(backend:useOffMainMetal:)` (GUI off-main path). Tests
@@ -398,6 +427,7 @@ public final class ExportManager {
     private func startExport(_ kind: ExportKind, label: String, backend: ExportCoordinator.Backend) {
         sourceLabel = label
         snapshot = .empty
+        resetETAState()
         let coord = coordinatorFactory(backend, true)
         coordinator = coord
         state = .running
@@ -415,14 +445,14 @@ public final class ExportManager {
                     let stream = await coord.run(job)
                     for try await event in stream {
                         if Task.isCancelled { break }
-                        self.snapshot = Self.snapshot(from: .single(event))
+                        self.applyETA(to: .single(event))
                     }
                     completionURL = job.out
                 case .runBatch(let jobs, let baseDir):
                     let stream = await coord.runBatch(jobs, failFast: false)
                     for try await event in stream {
                         if Task.isCancelled { break }
-                        self.snapshot = Self.snapshot(from: .batch(event))
+                        self.applyETA(to: .batch(event))
                     }
                     completionURL = baseDir
                 }
@@ -442,7 +472,64 @@ public final class ExportManager {
             self.releaseActivity()
             self.coordinator = nil
             self.consumeTask = nil   // break self → consumeTask → task → self
+            self.resetETAState()     // clear EMA so a later run starts cold
         }
+    }
+
+    // MARK: - ETA EMA (v0.5.0)
+
+    /// Zero the EMA state (called at run start and on terminal transition).
+    private func resetETAState() {
+        frameSecondsEMA = 0
+        lastSnapshotAt = nil
+        renderedSinceStart = 0
+        lastComputedETA = nil
+    }
+
+    /// Normalize the event to a snapshot, then overlay the ETA estimate. For
+    /// `.rendering` snapshots, advance the EMA of per-frame wall-clock duration
+    /// and compute `etaSeconds = remaining × EMA` once past the cold-start floor.
+    /// For non-rendering phases, freeze `etaSeconds` at its last computed value
+    /// (the banner shows "Finalizing…" regardless). The static `snapshot(from:)`
+    /// mapper stays pure (produces `etaSeconds == nil`); this method overwrites.
+    private func applyETA(to event: ProgressEvent) {
+        var snap = Self.snapshot(from: event)
+        if snap.phase == .rendering {
+            let now = nowProvider()
+            // First sample has no delta (cold start) → dt = 0, so the EMA ramps
+            // from 0 over the next several frames (the cold-start floor absorbs
+            // this transient before any ETA is shown).
+            let dtSeconds = lastSnapshotAt.map { Self.seconds(from: now - $0) } ?? 0
+            // Clamp a single stalled frame so one outlier can't blow up the ETA.
+            // Only after the EMA has a real value (don't clamp during cold start,
+            // where frameSecondsEMA is still 0).
+            let effectiveDt = frameSecondsEMA > 0
+                ? min(dtSeconds, 3 * frameSecondsEMA)
+                : dtSeconds
+            frameSecondsEMA = emaAlpha * effectiveDt + (1 - emaAlpha) * frameSecondsEMA
+            renderedSinceStart += 1
+            lastSnapshotAt = now
+            if renderedSinceStart >= coldStartFloor {
+                let remaining = max(0, snap.totalFrames - snap.currentFrame)
+                let eta = Double(remaining) * frameSecondsEMA
+                snap.etaSeconds = eta
+                lastComputedETA = eta
+            } else {
+                snap.etaSeconds = nil   // cold start — "estimating…"
+            }
+        } else {
+            // Non-rendering phase: freeze etaSeconds at the last computed value
+            // (carried over), so the banner doesn't snap to "estimating…".
+            snap.etaSeconds = lastComputedETA
+        }
+        self.snapshot = snap
+    }
+
+    /// Duration → seconds (Double). `Duration.components` splits into
+    /// (seconds, attoseconds); recombine for a single Double.
+    private static func seconds(from duration: Duration) -> Double {
+        let (s, attos) = duration.components
+        return Double(s) + Double(attos) / 1e18
     }
 
     private func acquireActivity() {
