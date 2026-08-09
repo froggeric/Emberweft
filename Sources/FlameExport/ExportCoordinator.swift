@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation      // AVAssetWriter/AVMutableComposition/AVAssetExportSession
+import CryptoKit         // SHA-256 source verification on resume (spec §2.3/D6)
 import FlameKit
 import FlameReference
 import FlameRenderer
@@ -603,6 +604,46 @@ public actor ExportCoordinator: ExportCoordinating {
         // P10: a leftover `paused` from a prior run must not poison this one.
         paused = false
 
+        // Task 5: resume branch. The checkpoint's recipe is AUTHORITATIVE (D11):
+        // on resume, rebuild the ExportJob from the checkpoint + SHA-256-verified
+        // re-parsed flames, then drive the context/plan/budget from the rebuilt
+        // job. A schema mismatch (≠1) or the fresh-run path falls through using
+        // the caller's `job`. `var job` shadows the param so all downstream
+        // `job.` refs (chunkURL/partialURL/settings) track the rebuilt job.
+        var job = job
+        var decodedCP: ExportCheckpoint? = nil
+        if let checkpointURL = resumeFrom {
+            // Read + decode (corrupt/unreadable ⇒ `.checkpointUnreadable`).
+            let cpData: Data
+            do {
+                cpData = try Data(contentsOf: checkpointURL)
+            } catch {
+                throw ExportError.checkpointUnreadable
+            }
+            let decoded: ExportCheckpoint
+            do {
+                decoded = try JSONDecoder().decode(ExportCheckpoint.self, from: cpData)
+            } catch {
+                throw ExportError.checkpointUnreadable
+            }
+            // Schema gate (D12): ≠ 1 ⇒ ignore + fresh start (never crash). The
+            // incompatible checkpoint is overwritten by the fresh run below.
+            if decoded.schemaVersion == 1 {
+                // Verify each Source (re-read + SHA-256 + compare + re-parse).
+                // Hash mismatch or a vanishing flame index ⇒ `.checkpointSourceChanged`.
+                let flames = try Self.reparseSources(decoded.sources)
+                job = ExportJob(
+                    settings: decoded.settings, flames: flames,
+                    framesPerSegment: decoded.framesPerSegment,
+                    transitionFramesPerSegment: decoded.transitionFramesPerSegment,
+                    segmentCount: decoded.segmentCount, selector: decoded.selector,
+                    seed: decoded.seed, loopCycles: decoded.loopCycles,
+                    stagger: decoded.stagger, out: decoded.out,
+                    loopRepeatCount: decoded.loopRepeatCount)
+                decodedCP = decoded
+            }
+        }
+
         let ctx = try buildRenderContext(for: job)
         let plan = ctx.plan
         let params = ctx.params
@@ -610,14 +651,26 @@ public actor ExportCoordinator: ExportCoordinating {
         let useMetal = ctx.useMetal
         let total = plan.totalFrames
 
-        // Fresh-run checkpoint (resume read-branch is Task 5). Sources are built
-        // from the job's flames via the serialized-text fallback (the coordinator
-        // has no source file URLs; the VM threads those in Task 6). On resume,
-        // Task 5 re-parses `serializedText` to reconstruct each `Flame`.
+        // Finalize the checkpoint. Fresh-run builds one from `job` + the just-
+        // computed total. Resume reuses the decoded one, dropping any completed
+        // chunk index whose file is no longer on disk (it re-renders).
         let cp: ExportCheckpoint
-        if let _ = resumeFrom {
-            // Task 5 implements the read + verify + skip-completed branch.
-            preconditionFailure("resume — Task 5")
+        if let decoded = decodedCP {
+            let container = decoded.settings.container
+            let completed = decoded.completedChunkIndexes.filter {
+                FileManager.default.fileExists(
+                    atPath: ExportCheckpoint.chunkURL(out: decoded.out, index: $0,
+                                                      container: container).path)
+            }
+            cp = ExportCheckpoint(
+                settings: decoded.settings, framesPerSegment: decoded.framesPerSegment,
+                transitionFramesPerSegment: decoded.transitionFramesPerSegment,
+                segmentCount: decoded.segmentCount, selector: decoded.selector,
+                seed: decoded.seed, loopCycles: decoded.loopCycles, stagger: decoded.stagger,
+                out: decoded.out, loopRepeatCount: decoded.loopRepeatCount,
+                checkpointIntervalFrames: decoded.checkpointIntervalFrames,
+                totalGlobalFrames: decoded.totalGlobalFrames,
+                completedChunkIndexes: completed, sources: decoded.sources)
         } else {
             cp = ExportCheckpoint(
                 settings: job.settings, framesPerSegment: job.framesPerSegment,
@@ -633,13 +686,17 @@ public actor ExportCoordinator: ExportCoordinating {
         let container = job.settings.container
         let checkpointURL = ExportCheckpoint.checkpointURL(out: job.out)
 
-        // Seeding progress (fresh run starts at 0; Task 5 seeds the non-zero
-        // resume offset). One event so the bar starts at the true position.
+        // Seeding progress (D9): fresh starts at 0; resume seeds at
+        // `Σ completed-chunk frame counts` so the bar does NOT jump to 0. One
+        // event so the bar starts at the true position.
+        let safeInterval = max(1, cp.checkpointIntervalFrames)
         var globalRendered = 0
-        yield(ExportProgress(phase: .rendering, currentFrame: 0, totalFrames: total,
+        for i in completed {
+            globalRendered += min((i + 1) * safeInterval, total) - i * safeInterval
+        }
+        yield(ExportProgress(phase: .rendering, currentFrame: globalRendered, totalFrames: total,
                              elapsed: 0, renderFPS: 0))
 
-        let safeInterval = max(1, interval)
         for chunkIndex in 0..<chunkCount {
             let chunkURL = ExportCheckpoint.chunkURL(out: job.out, index: chunkIndex, container: container)
 
@@ -724,13 +781,57 @@ public actor ExportCoordinator: ExportCoordinating {
     /// Build checkpoint `Source`s for a fresh run from the job's flames. The
     /// coordinator has no source file URLs (the VM threads those in Task 6), so
     /// this uses the `serializedText` fallback (`Flam3Serializer.serialize`).
-    /// On resume, Task 5 re-parses `serializedText` to reconstruct each `Flame`.
+    /// Each source is a SINGLE-flame document ⇒ `flameIndex: 0` (the parse
+    /// result always has exactly 1 element; `job` flame ORDER is preserved by
+    /// array position, not by `flameIndex`).
     private static func freshSources(for job: ExportJob) -> [ExportCheckpoint.Source] {
         job.flames.enumerated().map { (i, flame) in
-            ExportCheckpoint.Source(fileURL: nil, flameIndex: i, sha256: nil,
+            ExportCheckpoint.Source(fileURL: nil, flameIndex: 0, sha256: nil,
                                     serializedText: Flam3Serializer.serialize([flame]),
                                     displayName: "flame \(i)")
         }
+    }
+
+    /// Task 5 resume (spec §2.3/D6): re-read + SHA-256-verify + re-parse each
+    /// checkpoint `Source`. A `fileURL` source re-reads the file bytes, compares
+    /// the hex SHA-256 to the stored hash (mismatch or unreadable file ⇒
+    /// `.checkpointSourceChanged(index:)`), then selects `flameIndex` from the
+    /// parse result. A URL-less source falls back to `serializedText`. This is
+    /// the determinism guarantee (rule #2): same source bytes (hash-gated) →
+    /// same parse → identical `Flame` → pixel-identical resume frames.
+    private static func reparseSources(_ sources: [ExportCheckpoint.Source]) throws -> [Flame] {
+        var flames: [Flame] = []
+        flames.reserveCapacity(sources.count)
+        for (idx, source) in sources.enumerated() {
+            let flame: Flame
+            if let fileURL = source.fileURL {
+                guard let bytes = try? Data(contentsOf: fileURL) else {
+                    throw ExportError.checkpointSourceChanged(index: idx)
+                }
+                if let stored = source.sha256 {
+                    let hash = SHA256.hash(data: bytes)
+                        .map { String(format: "%02x", Int($0)) }.joined()
+                    if hash != stored {
+                        throw ExportError.checkpointSourceChanged(index: idx)
+                    }
+                }
+                let parsed = try Flam3Parser.parse(bytes)
+                guard source.flameIndex < parsed.count else {
+                    throw ExportError.checkpointSourceChanged(index: idx)
+                }
+                flame = parsed[source.flameIndex]
+            } else if let text = source.serializedText {
+                let parsed = try Flam3Parser.parse(Data(text.utf8))
+                guard source.flameIndex < parsed.count else {
+                    throw ExportError.checkpointSourceChanged(index: idx)
+                }
+                flame = parsed[source.flameIndex]
+            } else {
+                throw ExportError.checkpointSourceChanged(index: idx)
+            }
+            flames.append(flame)
+        }
+        return flames
     }
 
     /// M6.1 (D4): delete the checkpoint + ALL chunk temps beside `out`. `static`
