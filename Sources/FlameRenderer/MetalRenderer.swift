@@ -857,6 +857,91 @@ public enum MetalRenderer {
         }
     }
 
+    // MARK: - Off-main DE+display (smoothed display)
+
+    /// Compose density-estimation (if `deRadius > 0`) then display on the passed
+    /// pre-DE histogram, on the MainActor — sourcing device/queue/PSOs from
+    /// `MetalRenderer`'s cached MainActor state. The CLI's MainActor branch (R2)
+    /// and the realtime path drive this. Thin orchestrator over the
+    /// `nonisolated` `DensityEstimationMetal.applyCore` +
+    /// `DisplayPipelineMetal.renderCore` (both byte-identical to the
+    /// `@MainActor apply`/`render` they were extracted from — a PSO is a pure
+    /// function of kernel+device). Mirrors the `renderFused`/`renderFusedCore`
+    /// split: this is the MainActor entry; `renderSmoothedDisplayOffMain` is the
+    /// background-queue twin.
+    @MainActor
+    static func renderSmoothedDisplay(
+        histogram: Histogram,
+        deRadius: Double, deMinimum: Double, deCurve: Double,
+        width: Int, height: Int, oversample: Int,
+        gamma: Double, gammaThreshold: Double, vibrancy: Double,
+        brightness: Double, sampleDensity: Double, pixelsPerUnit: Double,
+        highlightPower: Double, spatialFilterRadius: Double
+    ) throws -> RGBA8Image {
+        guard let (device, _) = deviceAndLibrary() else {
+            throw NSError(domain: "MetalRenderer", code: 20)
+        }
+        guard let queue = commandQueue else {
+            throw NSError(domain: "MetalRenderer", code: 21)
+        }
+        guard let psos = fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
+        }
+        let deHist = deRadius > 0
+            ? try DensityEstimationMetal.applyCore(histogram, radius: deRadius,
+                                                   minimum: deMinimum, curve: deCurve,
+                                                   device: device, queue: queue,
+                                                   densityPso: psos.density)
+            : histogram
+        return try DisplayPipelineMetal.renderCore(
+            histogram: deHist, width: width, height: height, oversample: oversample,
+            gamma: gamma, gammaThreshold: gammaThreshold, vibrancy: vibrancy,
+            brightness: brightness, sampleDensity: sampleDensity,
+            pixelsPerUnit: pixelsPerUnit, highlightPower: highlightPower,
+            spatialFilterRadius: spatialFilterRadius,
+            device: device, queue: queue, logPso: psos.log, displayPso: psos.display)
+    }
+
+    /// Off-main twin of `renderSmoothedDisplay`: composes DE (if `deRadius > 0`)
+    /// then display on `offMainQueue`, sourcing PSOs from `offMainCache`. Never
+    /// touches the MainActor → cannot freeze the UI. Used by the GUI export
+    /// smoothing display step (T8). Returns nil iff Metal is unavailable or the
+    /// render fails (callers fall back; never traps — matches `renderOffMain`).
+    /// Byte-identical to the MainActor `renderSmoothedDisplay` / the
+    /// `@MainActor apply`+`render` path: the GPU computation is
+    /// thread-independent (pinned by `OffMainDisplayParityTests`).
+    nonisolated
+    static func renderSmoothedDisplayOffMain(
+        histogram: Histogram,
+        deRadius: Double, deMinimum: Double, deCurve: Double,
+        width: Int, height: Int, oversample: Int,
+        gamma: Double, gammaThreshold: Double, vibrancy: Double,
+        brightness: Double, sampleDensity: Double, pixelsPerUnit: Double,
+        highlightPower: Double, spatialFilterRadius: Double
+    ) -> RGBA8Image? {
+        offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            do {
+                let deHist = deRadius > 0
+                    ? try DensityEstimationMetal.applyCore(histogram, radius: deRadius,
+                                                           minimum: deMinimum, curve: deCurve,
+                                                           device: device, queue: queue,
+                                                           densityPso: psos.density)
+                    : histogram
+                return try DisplayPipelineMetal.renderCore(
+                    histogram: deHist, width: width, height: height, oversample: oversample,
+                    gamma: gamma, gammaThreshold: gammaThreshold, vibrancy: vibrancy,
+                    brightness: brightness, sampleDensity: sampleDensity,
+                    pixelsPerUnit: pixelsPerUnit, highlightPower: highlightPower,
+                    spatialFilterRadius: spatialFilterRadius,
+                    device: device, queue: queue, logPso: psos.log, displayPso: psos.display)
+            } catch {
+                return nil
+            }
+        }
+    }
+
     // MARK: - Unfused reference path (per-stage, CPU histogram round-trips)
     //
     // Kept as the per-stage stage-by-stage reference for `FusedUnfusedParityTests`
