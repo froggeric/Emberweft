@@ -262,6 +262,22 @@ public enum ExportError: Error, Equatable, Sendable {
     /// in `.mp4`. Thrown by `VideoEncoder.start()` (and surfaced by the CLI/GUI)
     /// so the user picks a `.mov` destination instead.
     case proResRequiresMOV
+    /// M6.1 pause/resume. `runResumable` checks a pause flag between chunks; a
+    /// cooperative pause surfaces as this case (caught by the GUI/CLI layer, which
+    /// then re-enters `runResumable` to resume from the checkpoint).
+    case paused
+    /// The resume source set does not match the checkpoint's recorded sources
+    /// (spec §3.5: resume is locked to the SAME genome set the run started with,
+    /// by index). `index` is the offending source index. Determinism (rule #2):
+    /// a different genome set would render different frames.
+    case checkpointSourceChanged(index: Int)
+    /// The checkpoint JSON file exists but could not be decoded (corrupt /
+    /// truncated, e.g. a crash mid-write). The caller offers to discard + restart.
+    case checkpointUnreadable
+    /// The checkpoint decoded but its `schemaVersion` is newer than (or otherwise
+    /// unsupported by) this build. `version` is the schema we refused. A future
+    /// Emberweft that bumps the schema would emit this against an older binary.
+    case checkpointSchemaUnsupported(version: Int)
     /// Loop render-once-repeat memory guard (v0.5.0). The per-loop cache
     /// (`framesPerSegment × W × H × 4` bytes) would exceed the safe threshold
     /// (~50% of physical RAM, floored 2 GB, ceiling ~12 GB). `neededMB` is the
