@@ -80,7 +80,7 @@ enum ChaosGameMetal {
         let seedsBuf     = buf(threadSeeds)
 
         let binCount = params.gridWidth * params.gridHeight
-        let binBytes = binCount * MemoryLayout<AtomicBinHost>.stride
+        let binBytes = binCount * MemoryLayout<MetalHistogramDecode.AtomicBinHost>.stride
         let histBuf  = device.makeBuffer(length: binBytes, options: .storageModeShared)!
         memset(histBuf.contents(), 0, binBytes)
 
@@ -113,40 +113,9 @@ enum ChaosGameMetal {
         cb.commit()
         cb.waitUntilCompleted()
 
-        return decode(histBuf: histBuf, binCount: binCount,
-                      gridWidth: params.gridWidth, gridHeight: params.gridHeight,
-                      colorScale: Double(fp.colorScale))
-    }
-
-    // MARK: - Decode
-
-    /// Host mirror of MSL `AtomicBin` (5×uint32 per bin). Layout must match the
-    /// device struct field-for-field; both are 5 × 4 bytes, 4-byte aligned.
-    private struct AtomicBinHost {
-        var count: UInt32 = 0
-        var r: UInt32 = 0
-        var g: UInt32 = 0
-        var b: UInt32 = 0
-        var a: UInt32 = 0
-    }
-
-    /// Read the flat `AtomicBin` array and divide r/g/b/a by `colorScale` to
-    /// recover dmap-units Doubles matching CPU `hist.colors`/`alpha`. `counts`
-    /// are exact (1 per hit).
-    private static func decode(histBuf: MTLBuffer, binCount: Int,
-                               gridWidth: Int, gridHeight: Int,
-                               colorScale: Double) -> Histogram {
-        var hist = Histogram(gridWidth: gridWidth, gridHeight: gridHeight)
-        let bins = histBuf.contents().assumingMemoryBound(to: AtomicBinHost.self)
-        let invScale = 1.0 / colorScale
-        for i in 0..<binCount {
-            let bin = bins[i]
-            hist.counts[i] = Double(bin.count)
-            hist.colors[i] = SIMD3(Double(bin.r) * invScale,
-                                   Double(bin.g) * invScale,
-                                   Double(bin.b) * invScale)
-            hist.alpha[i] = Double(bin.a) * invScale
-        }
-        return hist
+        return MetalHistogramDecode.decode(histBuf: histBuf, binCount: binCount,
+                                           gridWidth: params.gridWidth,
+                                           gridHeight: params.gridHeight,
+                                           colorScale: Double(fp.colorScale))
     }
 }
