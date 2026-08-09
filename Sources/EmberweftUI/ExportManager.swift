@@ -127,6 +127,14 @@ public final class ExportManager {
     public var backendChoice: BackendChoice = .auto
     /// 1 ⇒ genome default (resolved, motion blur); see `ExportSettings.resolve`.
     public var temporalSamples: Int = 1
+    /// M6.1 slice 2 / Task 10: temporal-smoothing toggle. `.auto` ⇒ derive α
+    /// from the quality tier via `TemporalSmoothing.alpha(for:)` (the continuous
+    /// ramp); `.off` ⇒ force α = 1.0 (byte-identical to the unsmoothed path).
+    /// Threaded through `resolveSettings` → `ExportSettings.resolve`. The sheet
+    /// binds this two-way (`.auto` ⇄ `.off`); at `.genomeDefault` quality the
+    /// toggle is a no-op (α collapses to 1.0 regardless), so the sheet disables
+    /// it there. Default `.auto` matches the `ExportSettings.resolve` default.
+    public var temporalSmoothing: TemporalSmoothing = .auto
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
     /// Default 15 s — the owner's optimal loop render length. Combined with
     /// `loopRepeatCount == 2`, a 15 s loop renders once (15 s of render cost)
@@ -600,13 +608,18 @@ public final class ExportManager {
         case runBatch(jobs: [ExportJob], baseDir: URL)
     }
 
-    private func resolveSettings(baseFlame: Flame, backend: ExportCoordinator.Backend) -> ExportSettings {
+    /// Resolve the concrete `ExportSettings` from the sheet's editable config.
+    /// `internal` (not `private`) so `EmberweftUITests` can pin the
+    /// `temporalSmoothing` threading (Task 10) — `@testable import` reaches
+    /// `internal` but not `private`. Pure value derivation; no I/O.
+    internal func resolveSettings(baseFlame: Flame, backend: ExportCoordinator.Backend) -> ExportSettings {
         ExportSettings.resolve(
             quality: qualityChoice.exportQuality,
             temporalSamples: temporalSamples,
             codec: codec, container: container, fps: fps, bitrate: bitrate,
             resolution: resolution, segmentFrameBudget: 0,
-            baseFlame: baseFlame, backend: backend)
+            baseFlame: baseFlame, backend: backend,
+            temporalSmoothing: temporalSmoothing)
     }
 
     /// Resolve a batch item's `out` via `BatchPath.resolve` (the D13 gate) and

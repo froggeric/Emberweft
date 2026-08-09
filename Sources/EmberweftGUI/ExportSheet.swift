@@ -131,6 +131,14 @@ struct ExportSheet: View {
                         .help("Render each loop once, output N×. Seamless (a loop is R(360°)=R(0°)). 2× halves loop render cost (15 s render + 2× = 30 s perceived). Transitions never repeat. Disabled above the safe cache size.")
                     Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
                         .help("1 uses the genome default (≈1000 on real ES sheep, motion-blurred). Higher values are sharper but slower. Metal caps at 64.")
+                    Toggle("Temporal smoothing", isOn: temporalSmoothingBinding)
+                        .disabled(em.qualityChoice == .genomeDefault)
+                        .help(smoothingHelp)
+                    if em.qualityChoice != .genomeDefault {
+                        Text("Resolved \(em.qualityChoice.smoothingAlphaLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Stepper("Seed \(seed)", value: $seed, in: 0...1_000_000_000)
                         .help("Deterministic render seed. Same seed + genome + params = identical output.")
                     Stepper("Checkpoint every \(em.checkpointIntervalFrames) frames",
@@ -211,6 +219,26 @@ struct ExportSheet: View {
     private var temporalLabel: String {
         let ts = model.exportManager.temporalSamples
         return ts == 1 ? "Temporal samples (genome default)" : "Temporal samples \(ts)"
+    }
+
+    /// M6.1 slice 2 / Task 10: bridges the `TemporalSmoothing` enum (`.auto`/
+    /// `.off`) to the `Toggle`'s `Bool` — `.auto` ⇄ `.off`. The toggle is disabled
+    /// at `.genomeDefault` (smoothing is a no-op there: α collapses to 1.0
+    /// regardless of the toggle position).
+    private var temporalSmoothingBinding: Binding<Bool> {
+        Binding(
+            get: { model.exportManager.temporalSmoothing == .auto },
+            set: { isOn in model.exportManager.temporalSmoothing = isOn ? .auto : .off }
+        )
+    }
+
+    /// Smoothing-toggle tooltip. Explains `.auto` (quality-derived α) vs `.off`
+    /// (byte-identical unsmoothed) and why it's disabled at genome-default.
+    private var smoothingHelp: String {
+        if model.exportManager.qualityChoice == .genomeDefault {
+            return "Disabled — genome-default quality already uses α = 1.0 (no smoothing)."
+        }
+        return "ON: blend each frame with the prior histogram (α ramps with quality) for smoother motion. OFF: α = 1.0, byte-identical to the unsmoothed path."
     }
 
     /// Estimated per-loop cache size for the loop-repeat memory guard
