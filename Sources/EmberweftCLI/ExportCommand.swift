@@ -37,6 +37,27 @@ extension EmberweftCLI {
         var png = false
         var resolutionExplicit = false
         var codecExplicit = false
+        // Task 9 (M6.1): resumable-export CLI surface.
+        // `--checkpoint-frames N` (0 = off → existing byte-identity run/runLongForm
+        // path; >0 routes to `runResumable`, which does its own frame-count chunking
+        // via `renderFramesInterleaved` and ignores `segmentFrameBudget`). When both
+        // `--checkpoint-frames > 0` and `--segment-frames > 0` are passed,
+        // `--checkpoint-frames` wins (see the dispatch below).
+        var checkpointFrames = 0
+        // `--resume <out>`: read the checkpoint beside `<out>` and complete the run.
+        // `--discard <out>`: delete the checkpoint + chunk temps beside `<out>`.
+        // Both are standalone MODE flags (handled before genome loading); exactly
+        // one of them is mutually exclusive with a normal export.
+        var resumeOut: String? = nil
+        var discardOut: String? = nil
+        // D11: on `--resume` the checkpoint recipe is AUTHORITATIVE — passing any
+        // recipe flag alongside `--resume` is an error. This flips true the first
+        // time any of the 12 recipe flags is parsed, so the resume path can reject
+        // the combination up front. (`--backend`, `--bitrate`, `--temporal-samples`
+        // are intentionally NOT recipe flags — they don't travel in the checkpoint's
+        // recipe identity the way the 12 below do, and `--backend` is meaningful on
+        // resume.)
+        var anyRecipeFlagExplicit = false
         var i = 0
         while i < args.count {
             let tok = args[i]
@@ -48,22 +69,22 @@ extension EmberweftCLI {
                 switch tok {
                 case "--frames":
                     guard let v = value() else { return missing("--frames") }
-                    framesPerSegment = Int(v) ?? framesPerSegment; i += 2
+                    framesPerSegment = Int(v) ?? framesPerSegment; anyRecipeFlagExplicit = true; i += 2
                 case "--transition-frames":
                     guard let v = value() else { return missing("--transition-frames") }
-                    transitionFramesPerSegment = Int(v); i += 2
+                    transitionFramesPerSegment = Int(v); anyRecipeFlagExplicit = true; i += 2
                 case "--segments":
                     guard let v = value() else { return missing("--segments") }
-                    segmentCount = Int(v) ?? segmentCount; i += 2
+                    segmentCount = Int(v) ?? segmentCount; anyRecipeFlagExplicit = true; i += 2
                 case "--seed":
                     guard let v = value() else { return missing("--seed") }
-                    seed = UInt64(v) ?? seed; i += 2
+                    seed = UInt64(v) ?? seed; anyRecipeFlagExplicit = true; i += 2
                 case "--stagger":
                     guard let v = value() else { return missing("--stagger") }
-                    stagger = Double(v) ?? stagger; i += 2
+                    stagger = Double(v) ?? stagger; anyRecipeFlagExplicit = true; i += 2
                 case "--loop-cycles":
                     guard let v = value() else { return missing("--loop-cycles") }
-                    loopCycles = max(1, Int(v) ?? 1); i += 2
+                    loopCycles = max(1, Int(v) ?? 1); anyRecipeFlagExplicit = true; i += 2
                 case "--temporal-samples":
                     guard let v = value() else { return missing("--temporal-samples") }
                     temporalSamples = max(1, Int(v) ?? 1); i += 2
@@ -74,7 +95,7 @@ extension EmberweftCLI {
                     // repeat. The GUI carries the owner's default 2; the CLI stays
                     // at 1 so the animate↔export byte-identity pins hold by default.
                     guard let v = value() else { return missing("--loop-repeat") }
-                    loopRepeat = max(1, Int(v) ?? 1); i += 2
+                    loopRepeat = max(1, Int(v) ?? 1); anyRecipeFlagExplicit = true; i += 2
                 case "--backend":
                     guard let v = value() else { return missing("--backend") }
                     let lv = v.lowercased()
@@ -90,26 +111,26 @@ extension EmberweftCLI {
                     let normalized = lv == "prores-422-hq" || lv == "prores422hq" ? "prores422hq" : lv
                     guard normalized == "h264" || normalized == "hevc" || normalized == "prores422hq"
                     else { EmberweftCLI.err("error: --codec must be h264|hevc|prores-422-hq\n"); return 2 }
-                    codec = normalized; codecExplicit = true; i += 2
+                    codec = normalized; codecExplicit = true; anyRecipeFlagExplicit = true; i += 2
                 case "--container":
                     guard let v = value() else { return missing("--container") }
                     let lv = v.lowercased()
                     guard lv == "mp4" || lv == "mov" else { EmberweftCLI.err("error: --container must be mp4|mov\n"); return 2 }
-                    container = lv; i += 2
+                    container = lv; anyRecipeFlagExplicit = true; i += 2
                 case "--bitrate":
                     guard let v = value() else { return missing("--bitrate") }
                     bitrate = v; i += 2
                 case "--resolution":
                     guard let v = value() else { return missing("--resolution") }
-                    resolution = v.lowercased(); resolutionExplicit = true; i += 2
+                    resolution = v.lowercased(); resolutionExplicit = true; anyRecipeFlagExplicit = true; i += 2
                 case "--fps":
                     guard let v = value() else { return missing("--fps") }
                     let n = Int(v) ?? -1
                     guard [24, 25, 30, 48, 50, 60].contains(n) else { EmberweftCLI.err("error: --fps must be 24/25/30/48/50/60\n"); return 2 }
-                    fps = n; i += 2
+                    fps = n; anyRecipeFlagExplicit = true; i += 2
                 case "--quality":
                     guard let v = value() else { return missing("--quality") }
-                    quality = v; i += 2
+                    quality = v; anyRecipeFlagExplicit = true; i += 2
                 case "--segment-frames":
                     // Task 6: chunk size in frames → settings.segmentFrameBudget.
                     // `runLongForm` dispatches when this is > 0 (else single export).
@@ -128,11 +149,171 @@ extension EmberweftCLI {
                     // the schema). Dispatches `ExportCoordinator.runBatch`.
                     guard let v = value() else { return missing("--jobs") }
                     jobsPath = v; i += 2
+                case "--checkpoint-frames":
+                    // Task 9 (M6.1): enable resumable chunked export. 0 = off
+                    // (default; the existing `run`/`runLongForm` byte-identity
+                    // path). >0 = chunk the timeline every N frames, write a
+                    // checkpoint after each chunk → SIGINT keeps the checkpoint +
+                    // completed chunks for `--resume`. When both this and
+                    // `--segment-frames` are >0, this wins (`runResumable` does
+                    // its own frame-count chunking and ignores segmentFrameBudget).
+                    guard let v = value() else { return missing("--checkpoint-frames") }
+                    checkpointFrames = max(0, Int(v) ?? 0); i += 2
+                case "--resume":
+                    // Task 9 (M6.1): complete a previously-checkpointed run beside
+                    // `<out>`. The checkpoint's recipe is AUTHORITATIVE (D11) — no
+                    // recipe flags may accompany this. Handled as a standalone mode
+                    // below (before genome loading). `--backend` IS allowed (it is
+                    // not a recipe flag and the checkpoint does not record it).
+                    guard let v = value() else { return missing("--resume") }
+                    resumeOut = v; i += 2
+                case "--discard":
+                    // Task 9 (M6.1): delete the checkpoint + chunk temps beside
+                    // `<out>` (idempotent; exit 0). Use to clear a paused/abandoned
+                    // resumable run without completing it.
+                    guard let v = value() else { return missing("--discard") }
+                    discardOut = v; i += 2
                 default:
                     EmberweftCLI.err("error: unknown flag: \(tok)\n"); return 2
                 }
             } else {
                 genomes.append(tok); i += 1
+            }
+        }
+
+        // --- Task 9 (M6.1): `--discard <out>` standalone mode ---
+        // Idempotent: delete the checkpoint + ALL chunk temps beside `<out>`. The
+        // container is read from the checkpoint if present (so the chunk-prefix
+        // sweep matches what was actually written); else inferred from `<out>`'s
+        // extension. Exit 0 whether or not anything was present. Handled before
+        // genome loading — `--discard` takes no genomes.
+        if let discardOut {
+            let outURL = URL(fileURLWithPath: discardOut)
+            let cpURL = ExportCheckpoint.checkpointURL(out: outURL)
+            var container: ExportSettings.Container
+            if let cpData = try? Data(contentsOf: cpURL),
+               let decoded = try? JSONDecoder().decode(ExportCheckpoint.self, from: cpData) {
+                container = decoded.settings.container
+            } else {
+                container = outURL.pathExtension.lowercased() == "mov" ? .mov : .mp4
+            }
+            ExportCoordinator.discardCheckpointAndChunks(out: outURL, container: container)
+            EmberweftCLI.out("discarded checkpoint + chunks for \(discardOut)\n")
+            return 0
+        }
+
+        // --- Task 9 (M6.1): `--resume <out>` standalone mode ---
+        // Read the checkpoint beside `<out>` and complete the run. The checkpoint
+        // recipe is AUTHORITATIVE (D11): no recipe flags may accompany `--resume`.
+        // The coordinator rebuilds the ExportJob from the decoded checkpoint
+        // (`runResumableBody` shadows the passed `job` from `decoded` before any
+        // flame access), so the passed job's flames are never read — `[Flame()]`
+        // is a type-system placeholder. SIGINT keeps the checkpoint (P2/P3: the
+        // catch below removes only `partialURL`, never the checkpoint or chunks).
+        if let resumeOut {
+            // D11: reject any recipe flag alongside --resume.
+            if anyRecipeFlagExplicit {
+                EmberweftCLI.err("error: do not combine --resume with recipe flags; the checkpoint is authoritative\n")
+                return 2
+            }
+            let outURL = URL(fileURLWithPath: resumeOut)
+            let cpURL = ExportCheckpoint.checkpointURL(out: outURL)
+            let cpData: Data
+            do {
+                cpData = try Data(contentsOf: cpURL)
+            } catch {
+                EmberweftCLI.err("error: no checkpoint beside \(resumeOut) (looked for \(cpURL.lastPathComponent)). Start a resumable run with `emberweft export <genome>… --checkpoint-frames N --out <out>`, or clear with `--discard \(resumeOut)`.\n")
+                return 2
+            }
+            let decoded: ExportCheckpoint
+            do {
+                decoded = try JSONDecoder().decode(ExportCheckpoint.self, from: cpData)
+            } catch {
+                EmberweftCLI.err("error: checkpoint beside \(resumeOut) is unreadable (\(error)). Clear with `emberweft export --discard \(resumeOut)` and start fresh.\n")
+                return 2
+            }
+            // The checkpoint's stored `out` must match the --resume arg. Compare
+            // standardized absolute paths (a relative `--resume ./x.mov` resolves
+            // to the same absolute path as the stored `out`).
+            guard outURL.standardizedFileURL.path == decoded.out.standardizedFileURL.path else {
+                EmberweftCLI.err("error: checkpoint's stored out (\(decoded.out.path)) does not match --resume \(resumeOut)\n")
+                return 2
+            }
+            // Backend is NOT a recipe flag (the checkpoint does not record it);
+            // `--backend` is honored on resume, defaulting to cpu.
+            let metalAvailable = backend == "metal"
+                ? await MainActor.run { MetalRenderer.isAvailable }
+                : false
+            let coordBackend: FlameExport.ExportCoordinator.Backend
+            if backend == "metal" {
+                if metalAvailable {
+                    coordBackend = .metal
+                } else if strictBackend {
+                    EmberweftCLI.err("error: Metal unavailable and --strict-backend set\n"); return 1
+                } else {
+                    EmberweftCLI.err("notice: Metal unavailable; resuming on CPU (--strict-backend to refuse)\n")
+                    coordBackend = .cpu
+                }
+            } else {
+                coordBackend = .cpu
+            }
+            // Placeholder job: the coordinator rebuilds this from `decoded` on
+            // resume (sources are re-parsed + SHA-256-verified from the
+            // checkpoint). `out`/recipe come from the checkpoint; flames are not
+            // read by the resume path.
+            let placeholderJob = ExportJob(
+                settings: decoded.settings, flames: [Flame()],
+                framesPerSegment: decoded.framesPerSegment,
+                transitionFramesPerSegment: decoded.transitionFramesPerSegment,
+                segmentCount: decoded.segmentCount, selector: decoded.selector,
+                seed: decoded.seed, loopCycles: decoded.loopCycles, stagger: decoded.stagger,
+                out: decoded.out, loopRepeatCount: decoded.loopRepeatCount)
+            let coord = ExportCoordinator(backend: coordBackend)
+
+            // P2: SIGINT → cooperative cancel (reuse the proven DispatchSource
+            // pattern VERBATIM; the handler runs on a dispatch queue, NOT in the
+            // signal context — async-signal-safe). The handler's `coord.cancel()`
+            // flips the actor flag; `runResumableBody` throws `.cancelled` at the
+            // next chunk-top check.
+            signal(SIGINT, SIG_IGN)
+            let sig = DispatchSource.makeSignalSource(signal: SIGINT)
+            sig.setEventHandler { Task { await coord.cancel() } }
+            sig.resume()
+            defer { sig.cancel() }
+
+            do {
+                let stream = await coord.runResumable(placeholderJob, sources: [],
+                                                      checkpointIntervalFrames: decoded.checkpointIntervalFrames,
+                                                      resumeFrom: cpURL)
+                var lastPrint = 0.0
+                for try await p in stream {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - lastPrint > 0.5 || p.currentFrame == p.totalFrames {
+                        if p.phase == .concatenating {
+                            EmberweftCLI.err("[resume] concatenating chunks…\n")
+                        } else {
+                            EmberweftCLI.err("[resume] frame \(p.currentFrame)/\(p.totalFrames)  fps \(String(format: "%.1f", p.renderFPS))\n")
+                        }
+                        lastPrint = now
+                    }
+                }
+                EmberweftCLI.out("resume complete: \(resumeOut)\n")
+                return 0
+            } catch ExportError.cancelled {
+                // P3: keep the checkpoint + completed chunks for `--resume`. Remove
+                // only the concat partial (harmless if absent). The coordinator has
+                // already removed the in-flight chunk temp.
+                EmberweftCLI.err("cancelled (checkpoint + completed chunks kept for --resume)\n")
+                try? FileManager.default.removeItem(at: placeholderJob.partialURL)
+                return 1
+            } catch ExportError.paused {
+                // No CLI pause trigger exists, but guard anyway: keep the checkpoint.
+                EmberweftCLI.err("paused (checkpoint kept for --resume)\n")
+                return 1
+            } catch {
+                EmberweftCLI.err("error: resume failed: \(error)\n")
+                try? FileManager.default.removeItem(at: placeholderJob.partialURL)
+                return 1
             }
         }
 
@@ -164,7 +345,13 @@ extension EmberweftCLI {
         }
 
         // --- Load + health-gate genomes (isRenderable lives in FlameKit) ---
+        // `flamePaths` is kept aligned with `flames` (one appended per successful
+        // parse; a parse failure returns early) so the resumable path can build
+        // file-backed checkpoint `Source`s whose `fileURL` matches each renderable
+        // flame's origin (the URL+SHA-256 path mirrors the GUI; the coordinator's
+        // `finalizeFreshSources` fills the hash).
         var flames: [Flame] = []
+        var flamePaths: [String] = []
         flames.reserveCapacity(genomes.count)
         for path in genomes {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
@@ -174,12 +361,16 @@ extension EmberweftCLI {
                 guard let flame = try Flam3Parser.parse(data).first else {
                     EmberweftCLI.err("error: no <flame> element in \(path)\n"); return 1
                 }
-                flames.append(flame)
+                flames.append(flame); flamePaths.append(path)
             } catch {
                 EmberweftCLI.err("error: failed to parse \(path): \(error)\n"); return 1
             }
         }
-        let renderable = flames.filter { $0.isRenderable }
+        var renderable: [Flame] = []
+        var renderablePaths: [String] = []
+        for (f, p) in zip(flames, flamePaths) where f.isRenderable {
+            renderable.append(f); renderablePaths.append(p)
+        }
         if renderable.isEmpty {
             EmberweftCLI.err("error: no renderable genomes (NaN/degenerate camera or all-zero xform weight)\n"); return 1
         }
@@ -317,9 +508,15 @@ extension EmberweftCLI {
         }
 
         // --- Build + run the job ---
-        // Task 6: `--segment-frames N > 0` selects the long-form (chunked) path;
-        // else the single-export path (today's behavior). `segmentFrameBudget`
-        // is set by `resolveExportSettings`.
+        // Dispatch (priority high → low):
+        //   1. `--checkpoint-frames N > 0` → resumable chunked path (Task 9,
+        //      `runResumable`). When both this and `--segment-frames > 0` are
+        //      passed, `--checkpoint-frames` WINS (`runResumable` does its own
+        //      frame-count chunking via `renderFramesInterleaved` and ignores
+        //      `segmentFrameBudget`).
+        //   2. `--segment-frames N > 0` → long-form chunked path (Task 6,
+        //      `runLongForm`).
+        //   3. else → single-export path (`run`, today's byte-identity default).
         let job = ExportJob(settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
                             transitionFramesPerSegment: transitionFramesPerSegment,
                             segmentCount: segmentCount, selector: .sequential, seed: seed,
@@ -327,8 +524,16 @@ extension EmberweftCLI {
                             loopRepeatCount: loopRepeat)
         let coord = ExportCoordinator(backend: coordBackend)
         let longForm = settings.segmentFrameBudget > 0
+        let resumable = checkpointFrames > 0
+        if resumable && longForm {
+            EmberweftCLI.err("note: --checkpoint-frames \(checkpointFrames) overrides --segment-frames \(segmentFrames) (resumable chunked path)\n")
+        }
 
         // SIGINT -> cooperative cancel (one-shot; the loop checks `cancelled` between frames).
+        // P2: reused VERBATIM for the resumable path — the handler's `coord.cancel()`
+        // flips the actor flag; `runResumableBody` throws `.cancelled` at the next
+        // chunk-top. The `catch ExportError.cancelled` below keeps the checkpoint +
+        // completed chunks (P3) for `--resume`.
         signal(SIGINT, SIG_IGN)
         let sig = DispatchSource.makeSignalSource(signal: SIGINT)
         sig.setEventHandler { Task { await coord.cancel() } }
@@ -336,7 +541,24 @@ extension EmberweftCLI {
         defer { sig.cancel() }
 
         do {
-            let stream = longForm ? await coord.runLongForm(job) : await coord.run(job)
+            let stream: AsyncThrowingStream<ExportProgress, Error>
+            if resumable {
+                // File-backed sources from the input genome paths (the URL+SHA-256
+                // path; the coordinator's `finalizeFreshSources` fills the hash).
+                // `flameIndex: 0` — the CLI takes the first `<flame>` from each
+                // file. Aligned with `renderable` via `renderablePaths`.
+                let sources = zip(renderable, renderablePaths).map { (_, path) in
+                    ExportCheckpoint.Source(fileURL: URL(fileURLWithPath: path), flameIndex: 0,
+                                            sha256: nil, serializedText: nil, displayName: path)
+                }
+                stream = await coord.runResumable(job, sources: sources,
+                                                  checkpointIntervalFrames: checkpointFrames,
+                                                  resumeFrom: nil)
+            } else if longForm {
+                stream = await coord.runLongForm(job)
+            } else {
+                stream = await coord.run(job)
+            }
             var lastPrint = 0.0
             for try await p in stream {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -350,6 +572,22 @@ extension EmberweftCLI {
                 }
             }
             return 0
+        } catch ExportError.cancelled {
+            // P3: keep the checkpoint + completed chunks for `--resume`. Remove
+            // only the concat partial (harmless if absent — the resumable path
+            // uses a chunk temp, cleaned by the coordinator). Long-form seg temps
+            // are not checkpoint artifacts and are cleaned defensively.
+            EmberweftCLI.err("cancelled\n")
+            try? FileManager.default.removeItem(at: job.partialURL)
+            if longForm {
+                let outDir = outURL.deletingLastPathComponent()
+                if let entries = try? FileManager.default.contentsOfDirectory(atPath: outDir.path) {
+                    for e in entries where e.hasPrefix("m6-seg-") {
+                        try? FileManager.default.removeItem(at: outDir.appendingPathComponent(e))
+                    }
+                }
+            }
+            return 1
         } catch {
             EmberweftCLI.err("error: export failed: \(error)\n")
             try? FileManager.default.removeItem(at: job.partialURL)

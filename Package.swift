@@ -106,7 +106,7 @@ let package = Package(
         ),
         .testTarget(
             name: "EmberweftCLITests",
-            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference", "FlameRenderer"],
+            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference", "FlameRenderer", "FlameExport"],
             path: "Tests/EmberweftCLITests"
         ),
         .testTarget(
