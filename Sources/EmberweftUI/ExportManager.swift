@@ -110,6 +110,14 @@ public final class ExportManager {
     /// surfaces the skip so it isn't a silent shortening of the timeline.)
     public private(set) var skipNotice: String?
 
+    /// M6.1 Task 8: true iff the in-flight (or just-finished) export runs the
+    /// pausable `.runResumable` path. The banner gates the Pause button on this
+    /// (hidden for `.runJob`/`.runBatch` — those have no checkpoint, so a pause
+    /// is meaningless). Set in `startExport`/`resume`; cleared on every exit from
+    /// the in-flight states (terminal + discard). Read synchronously by the
+    /// banner's `runningContent`.
+    public private(set) var isPausable: Bool = false
+
     // The editable config (bound two-way by the sheet):
     public var codec: ExportSettings.Codec = .proRes422HQ
     public var container: ExportSettings.Container = .mov
@@ -390,6 +398,7 @@ public final class ExportManager {
             ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
             setRememberedCheckpointURL(nil)
             state = .cancelled
+            isPausable = false
         default:
             break   // idle/completed/failed/cancelled — no-op
         }
@@ -423,6 +432,7 @@ public final class ExportManager {
         let coord = coordinatorFactory(backend, true)
         coordinator = coord
         state = .running
+        isPausable = true   // a resumed run is always pausable
         acquireActivity()
         consumeTask = Task { [weak self] in
             guard let self else { return }
@@ -442,6 +452,7 @@ public final class ExportManager {
             self.releaseActivity()
             self.coordinator = nil
             self.consumeTask = nil
+            self.isPausable = false
             self.resetETAState()
         }
     }
@@ -459,6 +470,7 @@ public final class ExportManager {
         state = .idle
         snapshot = .empty
         sourceLabel = ""
+        isPausable = false
     }
 
     /// M6.1: read just `settings.container` from the checkpoint beside `out`
@@ -525,6 +537,7 @@ public final class ExportManager {
             snapshot = .empty
             sourceLabel = ""
             skipNotice = nil
+            isPausable = false
         }
     }
 
@@ -643,6 +656,7 @@ public final class ExportManager {
         case .runBatch(_, let baseDir):
             completionURL = baseDir; isResumable = false
         }
+        isPausable = isResumable   // only `.runResumable` checkpoints ⇒ is pausable
         consumeTask = Task { [weak self] in
             // [weak self] is SAFE here: ExportManager is held by AppModel
             // (app-lifetime @State), so it is never released mid-export. Weak
@@ -683,6 +697,7 @@ public final class ExportManager {
             self.releaseActivity()
             self.coordinator = nil
             self.consumeTask = nil   // break self → consumeTask → task → self
+            self.isPausable = false   // run ended — banner's Pause no longer applies
             self.resetETAState()     // clear EMA so a later run starts cold
         }
     }

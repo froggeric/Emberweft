@@ -150,6 +150,54 @@ final class ExportManagerPauseResumeTests: XCTestCase {
         XCTAssertEqual(batchCalls, 1, "exportBatch ⇒ runBatch (unchanged)")
     }
 
+    // MARK: - isPausable flag (Task 8 — the banner gates Pause on this)
+
+    /// A `.runResumable` run (sources non-empty) sets `isPausable = true` while
+    /// `.running` — the banner shows the Pause button. Parked via
+    /// `.yieldUntilCancelled` so the assertion observes the in-flight state.
+    func testIsPausableTrueForRunResumableDuringRunning() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        installFake(vm, script: .yieldUntilCancelled)
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(),
+                              seed: 1, sources: sources())
+        XCTAssertEqual(vm.state, .running)
+        XCTAssertTrue(vm.isPausable,
+                      ".runResumable ⇒ isPausable true (banner shows Pause)")
+
+        await vm.cancel()
+        await vm.awaitCompletion()
+        XCTAssertFalse(vm.isPausable, "terminal state ⇒ isPausable cleared")
+    }
+
+    /// A `.runBatch` run sets `isPausable = false` (batch is cancel-only — no
+    /// checkpoint, so a pause is meaningless). The banner hides Pause.
+    func testIsPausableFalseForRunBatch() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        installFake(vm, script: .batchYield([
+            batchEvent(job: 0, totalJobs: 1, frame: 1, totalFrames: 1)]))
+        let dir = batchDir()
+        await vm.exportBatch(items: [(renderableFlame(), "a")], baseDir: dir, seed: 1)
+        XCTAssertFalse(vm.isPausable,
+                       ".runBatch ⇒ isPausable false (banner hides Pause)")
+        await vm.awaitCompletion()
+        XCTAssertFalse(vm.isPausable, "terminal state ⇒ isPausable cleared")
+    }
+
+    /// A `.runJob` run (sources empty) sets `isPausable = false` — the legacy
+    /// path has no checkpoint either, so Pause stays hidden.
+    func testIsPausableFalseForRunJob() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        installFake(vm, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(),
+                              seed: 1)   // no sources ⇒ .runJob
+        XCTAssertFalse(vm.isPausable,
+                       ".runJob ⇒ isPausable false (banner hides Pause)")
+        await vm.awaitCompletion()
+    }
+
     // MARK: - Pause → .paused → Resume → .completed (the headline AC)
 
     /// `pause()` `.running`→`.pausing`→(fake throws `.paused`)→`.paused(out, cp,

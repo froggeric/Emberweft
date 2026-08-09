@@ -51,11 +51,12 @@ struct ExportProgressSurface: View {
         case .pausing:
             // M6.1: a pause has been requested; the run loop will surface
             // `.paused` at the next chunk boundary. Render the running card so
-            // Cancel stays reachable (Task 8 adds the disabled "Pausing…"
-            // affordance on the Pause button).
+            // Cancel stays reachable; `runningContent` disables the Pause button
+            // and flips its label to "Pausing…" while in this state.
             runningContent
         case .paused(let out, _, let reason):
-            // M6.1: a minimal paused card (Task 8 polishes layout + frame readout).
+            // M6.1: the export is suspended with a checkpoint on disk. Resume
+            // continues from the checkpoint; Discard deletes it + chunks.
             pausedContent(out: out, reason: reason)
         case .completed(let url):
             completedContent(url: url)
@@ -66,36 +67,52 @@ struct ExportProgressSurface: View {
         }
     }
 
-    // MARK: - Paused (M6.1 minimal; Task 8 fleshes out the polished card)
+    // MARK: - Paused (M6.1 — spec §6.1)
 
     private func pausedContent(out: URL, reason: String?) -> some View {
         let em = model.exportManager
+        let snap = em.snapshot
+        let title = reason ?? "Paused"
         return HStack(spacing: 10) {
             Image(systemName: "pause.circle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text(reason ?? "Paused")
+                Text("\(title) — frame \(snap.currentFrame) of \(snap.totalFrames)")
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text(out.lastPathComponent).font(.caption2).foregroundStyle(.tertiary)
                     .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
             Button("Resume") { Task { await em.resume() } }
+                .help("Continue from the last checkpoint.")
             Button("Discard") { em.discardPaused() }
+                .help("Delete the checkpoint and completed chunks, return to idle.")
         }
     }
 
-    // MARK: - Running / cancelling
+    // MARK: - Running / pausing / cancelling
 
     private var runningContent: some View {
         let em = model.exportManager
         let snap = em.snapshot
         let isCancelling = em.state == .cancelling
+        let isPausing = em.state == .pausing
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
                 ProgressView(value: snap.fraction)
                     .progressViewStyle(.linear)
                     .help("Overall progress")
+                // Pause: shown only for pausable (`.runResumable`) exports —
+                // hidden for batch/`.runJob` (no checkpoint ⇒ nothing to resume).
+                // Disabled + "Pausing…" once a pause is in flight (the run loop
+                // surfaces `.paused` at the next chunk boundary).
+                if em.isPausable {
+                    Button(isPausing ? "Pausing…" : "Pause") {
+                        Task { await em.pause() }
+                    }
+                    .disabled(isPausing)
+                    .help("Finish the in-flight frame, keep completed work, and stop. Resume later.")
+                }
                 Button(isCancelling ? "Cancelling…" : "Cancel") {
                     Task { await em.cancel() }
                 }

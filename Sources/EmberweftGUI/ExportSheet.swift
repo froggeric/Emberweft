@@ -8,15 +8,21 @@ import FlameExport
 /// the matching `ExportManager` entry point on Start. Single/sequence supply
 /// their flame(s) up front; batch supplies pre-loaded `(flame, name)` pairs.
 enum ExportSource {
-    case single(flame: Flame, name: String)
-    case sequence(flames: [Flame], name: String)
+    /// `fileURL` (M6.1 P8): threads the on-disk source location so the VM can
+    /// build resumable `[ExportCheckpoint.Source]`s (file-backed ⇒ SHA-256-gated
+    /// resume). Nil ⇒ the sheet falls back to `serializedText`.
+    case single(flame: Flame, name: String, fileURL: URL?)
+    /// `fileURLs` (M6.1 P8): one per flame, position-aligned. Nil (or a nil
+    /// slot) ⇒ the sheet serializes that flame via `Flam3Serializer` (the D6
+    /// text fallback — resumable, just weaker than URL+hash).
+    case sequence(flames: [Flame], name: String, fileURLs: [URL]?)
     case batch(items: [(flame: Flame, name: String)])
 
     /// True iff there is at least one renderable genome in the source.
     var hasRenderable: Bool {
         switch self {
-        case .single(let f, _):             return f.isRenderable
-        case .sequence(let fs, _):          return fs.contains { $0.isRenderable }
+        case .single(let f, _, _):          return f.isRenderable
+        case .sequence(let fs, _, _):       return fs.contains { $0.isRenderable }
         case .batch(let items):             return items.contains { $0.flame.isRenderable }
         }
     }
@@ -127,6 +133,9 @@ struct ExportSheet: View {
                         .help("1 uses the genome default (≈1000 on real ES sheep, motion-blurred). Higher values are sharper but slower. Metal caps at 64.")
                     Stepper("Seed \(seed)", value: $seed, in: 0...1_000_000_000)
                         .help("Deterministic render seed. Same seed + genome + params = identical output.")
+                    Stepper("Checkpoint every \(em.checkpointIntervalFrames) frames",
+                            value: $em.checkpointIntervalFrames, in: 5...300)
+                        .help("Pause/resume granularity. Smaller = finer checkpoints + less re-render on resume, at the cost of more encoder sessions.")
                 }
             }
             .formStyle(.grouped)
@@ -188,9 +197,9 @@ struct ExportSheet: View {
     /// Read-only source summary line.
     private var sourceSummary: String {
         switch source {
-        case .single(_, let name):
+        case .single(_, let name, _):
             return "1 genome — \(name)"
-        case .sequence(let flames, let name):
+        case .sequence(let flames, let name, _):
             let n = flames.count
             return "Collection \"\(name)\" (\(n) sheep)"
         case .batch(let items):
@@ -265,9 +274,9 @@ struct ExportSheet: View {
     /// Default file/directory stem for the save panel.
     private var defaultStem: String {
         switch source {
-        case .single(_, let name):    return name
-        case .sequence(_, let name):  return name
-        case .batch:                  return "export"
+        case .single(_, let name, _):    return name
+        case .sequence(_, let name, _):  return name
+        case .batch:                     return "export"
         }
     }
 
@@ -324,13 +333,32 @@ struct ExportSheet: View {
 
         let s = UInt64(max(0, seed))
         switch source {
-        case .single(let flame, let name):
+        case .single(let flame, let name, let fileURL):
+            // P8: ALWAYS thread a source so the VM routes to the pausable
+            // `.runResumable` path (not the `.runJob` fallback). File-backed ⇒
+            // SHA-256-gated resume (the D6-strong path).
+            let sources = [ExportCheckpoint.Source(
+                fileURL: fileURL, flameIndex: 0, sha256: nil,
+                serializedText: nil, displayName: name)]
             await model.exportManager.exportSingle(flame: flame, displayName: name,
-                                                   out: resolved, seed: s)
-        case .sequence(let flames, let name):
+                                                   out: resolved, seed: s, sources: sources)
+        case .sequence(let flames, let name, let fileURLs):
+            // P8: one source per flame. A nil `fileURL` slot falls back to the
+            // flame's `serializedText` so the checkpoint is still resumable (the
+            // D6 text path — weaker than URL+hash, but correct).
+            let sources = flames.enumerated().map { (i, flame) -> ExportCheckpoint.Source in
+                let url = fileURLs?[i]
+                return ExportCheckpoint.Source(
+                    fileURL: url,
+                    flameIndex: i,
+                    sha256: nil,
+                    serializedText: url == nil ? Flam3Serializer.serialize([flame]) : nil,
+                    displayName: "\(name) #\(i + 1)")
+            }
             await model.exportManager.exportSequence(flames: flames, displayName: name,
-                                                    out: resolved, seed: s)
+                                                    out: resolved, seed: s, sources: sources)
         case .batch(let items):
+            // Batch is cancel-only this slice (no checkpoint ⇒ no sources).
             await model.exportManager.exportBatch(items: items, baseDir: resolved, seed: s)
         }
         dismiss()

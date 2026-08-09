@@ -147,7 +147,7 @@ struct CollectionPlaybackWindow: View {
         .padding(10)
         .background(.bar)
         .sheet(isPresented: $showExportSheet) {
-            ExportSheet(source: .sequence(flames: vm.resolvedFlames, name: collectionName))
+            ExportSheet(source: .sequence(flames: vm.resolvedFlames, name: collectionName, fileURLs: nil))
         }
     }
 

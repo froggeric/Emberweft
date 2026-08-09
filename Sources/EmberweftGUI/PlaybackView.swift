@@ -134,7 +134,7 @@ struct PlaybackWindow: View {
         .background(.bar)
         .sheet(isPresented: $showExportSheet) {
             if let flame = loadedFlame {
-                ExportSheet(source: .single(flame: flame, name: entry.displayName))
+                ExportSheet(source: .single(flame: flame, name: entry.displayName, fileURL: entry.fileURL))
             }
         }
     }
