@@ -135,21 +135,24 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
-    /// `yield` is `@Sendable` so the closure built in `run`'s unstructured Task
-    /// (which captures the `AsyncThrowingStream.Continuation`, itself Sendable)
-    /// crosses the actor boundary cleanly under Swift 6 strict concurrency.
-    private func runJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
+    /// Shared params/plan/budget construction for `runJob`/`runLongFormJob`/
+    /// `runResumableBody` (P9). Performs `diskPrecheck` (accurate for all three:
+    /// the resumable path emits loop frames `loopRepeatCount×` inline, so the
+    /// frame count matches `diskPrecheck`'s formula). Does NOT perform
+    /// `checkLoopRepeatMemory` — the caller decides (resumable skips it: no
+    /// per-segment cache → O(1) memory). Pure extraction of the block that lived
+    /// inline in `runJob`/`runLongFormJob`; behavior-identical. Returns `schedule`
+    /// too because `runLongFormJob`'s chunk loop still queries
+    /// `schedule.frameOffset(ofSegment:)` (`runJob`/`runResumableBody` ignore it).
+    private func buildRenderContext(for job: ExportJob) throws
+        -> (plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
+            useMetal: Bool, schedule: Schedule) {
         let res = job.settings.resolution
         let (spp, os) = job.settings.quality.resolvedSamplesPerPixel(for: job.flames[0])
         let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
                                   oversample: os, samplesPerPixel: spp)
         let useMetal = (backend == .metal)
-        // Loop-repeat memory guard (v0.5.0) — checked BEFORE disk/encoder so a
-        // refused job leaves no partial file. No-op when loopRepeatCount == 1.
-        try Self.checkLoopRepeatMemory(job: job, width: max(1, res.width), height: max(1, res.height))
-        // Disk precheck (D13).
         try Self.diskPrecheck(job: job)
-        // Build the plan.
         let selector = makeSelector(job.selector)
         var schedule = Schedule(librarySize: job.flames.count, framesPerSegment: job.framesPerSegment,
                                 transitionFramesPerSegment: job.transitionFramesPerSegment,
@@ -157,9 +160,28 @@ public actor ExportCoordinator: ExportCoordinating {
         let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: job.flames,
                              loopCycles: job.loopCycles, stagger: job.stagger,
                              temporalSamples: max(1, job.settings.temporalSamples))
-        // Budget (Metal only); nil for CPU. baseSeed = params.seed for byte-identity
-        // with the nil path (Task 2 acceleration).
         let budget: MetalRenderer.ThreadSeedBudget? = useMetal ? MetalRenderer.ThreadSeedBudget(baseSeed: params.seed) : nil
+        return (plan, params, budget, useMetal, schedule)
+    }
+
+    /// `yield` is `@Sendable` so the closure built in `run`'s unstructured Task
+    /// (which captures the `AsyncThrowingStream.Continuation`, itself Sendable)
+    /// crosses the actor boundary cleanly under Swift 6 strict concurrency.
+    private func runJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
+        // Loop-repeat memory guard (v0.5.0) — checked BEFORE disk/encoder so a
+        // refused job leaves no partial file. No-op when loopRepeatCount == 1.
+        // Width/height are read directly from settings (the same values
+        // `buildRenderContext` computes internally); this call stays BEFORE
+        // `buildRenderContext` so the side-effect order is unchanged
+        // (memory guard → disk precheck → encoder).
+        try Self.checkLoopRepeatMemory(job: job,
+                                       width: max(1, job.settings.resolution.width),
+                                       height: max(1, job.settings.resolution.height))
+        let ctx = try buildRenderContext(for: job)
+        let plan = ctx.plan
+        let params = ctx.params
+        let budget = ctx.budget
+        let useMetal = ctx.useMetal
 
         let encoder = try VideoEncoder(settings: job.settings, outputURL: job.partialURL)
         try encoder.start()
@@ -360,27 +382,62 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
+    /// Passthrough-concatenate already-encoded chunk files (in array order) into
+    /// `partialURL` (no re-encode → keyframes preserved). Caller does the atomic
+    /// rename to `out`. Shared by `runLongFormJob` and `runResumableBody`
+    /// (spec §3.4). Pure extraction of the block that lived inline in
+    /// `runLongFormJob`; behavior-identical.
+    private func concatChunks(urls: [URL], container: ExportSettings.Container,
+                              partialURL: URL) async throws {
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(withMediaType: .video,
+                                                      preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw ExportError.encodeFailed
+        }
+        var cursor = CMTime.zero
+        for segURL in urls {
+            let segAsset = AVURLAsset(url: segURL)
+            let segTracks = try await segAsset.loadTracks(withMediaType: .video)
+            guard let segTrack = segTracks.first else { throw ExportError.encodeFailed }
+            let segDuration = try await segAsset.load(.duration)
+            let segRange = CMTimeRange(start: .zero, duration: segDuration)
+            try track.insertTimeRange(segRange, of: segTrack, at: cursor)
+            cursor = CMTimeAdd(cursor, segRange.duration)
+        }
+        guard let exporter = AVAssetExportSession(asset: composition,
+                                                  presetName: AVAssetExportPresetPassthrough) else {
+            throw ExportError.encodeFailed
+        }
+        exporter.outputURL = partialURL
+        exporter.outputFileType = container == .mov ? .mov : .mp4
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            exporter.exportAsynchronously {
+                switch exporter.status {
+                case .completed: cont.resume()
+                case .cancelled: cont.resume(throwing: ExportError.cancelled)
+                default: cont.resume(throwing: exporter.error ?? ExportError.encodeFailed)
+                }
+            }
+        }
+    }
+
     /// Long-form body. Same setup as `runJob` (params/plan/budget), then chunk
     /// the timeline on segment edges, encode each chunk to a temp `.mov`, concat
     /// via passthrough, atomic-rename to `out`.
     private func runLongFormJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
-        let res = job.settings.resolution
-        let (spp, os) = job.settings.quality.resolvedSamplesPerPixel(for: job.flames[0])
-        let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
-                                  oversample: os, samplesPerPixel: spp)
-        let useMetal = (backend == .metal)
-        // Loop-repeat memory guard (v0.5.0) — same gate as single export.
-        try Self.checkLoopRepeatMemory(job: job, width: max(1, res.width), height: max(1, res.height))
-        // Disk precheck (D13) — same estimate as single export.
-        try Self.diskPrecheck(job: job)
-        let selector = makeSelector(job.selector)
-        var schedule = Schedule(librarySize: job.flames.count, framesPerSegment: job.framesPerSegment,
-                                transitionFramesPerSegment: job.transitionFramesPerSegment,
-                                selector: selector, seed: job.seed)
-        let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: job.flames,
-                             loopCycles: job.loopCycles, stagger: job.stagger,
-                             temporalSamples: max(1, job.settings.temporalSamples))
-        let budget: MetalRenderer.ThreadSeedBudget? = useMetal ? MetalRenderer.ThreadSeedBudget(baseSeed: params.seed) : nil
+        // Loop-repeat memory guard (v0.5.0) — same gate as single export. Kept
+        // BEFORE `buildRenderContext` so the side-effect order is unchanged
+        // (memory guard → disk precheck → encoder). Width/height are read
+        // directly from settings (same values `buildRenderContext` computes).
+        try Self.checkLoopRepeatMemory(job: job,
+                                       width: max(1, job.settings.resolution.width),
+                                       height: max(1, job.settings.resolution.height))
+        let ctx = try buildRenderContext(for: job)
+        let plan = ctx.plan
+        let params = ctx.params
+        let budget = ctx.budget
+        let useMetal = ctx.useMetal
+        let schedule = ctx.schedule
 
         // Chunk size in SEGMENTS (AC4: never mid-segment). Each chunk covers
         // `chunkSegments` whole Schedule segments → chunk frame ranges span whole
@@ -433,37 +490,7 @@ public actor ExportCoordinator: ExportCoordinating {
         // --- Concatenate via AVMutableComposition + passthrough (no re-encode) ---
         yield(ExportProgress(phase: .concatenating, currentFrame: totalFrames, totalFrames: totalFrames,
                              elapsed: 0, renderFPS: 0))
-        let composition = AVMutableComposition()
-        guard let track = composition.addMutableTrack(withMediaType: .video,
-                                                      preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw ExportError.encodeFailed
-        }
-        var cursor = CMTime.zero
-        for segURL in temps {
-            let segAsset = AVURLAsset(url: segURL)
-            let segTracks = try await segAsset.loadTracks(withMediaType: .video)
-            guard let segTrack = segTracks.first else { throw ExportError.encodeFailed }
-            let segDuration = try await segAsset.load(.duration)
-            let segRange = CMTimeRange(start: .zero, duration: segDuration)
-            try track.insertTimeRange(segRange, of: segTrack, at: cursor)
-            cursor = CMTimeAdd(cursor, segRange.duration)
-        }
-        guard let exporter = AVAssetExportSession(asset: composition,
-                                                  presetName: AVAssetExportPresetPassthrough) else {
-            throw ExportError.encodeFailed
-        }
-        let outType: AVFileType = job.settings.container == .mov ? .mov : .mp4
-        exporter.outputURL = job.partialURL
-        exporter.outputFileType = outType
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            exporter.exportAsynchronously {
-                switch exporter.status {
-                case .completed: cont.resume()
-                case .cancelled: cont.resume(throwing: ExportError.cancelled)
-                default: cont.resume(throwing: exporter.error ?? ExportError.encodeFailed)
-                }
-            }
-        }
+        try await concatChunks(urls: temps, container: job.settings.container, partialURL: job.partialURL)
         // Atomic handoff (same pattern as `runJob`). `partialURL` is beside `out`
         // on the same volume → rename is atomic.
         if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
