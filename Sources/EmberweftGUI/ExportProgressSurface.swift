@@ -48,12 +48,40 @@ struct ExportProgressSurface: View {
             EmptyView()   // unreachable (body guards .idle), but exhaustive
         case .running, .cancelling:
             runningContent
+        case .pausing:
+            // M6.1: a pause has been requested; the run loop will surface
+            // `.paused` at the next chunk boundary. Render the running card so
+            // Cancel stays reachable (Task 8 adds the disabled "Pausing…"
+            // affordance on the Pause button).
+            runningContent
+        case .paused(let out, _, let reason):
+            // M6.1: a minimal paused card (Task 8 polishes layout + frame readout).
+            pausedContent(out: out, reason: reason)
         case .completed(let url):
             completedContent(url: url)
         case .failed(let message):
             terminalContent(message: message, banner: "Export failed")
         case .cancelled:
             terminalContent(message: "Cancelled.", banner: "Export cancelled", isError: false)
+        }
+    }
+
+    // MARK: - Paused (M6.1 minimal; Task 8 fleshes out the polished card)
+
+    private func pausedContent(out: URL, reason: String?) -> some View {
+        let em = model.exportManager
+        return HStack(spacing: 10) {
+            Image(systemName: "pause.circle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reason ?? "Paused")
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text(out.lastPathComponent).font(.caption2).foregroundStyle(.tertiary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Button("Resume") { Task { await em.resume() } }
+            Button("Discard") { em.discardPaused() }
         }
     }
 

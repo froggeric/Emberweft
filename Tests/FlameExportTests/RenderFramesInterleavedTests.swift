@@ -61,7 +61,7 @@ final class RenderFramesInterleavedTests: XCTestCase {
     /// path (one chunk = the whole timeline) — same `maxAbsDiff == 0` pin.
     private func renderInterleaved(_ job: ExportJob, backend: ExportCoordinator.Backend) async throws -> URL {
         let coord = ExportCoordinator(backend: backend)
-        let stream = await coord.runResumable(job, checkpointIntervalFrames: 999_999, resumeFrom: nil)
+        let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 999_999, resumeFrom: nil)
         for try await _ in stream {}
         return job.out
     }

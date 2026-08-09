@@ -3,16 +3,24 @@ import FlameKit
 import FlameRenderer
 import FlameExport
 
-/// Terminal/non-terminal export state observed by the banner (spec §4.4).
+/// Terminal/non-terminal export state observed by the banner (spec §4.4 / §5.1).
 /// `.completed` carries the output URL (single/sequence: the file; batch: the
 /// directory). `.failed` carries a localized message.
+///
+/// M6.1 adds `.pausing` (cooperative pause requested; the run loop will throw
+/// `.paused` at the next chunk boundary) and `.paused(out:checkpoint:reason:)`
+/// (the export is suspended with a checkpoint on disk; `reason == nil` = user
+/// pause, non-nil = a recoverable error paused it). `.paused` is non-terminal:
+/// the banner offers Resume / Discard.
 public enum ExportState: Sendable, Equatable {
     case idle
     case running
+    case pausing
     case cancelling
     case completed(URL)
     case failed(String)
     case cancelled
+    case paused(out: URL, checkpoint: URL, reason: String?)
 }
 
 /// A single normalized progress sample for the banner (spec §4.4). Pure value
@@ -137,11 +145,30 @@ public final class ExportManager {
     public var loopRepeatCount: Int = 2
     public var bitrate: ExportSettings.Bitrate = .auto
 
+    /// M6.1: checkpoint cadence (frames) for the resumable path. The GUI sheet
+    /// stepper binds here (Task 8; range 5–300). Smaller ⇒ finer pause
+    /// granularity + less re-render on resume, at the cost of more encoder
+    /// sessions. Default 30 — a per-second-at-30fps balance.
+    public var checkpointIntervalFrames: Int = 30
+
+    /// M6.1: the most recent paused-export checkpoint URL. Written when the run
+    /// pauses (spec §5.4) and cleared on `.completed` / discard / cancel. Task 7
+    /// persists this across relaunches via a write-back hook; here it is the
+    /// VM-authoritative copy the state machine + tests observe. `internal` so
+    /// `EmberweftUITests` can assert it (Task 7 promotes the wiring).
+    internal private(set) var rememberedCheckpointURL: URL?
+
     // MARK: - In-flight state (private)
 
     private var coordinator: (any ExportCoordinating)?
     private var consumeTask: Task<Void, Never>?
     private var activityToken: NSObjectProtocol?   // ProcessInfo sleep token (G10)
+    /// M6.1: the job + interval captured from the fresh `.runResumable` run, so
+    /// `resume()` can re-drive `coord.runResumable(..., resumeFrom: checkpoint)`
+    /// without re-issuing the export (the checkpoint's recipe is authoritative
+    /// on resume; the VM still passes the original job for `out`/partial paths).
+    private var resumableJob: ExportJob?
+    private var resumableInterval: Int = 30
 
     // EMA of per-frame wall-clock duration for the ETA estimate (v0.5.0). Lives
     // in the VM (NOT the coordinator): the coordinator yields raw phase/frame
@@ -199,10 +226,13 @@ public final class ExportManager {
 
     // MARK: - Public predicates
 
-    /// True iff an export can start now (not running/cancelling).
+    /// True iff an export can start now. D1 (spec §5.1): excludes the in-flight
+    /// states (`.running`/`.cancelling`/`.pausing`) AND `.paused` — a paused
+    /// export owns a checkpoint on disk; the user must Discard (or Resume) before
+    /// starting a new one (never silently orphan a checkpoint).
     public var canStart: Bool {
         switch state {
-        case .running, .cancelling: return false
+        case .running, .cancelling, .pausing, .paused: return false
         default: return true
         }
     }
@@ -223,9 +253,16 @@ public final class ExportManager {
 
     // MARK: - Source entry points (fire-and-forget)
 
-    /// Export a single genome (one loop). Routed to `coordinator.run(job)` with
-    /// `segmentCount == 1`.
-    public func exportSingle(flame: Flame, displayName: String, out: URL, seed: UInt64) async {
+    /// Export a single genome (one loop). When `sources` is non-empty the run
+    /// routes to the M6.1 RESUMABLE path (`.runResumable`): the timeline is
+    /// chunked at `checkpointIntervalFrames` edges, a checkpoint is written after
+    /// each chunk, and the export is pause/resume/crash-recoverable. When
+    /// `sources` is empty (default) the run uses the legacy `.runJob` path
+    /// (single continuous encode; byte-identical to the pre-M6.1 behavior). The
+    /// GUI (Task 8) threads `LibraryEntry.fileURL`s; the D6-strong path needs
+    /// file-backed sources so resume re-reads the exact bytes (SHA-256-gated).
+    public func exportSingle(flame: Flame, displayName: String, out: URL, seed: UInt64,
+                             sources: [ExportCheckpoint.Source] = []) async {
         guard canStart else { return }
         guard flame.isRenderable else {
             state = .failed("Genome is not renderable (degenerate camera or no xforms).")
@@ -240,7 +277,13 @@ public final class ExportManager {
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: 1, selector: .sequential, seed: seed,
             loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
-        startExport(.runJob(job: job), label: displayName, backend: backend)
+        if sources.isEmpty {
+            startExport(.runJob(job: job), label: displayName, backend: backend)
+        } else {
+            startExport(.runResumable(job: job, sources: sources,
+                                      checkpointIntervalFrames: checkpointIntervalFrames),
+                        label: displayName, backend: backend)
+        }
     }
 
     /// Export a sequence (loop + transitions) as one continuous encode. Routed
@@ -252,7 +295,8 @@ public final class ExportManager {
     /// transitions = `2N − 1` segments. Passing only `renderable.count` (N) walked
     /// the first N segments = loop,trans,loop,trans,loop = ⌈(N+1)/2⌉ genomes (the
     /// "3 of 5" truncation bug). N=1 → 1 segment (the single-loop case).
-    public func exportSequence(flames: [Flame], displayName: String, out: URL, seed: UInt64) async {
+    public func exportSequence(flames: [Flame], displayName: String, out: URL, seed: UInt64,
+                               sources: [ExportCheckpoint.Source] = []) async {
         guard canStart else { return }
         let renderable = flames.filter(\.isRenderable)
         guard !renderable.isEmpty else {
@@ -271,7 +315,13 @@ public final class ExportManager {
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: segmentCount, selector: .sequential, seed: seed,
             loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
-        startExport(.runJob(job: job), label: displayName, backend: backend)
+        if sources.isEmpty {
+            startExport(.runJob(job: job), label: displayName, backend: backend)
+        } else {
+            startExport(.runResumable(job: job, sources: sources,
+                                      checkpointIntervalFrames: checkpointIntervalFrames),
+                        label: displayName, backend: backend)
+        }
     }
 
     /// Export a batch (one job per item, serial). Routed to
@@ -306,31 +356,124 @@ public final class ExportManager {
                     backend: backend)
     }
 
-    /// Cancel the in-flight export (D-G13). Sets `.cancelling`, then
-    /// `await coordinator?.cancel()` (the coordinator's flag is the authoritative
-    /// stop — checked between frames in `renderFrames`). The in-flight frame
-    /// finishes, the next iteration throws `.cancelled`, and `consumeTask`'s
-    /// catch sets `.cancelled` + clears `coordinator`/`consumeTask`.
+    /// Cancel the in-flight export (D-G13 + M6.1 D3). Now accepts `.running` AND
+    /// `.pausing` (cancel is symmetric and always reachable); from `.paused` it
+    /// discards the checkpoint + chunks and reaches `.cancelled`. Sets
+    /// `.cancelling`, then `await coordinator?.cancel()` (the coordinator's flag
+    /// is the authoritative stop — checked between frames/chunks). The in-flight
+    /// frame/chunk finishes, the next iteration throws `.cancelled`, and
+    /// `consumeTask`'s catch sets `.cancelled` + (for `.runResumable`) discards
+    /// the checkpoint (P3 — GUI cancel = abandon; the CLI's SIGINT path does NOT
+    /// discard, since it never reaches this VM).
     ///
     /// Does NOT `consumeTask?.cancel()` as the cancel path: the coordinator's
     /// inner `Task` is not a child of `consumeTask`, so `Task.cancel()` does not
     /// reach it; only `coordinator.cancel()` (the flag) does.
     public func cancel() async {
-        // Guard: nothing to cancel (idle, already cancelled, or consumeTask
-        // already completed and cleared the coordinator).
-        guard coordinator != nil else { return }
+        switch state {
+        case .running, .pausing:
+            state = .cancelling
+            await coordinator?.cancel()
+        case .paused(let out, _, _):
+            // Cancel-from-paused = discard + done (D3).
+            let container = readContainerFromCheckpoint(out: out) ?? .mov
+            ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
+            rememberedCheckpointURL = nil
+            state = .cancelled
+        default:
+            break   // idle/completed/failed/cancelled — no-op
+        }
+    }
+
+    /// M6.1: request a cooperative pause (spec §5.4). Idempotent under a double-
+    /// click (guard `state == .running` ⇒ a second click while `.pausing` is a
+    /// no-op). Sets `.pausing`, then `await coordinator?.pause()` (the actor
+    /// flag; `runResumableBody` throws `.paused` at the next chunk boundary).
+    /// `consumeTask`'s catch then sets `.paused(out, checkpoint, reason: nil)`.
+    /// No-op for `.runJob`/`.runBatch` (the legacy paths don't checkpoint; their
+    /// run loops ignore the flag — a pause on them is effectively ignored, which
+    /// is correct: there's nothing to resume).
+    public func pause() async {
         guard state == .running else { return }
-        state = .cancelling
-        await coordinator?.cancel()
+        state = .pausing
+        await coordinator?.pause()
+    }
+
+    /// M6.1: resume a paused export (spec §5.4). Rebuilds a coordinator via
+    /// `coordinatorFactory`, reacquires the sleep token (a resume is a new run),
+    /// and drives `coord.runResumable(..., resumeFrom: checkpoint)`. The
+    /// checkpoint's recipe is authoritative on resume; `sources:` is `[]` (the
+    /// checkpoint read in the resume branch supplies the sources — spec §5.3).
+    /// No-op unless `.paused`.
+    public func resume() async {
+        guard case .paused(let out, let checkpoint, _) = state else { return }
+        guard let job = resumableJob else { return }
+        let interval = resumableInterval
+        let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
+        let coord = coordinatorFactory(backend, true)
+        coordinator = coord
+        state = .running
+        acquireActivity()
+        consumeTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let stream = await coord.runResumable(job, sources: [],
+                                                      checkpointIntervalFrames: interval,
+                                                      resumeFrom: checkpoint)
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    self.applyETA(to: .single(event))
+                }
+                self.state = .completed(out)
+                self.rememberedCheckpointURL = nil
+            } catch {
+                self.handleRunError(error, out: out, isResumable: true)
+            }
+            self.releaseActivity()
+            self.coordinator = nil
+            self.consumeTask = nil
+            self.resetETAState()
+        }
+    }
+
+    /// M6.1: discard a paused export's checkpoint + chunks and return to idle
+    /// (spec §5.4 / D4). No coordinator is needed (pause nilled it) — the static
+    /// helper sweeps by the `emberweft-chunk-` prefix beside `out`. Resilient:
+    /// `readContainerFromCheckpoint` returns nil ⇒ `.mov` (the GUI mastering
+    /// default) so the sweep uses the right extension.
+    public func discardPaused() {
+        guard case .paused(let out, _, _) = state else { return }
+        let container = readContainerFromCheckpoint(out: out) ?? .mov
+        ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
+        rememberedCheckpointURL = nil
+        state = .idle
+        snapshot = .empty
+        sourceLabel = ""
+    }
+
+    /// M6.1: read just `settings.container` from the checkpoint beside `out`
+    /// (resilient — corrupt/missing ⇒ nil, callers default to `.mov`). Used by
+    /// `cancel()`/`discardPaused()` so the chunk sweep uses the right extension
+    /// without bloating the `.paused` state enum with a redundant container.
+    internal func readContainerFromCheckpoint(out: URL) -> ExportSettings.Container? {
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        guard let data = try? Data(contentsOf: cpURL),
+              let cp = try? JSONDecoder().decode(ExportCheckpoint.self, from: data) else {
+            return nil
+        }
+        return cp.settings.container
     }
 
     /// Reset to `.idle` (clears snapshot/result so the banner dismisses).
-    /// No-op while an export is in flight (safety).
+    /// No-op while an export is in flight (safety). D2 (spec §5.1): `.pausing`
+    /// behaves like `.running`/`.cancelling` (never reset mid-flight); `.paused`
+    /// resets to `.idle` (the caller owns discard via `discardPaused()` — reset
+    /// itself does NOT delete the checkpoint, it just clears the transient UI).
     public func reset() {
         switch state {
-        case .running, .cancelling:
+        case .running, .cancelling, .pausing:
             break
-        case .idle, .completed, .failed, .cancelled:
+        case .idle, .completed, .failed, .cancelled, .paused:
             state = .idle
             snapshot = .empty
             sourceLabel = ""
@@ -351,11 +494,13 @@ public final class ExportManager {
 
     // MARK: - Internals
 
-    /// What the entry point built. `runJob` covers single+sequence (one
-    /// continuous encode via `coordinator.run`); `runBatch` covers batch
-    /// (serial `coordinator.runBatch`).
+    /// What the entry point built. `runJob` covers the legacy single+sequence
+    /// path (one continuous encode via `coordinator.run`); `runResumable` (M6.1)
+    /// is the chunked+checkpointed single/sequence path (file-backed sources);
+    /// `runBatch` covers batch (serial `coordinator.runBatch`).
     private enum ExportKind {
         case runJob(job: ExportJob)
+        case runResumable(job: ExportJob, sources: [ExportCheckpoint.Source], checkpointIntervalFrames: Int)
         case runBatch(jobs: [ExportJob], baseDir: URL)
     }
 
@@ -432,6 +577,25 @@ public final class ExportManager {
         coordinator = coord
         state = .running
         acquireActivity()
+        // Resolve the completion URL + whether this run is resumable BEFORE the
+        // Task, so the catch ladder (which runs after a thrown error) can reach
+        // them without re-deriving from a partially-consumed `kind`.
+        let completionURL: URL
+        let isResumable: Bool
+        switch kind {
+        case .runJob(let job):
+            completionURL = job.out; isResumable = false
+        case .runResumable(let job, _, let interval):
+            completionURL = job.out; isResumable = true
+            // Remember for resume(): the checkpoint's recipe is authoritative on
+            // resume, but the VM still passes the original job (for `out`) and
+            // interval to the coordinator's resume entry. `sources` is consumed
+            // by the Task's own switch on `kind` below (re-bound there).
+            resumableJob = job
+            resumableInterval = interval
+        case .runBatch(_, let baseDir):
+            completionURL = baseDir; isResumable = false
+        }
         consumeTask = Task { [weak self] in
             // [weak self] is SAFE here: ExportManager is held by AppModel
             // (app-lifetime @State), so it is never released mid-export. Weak
@@ -439,7 +603,6 @@ public final class ExportManager {
             guard let self else { return }
             guard let coord = self.coordinator else { return }   // no force-unwrap
             do {
-                let completionURL: URL
                 switch kind {
                 case .runJob(let job):
                     let stream = await coord.run(job)
@@ -447,32 +610,104 @@ public final class ExportManager {
                         if Task.isCancelled { break }
                         self.applyETA(to: .single(event))
                     }
-                    completionURL = job.out
-                case .runBatch(let jobs, let baseDir):
+                case .runResumable(let job, let sources, let interval):
+                    let stream = await coord.runResumable(job, sources: sources,
+                                                          checkpointIntervalFrames: interval,
+                                                          resumeFrom: nil)
+                    for try await event in stream {
+                        if Task.isCancelled { break }
+                        self.applyETA(to: .single(event))
+                    }
+                case .runBatch(let jobs, _):
                     let stream = await coord.runBatch(jobs, failFast: false)
                     for try await event in stream {
                         if Task.isCancelled { break }
                         self.applyETA(to: .batch(event))
                     }
-                    completionURL = baseDir
                 }
                 self.state = .completed(completionURL)
-            } catch is CancellationError {
-                self.state = .cancelled
-            } catch ExportError.cancelled {
-                self.state = .cancelled
-            } catch ExportError.diskFull {
-                self.state = .failed("Not enough free disk space.")
-            } catch ExportError.metalUnavailable {
-                self.state = .failed("Metal is unavailable. Try the CPU backend.")
+                if isResumable {
+                    self.rememberedCheckpointURL = nil   // clean completion ⇒ no checkpoint to remember
+                }
             } catch {
-                self.state = .failed(error.localizedDescription)
+                self.handleRunError(error, out: completionURL, isResumable: isResumable)
             }
             // ALWAYS release the sleep token (G10), then clear the cycle.
             self.releaseActivity()
             self.coordinator = nil
             self.consumeTask = nil   // break self → consumeTask → task → self
             self.resetETAState()     // clear EMA so a later run starts cold
+        }
+    }
+
+    /// M6.1: the shared error→state catch ladder (spec §5.4 + P3 + P12). Branches
+    /// on `isResumable` because the recoverable→`.paused` mapping and the
+    /// cancel-discard BOTH apply ONLY to `.runResumable` runs (the only kind with
+    /// a checkpoint). For `.runJob`/`.runBatch` the existing `.failed`/`.cancelled`
+    /// mapping is preserved verbatim (no checkpoint exists).
+    ///
+    /// - P12: `.diskFull`/`.encodeFailed`/`.metalUnavailable` ⇒ `.paused(reason:)`
+    ///   when resumable (checkpoint survives for resume, D7); ⇒ `.failed` otherwise.
+    /// - P3: `.cancelled` ⇒ `.cancelled` AND discards checkpoint+chunks when
+    ///   resumable (D3 GUI-cancel-deletes; the CLI SIGINT path never reaches here).
+    /// - `.paused` (cooperative) ⇒ `.paused(out, checkpoint, reason: nil)`.
+    /// - `.checkpointSourceChanged`/`.checkpointUnreadable`/`.checkpointSchemaUnsupported`
+    ///   ⇒ `.failed` (terminal; the checkpoint can't be used).
+    private func handleRunError(_ error: Error, out: URL, isResumable: Bool) {
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        switch error {
+        case is CancellationError:
+            state = .cancelled
+            if isResumable {
+                let container = readContainerFromCheckpoint(out: out) ?? .mov
+                ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
+            }
+            rememberedCheckpointURL = nil
+        case ExportError.cancelled:
+            state = .cancelled
+            if isResumable {   // P3: GUI cancel = abandon (D3)
+                let container = readContainerFromCheckpoint(out: out) ?? .mov
+                ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
+            }
+            rememberedCheckpointURL = nil
+        case ExportError.paused:   // cooperative pause (only reachable from .runResumable)
+            state = .paused(out: out, checkpoint: cpURL, reason: nil)
+            rememberedCheckpointURL = cpURL
+        case ExportError.diskFull:
+            if isResumable {
+                state = .paused(out: out, checkpoint: cpURL,
+                                reason: "Not enough free disk space. Free space and resume.")
+                rememberedCheckpointURL = cpURL
+            } else {
+                state = .failed("Not enough free disk space.")
+            }
+        case ExportError.encodeFailed:
+            if isResumable {
+                state = .paused(out: out, checkpoint: cpURL,
+                                reason: "The video encoder failed. Resume from the last checkpoint.")
+                rememberedCheckpointURL = cpURL
+            } else {
+                state = .failed("The video encoder encountered an error.")
+            }
+        case ExportError.metalUnavailable:
+            if isResumable {
+                state = .paused(out: out, checkpoint: cpURL,
+                                reason: "Metal is unavailable. Switch to CPU and resume.")
+                rememberedCheckpointURL = cpURL
+            } else {
+                state = .failed("Metal is unavailable. Try the CPU backend.")
+            }
+        case ExportError.checkpointSourceChanged:
+            state = .failed("A source genome changed since the export was paused.")
+            rememberedCheckpointURL = nil
+        case ExportError.checkpointUnreadable:
+            state = .failed("The export checkpoint is unreadable. Start a new export.")
+            rememberedCheckpointURL = nil
+        case ExportError.checkpointSchemaUnsupported:
+            state = .failed("The export checkpoint format is unsupported by this version.")
+            rememberedCheckpointURL = nil
+        default:
+            state = .failed(error.localizedDescription)
         }
     }
 

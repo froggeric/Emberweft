@@ -95,7 +95,7 @@ final class RunResumableTests: XCTestCase {
 
         try await runJob(jobRun, backend: .cpu)
         let coord = ExportCoordinator(backend: .cpu)
-        let stream = await coord.runResumable(jobResumable, checkpointIntervalFrames: interval, resumeFrom: nil)
+        let stream = await coord.runResumable(jobResumable, sources: [], checkpointIntervalFrames: interval, resumeFrom: nil)
         for try await _ in stream {}
 
         let a = try await decodeFrames(outRun), b = try await decodeFrames(outResumable)
@@ -133,7 +133,7 @@ final class RunResumableTests: XCTestCase {
         let job = try makeJob(out: out, loopRepeatCount: 1)  // 16 global frames
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestPauseAfterChunk(1)  // pause at chunk-top of 1 (interval 8 → 2 chunks)
-        let stream = await coord.runResumable(job, checkpointIntervalFrames: 8, resumeFrom: nil)
+        let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
         do {
             for try await _ in stream {}
             XCTFail("expected ExportError.paused")
@@ -166,7 +166,7 @@ final class RunResumableTests: XCTestCase {
         let job = try makeJob(out: out, loopRepeatCount: 1)
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestCancelAfterChunk(1)
-        let stream = await coord.runResumable(job, checkpointIntervalFrames: 8, resumeFrom: nil)
+        let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
         do {
             for try await _ in stream {}
             XCTFail("expected ExportError.cancelled")
@@ -190,7 +190,7 @@ final class RunResumableTests: XCTestCase {
         let out = dir.appendingPathComponent("ok.mov")
         let job = try makeJob(out: out, loopRepeatCount: 1)
         let coord = ExportCoordinator(backend: .cpu)
-        let stream = await coord.runResumable(job, checkpointIntervalFrames: 4, resumeFrom: nil)
+        let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         for try await _ in stream {}
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "out must exist on success")
         let cp = ExportCheckpoint.checkpointURL(out: out)
@@ -235,7 +235,7 @@ final class RunResumableTests: XCTestCase {
         let job = try makeJob(out: out, loopRepeatCount: loopRepeatCount)
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestPauseAfterChunk(1)
-        let stream = await coord.runResumable(job, checkpointIntervalFrames: 8, resumeFrom: nil)
+        let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
         do {
             for try await _ in stream {}
             XCTFail("expected ExportError.paused")
@@ -264,7 +264,7 @@ final class RunResumableTests: XCTestCase {
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
         let stream = await resumeCoord.runResumable(try makeJob(out: outResume, loopRepeatCount: 1),
-                                                     checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                                     sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
         let a = try await decodeFrames(outFresh), b = try await decodeFrames(outResume)
@@ -293,7 +293,7 @@ final class RunResumableTests: XCTestCase {
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outCrash)
         let stream = await resumeCoord.runResumable(try makeJob(out: outCrash, loopRepeatCount: 1),
-                                                     checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                                     sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
         let a = try await decodeFrames(outFresh), b = try await decodeFrames(outCrash)
@@ -316,7 +316,7 @@ final class RunResumableTests: XCTestCase {
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: out)
         let stream = await resumeCoord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
-                                                     checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                                     sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         var first: ExportProgress?
         for try await p in stream {
             if first == nil { first = p }
@@ -351,7 +351,7 @@ final class RunResumableTests: XCTestCase {
 
         let coord = ExportCoordinator(backend: .cpu)
         let stream = await coord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
-                                              checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                              sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         do {
             for try await _ in stream {}
             XCTFail("expected ExportError.checkpointSourceChanged")
@@ -380,7 +380,7 @@ final class RunResumableTests: XCTestCase {
 
         let coord = ExportCoordinator(backend: .cpu)
         let stream = await coord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
-                                              checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                              sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}  // fresh start, completes normally
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path),
                       "schema mismatch → fresh start must still produce output")
@@ -408,7 +408,7 @@ final class RunResumableTests: XCTestCase {
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
         let stream = await resumeCoord.runResumable(try makeJob(out: outResume, loopRepeatCount: 1),
-                                                     checkpointIntervalFrames: 8, resumeFrom: cpURL)
+                                                     sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
         let a = try await decodeFrames(outFresh), b = try await decodeFrames(outResume)
@@ -465,7 +465,7 @@ final class RunResumableTests: XCTestCase {
                       framesPerSegment: 8, transitionFramesPerSegment: 8,
                       segmentCount: 2, selector: .sequential, seed: 42,
                       loopCycles: 1, stagger: 0, out: outResume, loopRepeatCount: 1),
-            checkpointIntervalFrames: 8, resumeFrom: cpURL)
+            sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
         let a = try await decodeFrames(outFresh), b = try await decodeFrames(outResume)

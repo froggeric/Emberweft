@@ -65,6 +65,15 @@ final class ExportManagerTests: XCTestCase {
             case batchYield([BatchProgress])
             /// `runBatch` throws immediately.
             case batchThrow(Error)
+            /// M6.1: `runResumable` fresh-run leg. Yields events then either
+            /// finishes (thenThrow == nil), throws immediately (non-`.paused`),
+            /// or — for `.paused` — parks until `pause()` finishes the stream
+            /// with `.paused` (the cooperative pause handshake; mirrors
+            /// `.yieldUntilCancelled`'s race-free cancel pattern).
+            case resumableYield([ExportProgress], thenThrow: Error?)
+            /// M6.1: `runResumable` resume leg (resumeFrom != nil). Yields
+            /// events then finishes (success).
+            case resumableResume([ExportProgress])
         }
 
         private let script: Script
@@ -75,8 +84,15 @@ final class ExportManagerTests: XCTestCase {
         private(set) var runBatchCalls: [(jobCount: Int, failFast: Bool)] = []
         private(set) var runBatchOuts: [URL] = []
         private(set) var runBatchLoopRepeatCounts: [Int] = []
+        private(set) var pauseCount = 0
+        private(set) var runResumableCalls = 0
+        /// Records the `resumeFrom` arg of each `runResumable` call (nil = fresh).
+        private(set) var runResumableResumeFromURLs: [URL?] = []
+        private(set) var runResumableSourcesCounts: [Int] = []
         private var cancelled = false
+        private var paused = false
         private var storedSingleCont: AsyncThrowingStream<ExportProgress, Error>.Continuation?
+        private var storedResumableCont: AsyncThrowingStream<ExportProgress, Error>.Continuation?
 
         init(script: Script) { self.script = script }
 
@@ -118,6 +134,10 @@ final class ExportManagerTests: XCTestCase {
                 // `run` got a batch script: no progress to yield; finish cleanly
                 // (a misconfigured test, not a real scenario).
                 cont.finish()
+            case .resumableYield, .resumableResume:
+                // `run` got a resumable script (belongs to `runResumable`): no
+                // progress to yield; finish cleanly (misconfigured, not real).
+                cont.finish()
             }
         }
 
@@ -147,20 +167,98 @@ final class ExportManagerTests: XCTestCase {
         func cancel() async {
             cancelCount += 1
             cancelled = true
-            let cont = storedSingleCont
+            let sCont = storedSingleCont
             storedSingleCont = nil
-            cont?.finish(throwing: ExportError.cancelled)
+            sCont?.finish(throwing: ExportError.cancelled)
+            // A resumable run parked for pause OR for cancel-until-cancelled is
+            // released here with `.cancelled` (cancel always wins the race).
+            let rCont = storedResumableCont
+            storedResumableCont = nil
+            rCont?.finish(throwing: ExportError.cancelled)
         }
 
-        /// M6.1 Task 4 ordering fix: minimal conforming stubs so the package
-        /// (incl. EmberweftUITests) keeps compiling after `runResumable`/`pause`
-        /// were added to `ExportCoordinating`. Task 6 (step 6.1) replaces these
-        /// with scripted behavior the VM pause/resume tests need.
-        func runResumable(_ job: ExportJob, checkpointIntervalFrames: Int,
+        // MARK: M6.1 runResumable + pause (scripted)
+
+        func runResumable(_ job: ExportJob, sources: [ExportCheckpoint.Source],
+                          checkpointIntervalFrames: Int,
                           resumeFrom checkpointURL: URL?) async -> AsyncThrowingStream<ExportProgress, Error> {
-            return AsyncThrowingStream { continuation in continuation.finish() }
+            runResumableCalls += 1
+            runResumableResumeFromURLs.append(checkpointURL)
+            runResumableSourcesCounts.append(sources.count)
+            return AsyncThrowingStream { continuation in
+                Task { [self] in
+                    await self.driveResumable(continuation, resumeFrom: checkpointURL)
+                }
+            }
         }
-        func pause() async { }
+
+        /// True iff `err` is `ExportError.paused` (helper — the script stores
+        /// the throw as an opaque `Error?`; pause-cooperation keys off this).
+        private func isPauseThrow(_ err: Error?) -> Bool {
+            guard let err = err else { return false }
+            return (err as? ExportError) == .paused
+        }
+
+        private func driveResumable(_ cont: AsyncThrowingStream<ExportProgress, Error>.Continuation,
+                                    resumeFrom: URL?) async {
+            if resumeFrom == nil {
+                // Fresh-run leg.
+                switch script {
+                case .resumableYield(let events, let thenThrow):
+                    for e in events { cont.yield(e) }
+                    if isPauseThrow(thenThrow) {
+                        // Cooperative pause: park until pause() (or cancel())
+                        // finishes the stream. Race-free under actor isolation:
+                        // if pause() already ran (paused == true) throw now.
+                        storedResumableCont = cont
+                        if paused {
+                            storedResumableCont = nil
+                            cont.finish(throwing: ExportError.paused)
+                        }
+                    } else if let err = thenThrow {
+                        cont.finish(throwing: err)
+                    } else {
+                        cont.finish()
+                    }
+                case .yieldUntilCancelled:
+                    // Reused on the resumable path for cancel-from-running and
+                    // cancel-from-pausing tests: park; only cancel() finishes
+                    // (with `.cancelled`). pause() records but does NOT finish.
+                    storedResumableCont = cont
+                    cont.yield(ExportProgress(phase: .rendering, currentFrame: 0,
+                                              totalFrames: 10, elapsed: 0, renderFPS: 30))
+                    if cancelled {
+                        storedResumableCont = nil
+                        cont.finish(throwing: ExportError.cancelled)
+                    }
+                default:
+                    cont.finish()
+                }
+            } else {
+                // Resume leg (resumeFrom != nil).
+                switch script {
+                case .resumableResume(let events):
+                    for e in events { cont.yield(e) }
+                    cont.finish()
+                default:
+                    cont.finish()
+                }
+            }
+        }
+
+        func pause() async {
+            pauseCount += 1
+            paused = true
+            // Only the cooperative-pause arm (.resumableYield with thenThrow ==
+            // .paused) wants pause() to finish its parked stream. Other arms
+            // (e.g. .yieldUntilCancelled, used for cancel-from-pausing) park but
+            // expect only cancel() to finish.
+            if case .resumableYield(_, let thenThrow) = script, isPauseThrow(thenThrow) {
+                let cont = storedResumableCont
+                storedResumableCont = nil
+                cont?.finish(throwing: ExportError.paused)
+            }
+        }
     }
 
     // MARK: - Helpers

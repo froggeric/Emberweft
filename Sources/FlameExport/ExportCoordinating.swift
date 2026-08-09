@@ -27,7 +27,18 @@ public protocol ExportCoordinating: Sendable {
     /// is a checkpoint URL to resume from (nil = fresh run). Satisfies the seam
     /// the same way `run` does (the actor's non-async isolated witness meets the
     /// `async` requirement via a cross-actor hop).
-    func runResumable(_ job: ExportJob, checkpointIntervalFrames: Int,
+    ///
+    /// `sources` is the D6-primary source-locator set (fileURL + flameIndex +
+    /// displayName) the caller (VM/CLI) threads from the loaded genomes. On a
+    /// FRESH run (`resumeFrom == nil`), non-empty `sources` activates the strong
+    /// determinism path: the checkpoint stores each source's `fileURL` + the
+    /// SHA-256 of its CURRENT bytes, so resume re-reads the exact source bytes
+    /// (a tampered file is caught by the hash check). Empty `sources` falls back
+    /// to the `serializedText` path (the coordinator serializes `job.flames`).
+    /// On a RESUME (`resumeFrom != nil`), `sources` is IGNORED — the checkpoint
+    /// read in the resume branch supplies the authoritative source set.
+    func runResumable(_ job: ExportJob, sources: [ExportCheckpoint.Source],
+                      checkpointIntervalFrames: Int,
                       resumeFrom checkpointURL: URL?) async -> AsyncThrowingStream<ExportProgress, Error>
     func cancel() async
     /// M6.1: cooperative pause — sets the `paused` flag, checked at each chunk

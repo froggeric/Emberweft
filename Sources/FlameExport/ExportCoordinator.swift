@@ -171,12 +171,13 @@ public actor ExportCoordinator: ExportCoordinating {
     /// `.cancelled` (P3: the coordinator does NOT discard on cancel — discard is
     /// the caller's job; it cannot tell GUI Cancel from CLI SIGINT apart). Same
     /// unstructured-Task + Sendable-continuation shape as `run`/`runLongForm`.
-    public func runResumable(_ job: ExportJob, checkpointIntervalFrames: Int,
+    public func runResumable(_ job: ExportJob, sources: [ExportCheckpoint.Source],
+                             checkpointIntervalFrames: Int,
                              resumeFrom checkpointURL: URL?) -> AsyncThrowingStream<ExportProgress, Error> {
         AsyncThrowingStream { continuation in
             Task { [self] in
                 do {
-                    try await self.runResumableBody(job, interval: checkpointIntervalFrames,
+                    try await self.runResumableBody(job, sources: sources, interval: checkpointIntervalFrames,
                                                    resumeFrom: checkpointURL) { p in continuation.yield(p) }
                     continuation.finish()
                 } catch {
@@ -599,7 +600,8 @@ public actor ExportCoordinator: ExportCoordinating {
     /// delete chunks on pause). Discard happens exclusively on success (here)
     /// and via the VM/`discardPaused` (caller — the coordinator cannot
     /// distinguish GUI Cancel from CLI SIGINT).
-    private func runResumableBody(_ job: ExportJob, interval: Int, resumeFrom: URL?,
+    private func runResumableBody(_ job: ExportJob, sources passedSources: [ExportCheckpoint.Source],
+                                  interval: Int, resumeFrom: URL?,
                                   yield: @Sendable (ExportProgress) -> Void) async throws {
         // P10: a leftover `paused` from a prior run must not poison this one.
         paused = false
@@ -679,7 +681,7 @@ public actor ExportCoordinator: ExportCoordinating {
                 loopCycles: job.loopCycles, stagger: job.stagger, out: job.out,
                 loopRepeatCount: job.loopRepeatCount, checkpointIntervalFrames: interval,
                 totalGlobalFrames: total, completedChunkIndexes: [],
-                sources: Self.freshSources(for: job))
+                sources: Self.finalizeFreshSources(passed: passedSources, for: job))
         }
         var completed = cp.completedChunkIndexes
         let chunkCount = cp.chunkCount
@@ -789,6 +791,33 @@ public actor ExportCoordinator: ExportCoordinating {
             ExportCheckpoint.Source(fileURL: nil, flameIndex: 0, sha256: nil,
                                     serializedText: Flam3Serializer.serialize([flame]),
                                     displayName: "flame \(i)")
+        }
+    }
+
+    /// D6-primary source finalization for a fresh run. The caller (VM/CLI)
+    /// threads `sources` from the loaded genomes' file URLs; this fills the
+    /// SHA-256 of each URL's CURRENT bytes so the checkpoint locks the source
+    /// content (a later tamper is caught on resume by `reparseSources`'s hash
+    /// check). A URL-less source keeps its `serializedText` (the caller may have
+    /// pre-serialized an in-memory flame). When the caller passed NO sources
+    /// (`passed.isEmpty` — the Task-4/5 fallback, and the CLI's URL-less path),
+    /// this falls back to `freshSources(for:)` so those tests stay valid.
+    /// Determinism (rule #2): SHA-256 is a pure function of the file bytes; no
+    /// Dict/Set iteration is involved.
+    private static func finalizeFreshSources(passed: [ExportCheckpoint.Source],
+                                             for job: ExportJob) -> [ExportCheckpoint.Source] {
+        guard !passed.isEmpty else { return freshSources(for: job) }
+        return passed.map { source in
+            if let fileURL = source.fileURL {
+                let hash: String? = (try? Data(contentsOf: fileURL)).map {
+                    SHA256.hash(data: $0).map { String(format: "%02x", Int($0)) }.joined()
+                }
+                return ExportCheckpoint.Source(
+                    fileURL: fileURL, flameIndex: source.flameIndex,
+                    sha256: hash, serializedText: nil, displayName: source.displayName)
+            } else {
+                return source   // already carries serializedText (URL-less flame)
+            }
         }
     }
 
