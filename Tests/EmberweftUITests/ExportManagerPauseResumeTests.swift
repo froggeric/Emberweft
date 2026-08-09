@@ -473,4 +473,186 @@ final class ExportManagerPauseResumeTests: XCTestCase {
         await vm.resume()   // idle
         XCTAssertEqual(vm.state, .idle, "resume from .idle ⇒ no-op")
     }
+
+    // MARK: - Launch synth (Task 7 / spec §5.5)
+
+    /// A valid, decodable checkpoint at the remembered URL ⇒ synth sets `.paused`
+    /// with the checkpoint's stored `out`; coordinator stays nil (Resume rebuilds
+    /// it via `coordinatorFactory`). The banner can offer Resume/Discard with no
+    /// coordinator running.
+    func testSynthesizePausedStateWithValidCheckpoint() throws {
+        let vm = ExportManager()
+        let out = outURL("synth-valid")
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        try writeCheckpoint(out: out)
+        vm.rememberedCheckpointURL = cpURL
+
+        vm.synthesizePausedStateIfNeeded()
+        guard case .paused(let pausedOut, let pausedCP, let reason) = vm.state else {
+            return XCTFail("valid checkpoint ⇒ .paused, got \(vm.state)")
+        }
+        XCTAssertEqual(pausedOut, out, "synth uses the checkpoint's stored `out`")
+        XCTAssertEqual(pausedCP, cpURL, "synth carries the remembered checkpoint URL")
+        XCTAssertNil(reason, "synth ⇒ reason nil (a user-style pause; non-nil = recoverable error)")
+    }
+
+    /// Missing checkpoint file ⇒ `.idle`, no crash (D14); the stale remembered URL
+    /// is cleared via the hook so a later launch doesn't re-try.
+    func testSynthesizePausedStateMissingCheckpointLeavesIdle() {
+        let vm = ExportManager()
+        var hookWrites: [URL?] = []
+        vm.writeRememberedCheckpointURL = { hookWrites.append($0) }
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("emberweft-nonexistent-\(UUID().uuidString).json")
+        vm.rememberedCheckpointURL = missing
+
+        vm.synthesizePausedStateIfNeeded()
+        XCTAssertEqual(vm.state, .idle, "missing checkpoint ⇒ .idle (D14)")
+        XCTAssertNil(vm.rememberedCheckpointURL, "stale remembered URL cleared on missing")
+        XCTAssertTrue(hookWrites.contains(nil), "missing ⇒ clear forwarded via the hook")
+    }
+
+    /// Corrupt checkpoint file ⇒ `.idle`, no crash (D14); stale remembered URL cleared.
+    func testSynthesizePausedStateCorruptCheckpointLeavesIdle() throws {
+        let vm = ExportManager()
+        let out = outURL("synth-corrupt")
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        try Data("{ this is not a valid checkpoint".utf8).write(to: cpURL)
+        vm.rememberedCheckpointURL = cpURL
+
+        vm.synthesizePausedStateIfNeeded()
+        XCTAssertEqual(vm.state, .idle, "corrupt checkpoint ⇒ .idle, no crash (D14)")
+        XCTAssertNil(vm.rememberedCheckpointURL, "stale remembered URL cleared on corrupt")
+    }
+
+    /// Synth is a no-op when the VM is not `.idle` (never overwrites a live state).
+    func testSynthesizeNoOpWhenNotIdle() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let out = outURL("synth-noop")
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        try? writeCheckpoint(out: out)
+        vm.rememberedCheckpointURL = cpURL
+
+        installFake(vm, script: .yieldUntilCancelled)
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: out,
+                              seed: 1, sources: sources())
+        XCTAssertEqual(vm.state, .running)
+
+        vm.synthesizePausedStateIfNeeded()
+        XCTAssertEqual(vm.state, .running, "synth must not overwrite a non-.idle state")
+
+        await vm.cancel()
+        await vm.awaitCompletion()
+    }
+
+    /// Synth is a no-op when the remembered URL is nil (nothing to resume).
+    func testSynthesizeNoOpWhenRememberedURLNil() {
+        let vm = ExportManager()
+        vm.synthesizePausedStateIfNeeded()
+        XCTAssertEqual(vm.state, .idle)
+    }
+
+    // MARK: - writeRememberedCheckpointURL hook (Task 7)
+
+    /// `pause()` writes the remembered URL THROUGH the hook (so AppPreferences
+    /// persists it). Observed via the hook — the VM is tested in isolation with
+    /// no AppPreferences/AppModel.
+    func testPauseWritesRememberedCheckpointURLViaHook() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let out = outURL("hook-pause")
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        var written: [URL?] = []
+        vm.writeRememberedCheckpointURL = { written.append($0) }
+
+        installFake(vm, script: .resumableYield(
+            [progressEvent(frame: 2, total: 4)], thenThrow: ExportError.paused))
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: out,
+                              seed: 1, sources: sources())
+        await vm.pause()
+        await vm.awaitCompletion()
+        guard case .paused = vm.state else { return XCTFail("expected .paused, got \(vm.state)") }
+        XCTAssertTrue(written.contains(cpURL),
+                      "pause must forward the checkpoint URL via the hook")
+        XCTAssertEqual(vm.rememberedCheckpointURL, cpURL,
+                       "in-memory copy and hook write agree")
+    }
+
+    /// `.completed` reached via resume clears the remembered URL THROUGH the hook
+    /// (nil forwarded). Proves the resume→completed path persists the clear.
+    func testResumeCompletedClearsRememberedCheckpointURLViaHook() async {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let out = outURL("hook-completed")
+        let cpURL = ExportCheckpoint.checkpointURL(out: out)
+        var written: [URL?] = []
+        vm.writeRememberedCheckpointURL = { written.append($0) }
+
+        let pauseFake = FakeCoordinator(script: .resumableYield(
+            [progressEvent(frame: 1, total: 3)], thenThrow: ExportError.paused))
+        let resumeFake = FakeCoordinator(script: .resumableResume([progressEvent(frame: 3, total: 3)]))
+        var factoryCall = 0
+        vm.coordinatorFactory = { _, _ in
+            factoryCall += 1
+            return factoryCall == 1 ? pauseFake : resumeFake
+        }
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: out,
+                              seed: 1, sources: sources())
+        await vm.pause()
+        await vm.awaitCompletion()
+        XCTAssertTrue(written.contains(cpURL), "pause forwarded the URL via the hook")
+
+        await vm.resume()
+        await vm.awaitCompletion()
+        XCTAssertEqual(vm.state, .completed(out))
+        XCTAssertTrue(written.contains(nil),
+                      "completed must clear the URL via the hook (nil forwarded)")
+    }
+
+    /// `discardPaused()` clears the remembered URL THROUGH the hook.
+    func testDiscardPausedClearsRememberedCheckpointURLViaHook() async throws {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let out = outURL("hook-discard")
+        var written: [URL?] = []
+        vm.writeRememberedCheckpointURL = { written.append($0) }
+
+        let pauseFake = FakeCoordinator(script: .resumableYield(
+            [progressEvent(frame: 1, total: 2)], thenThrow: ExportError.paused))
+        vm.coordinatorFactory = { _, _ in pauseFake }
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: out,
+                              seed: 1, sources: sources())
+        await vm.pause()
+        await vm.awaitCompletion()
+        guard case .paused = vm.state else { return XCTFail("expected .paused") }
+        try writeCheckpoint(out: out)   // seed the file discardPaused will sweep
+
+        vm.discardPaused()
+        XCTAssertEqual(vm.state, .idle)
+        XCTAssertTrue(written.contains(nil), "discardPaused must clear the URL via the hook")
+    }
+
+    /// `cancel()` from `.paused` clears the remembered URL THROUGH the hook (the
+    /// cancel-from-paused discard path also persists the clear).
+    func testCancelFromPausedClearsRememberedCheckpointURLViaHook() async throws {
+        let vm = ExportManager()
+        useNoOpSleepHooks(vm)
+        let out = outURL("hook-cancel")
+        var written: [URL?] = []
+        vm.writeRememberedCheckpointURL = { written.append($0) }
+        let pauseFake = FakeCoordinator(script: .resumableYield(
+            [progressEvent(frame: 1, total: 2)], thenThrow: ExportError.paused))
+        vm.coordinatorFactory = { _, _ in pauseFake }
+        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: out,
+                              seed: 1, sources: sources())
+        await vm.pause()
+        await vm.awaitCompletion()
+        guard case .paused = vm.state else { return XCTFail("expected .paused") }
+        try writeCheckpoint(out: out)
+
+        await vm.cancel()
+        XCTAssertEqual(vm.state, .cancelled)
+        XCTAssertTrue(written.contains(nil), "cancel from .paused must clear the URL via the hook")
+    }
 }

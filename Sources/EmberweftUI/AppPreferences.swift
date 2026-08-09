@@ -65,6 +65,14 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// `AppPreferences` via the `.onChange(of: model.prefs)` save.
     public var density: Density
 
+    /// M6.1 D4: the most recent paused-export checkpoint URL, remembered across
+    /// relaunches so the banner can re-offer Resume/Discard after a quit/crash.
+    /// Additive (decodes as nil for older prefs files without the key — P11).
+    /// `ExportManager` owns the runtime mutations via its `writeRememberedCheckpointURL`
+    /// hook (which writes back here + saves); this field is the persisted source
+    /// AppModel seeds the VM from at launch.
+    public var rememberedCheckpointURL: URL?
+
     public init(
         qualityPreset: QualityPreset = .medium,
         targetFPS: Int = 60,
@@ -83,7 +91,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         previewOversample: Int = 1,
         previewPreset: PreviewPreset = .draft,
         seed: UInt64 = 1,
-        density: Density = .medium
+        density: Density = .medium,
+        rememberedCheckpointURL: URL? = nil
     ) {
         self.qualityPreset = qualityPreset
         self.targetFPS = targetFPS
@@ -103,6 +112,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.previewPreset = previewPreset
         self.seed = seed
         self.density = density
+        self.rememberedCheckpointURL = rememberedCheckpointURL
     }
 
     // MARK: - Codable (additive: `density` defaults when absent; legacy
@@ -118,6 +128,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         case thumbnailRenderWidth, thumbnailRenderHeight, thumbnailSPP
         case previewSamplesPerPixel, previewWidth, previewHeight
         case previewOversample, previewPreset, seed, density
+        case rememberedCheckpointURL
     }
 
     /// Legacy key kept ONLY for one-way migration from the pre-multi-folder
@@ -160,6 +171,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.previewPreset = try c.decodeIfPresent(PreviewPreset.self, forKey: .previewPreset) ?? .draft
         self.seed = try c.decode(UInt64.self, forKey: .seed)
         self.density = try c.decodeIfPresent(AppPreferences.Density.self, forKey: .density) ?? .medium
+        // M6.1 D4: additive — older prefs without the key decode to nil (P11).
+        self.rememberedCheckpointURL = try c.decodeIfPresent(URL.self, forKey: .rememberedCheckpointURL)
     }
 
     // MARK: - Directory sources (multi-folder)

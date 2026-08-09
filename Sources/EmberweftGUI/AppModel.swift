@@ -113,6 +113,20 @@ final class AppModel {
         self.metadataStore = mdStore
         let (cStore, _) = CollectionsStore.loadResilient()
         self.collectionsStore = cStore
+
+        // M6.1 Task 7 / spec §5.5: re-offer Resume/Discard after a quit/crash.
+        // Seed the VM's remembered URL from prefs, wire the write-back hook so
+        // subsequent pause/clear mutations persist, then synthesize `.paused`
+        // iff the checkpoint still exists + decodes (missing/corrupt ⇒ `.idle`).
+        // The seed assignment intentionally bypasses the VM's hook (its value
+        // came FROM prefs); the hook is for later mutations only.
+        exportManager.rememberedCheckpointURL = prefs.rememberedCheckpointURL
+        exportManager.writeRememberedCheckpointURL = { [weak self] url in
+            guard let self else { return }
+            self.prefs.rememberedCheckpointURL = url
+            try? self.prefs.save()
+        }
+        exportManager.synthesizePausedStateIfNeeded()
     }
 
     /// Liked genomes (sentiment == +1) across all loaded sections. Folder order

@@ -153,10 +153,20 @@ public final class ExportManager {
 
     /// M6.1: the most recent paused-export checkpoint URL. Written when the run
     /// pauses (spec §5.4) and cleared on `.completed` / discard / cancel. Task 7
-    /// persists this across relaunches via a write-back hook; here it is the
-    /// VM-authoritative copy the state machine + tests observe. `internal` so
-    /// `EmberweftUITests` can assert it (Task 7 promotes the wiring).
-    internal private(set) var rememberedCheckpointURL: URL?
+    /// persists this across relaunches via the `writeRememberedCheckpointURL` hook;
+    /// here it is the VM-authoritative copy the state machine + tests observe.
+    /// `public var` so AppModel (EmberweftGUI) can SEED it from prefs at launch;
+    /// every internal MUTATION routes through `setRememberedCheckpointURL(_:)` so
+    /// the hook fires (the seed assignment intentionally bypasses the hook — its
+    /// value came FROM prefs).
+    public var rememberedCheckpointURL: URL?
+
+    /// M6.1 Task 7: write-back hook forwarding every `rememberedCheckpointURL`
+    /// mutation to AppPreferences (via AppModel) so it survives relaunches.
+    /// Default no-op so the VM stays unit-testable WITHOUT AppPreferences/AppModel;
+    /// AppModel installs the real `{ prefs.rememberedCheckpointURL = url; save() }`.
+    /// `public` so EmberweftGUI (a separate module) can install the closure.
+    public var writeRememberedCheckpointURL: (URL?) -> Void = { _ in }
 
     // MARK: - In-flight state (private)
 
@@ -378,7 +388,7 @@ public final class ExportManager {
             // Cancel-from-paused = discard + done (D3).
             let container = readContainerFromCheckpoint(out: out) ?? .mov
             ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
             state = .cancelled
         default:
             break   // idle/completed/failed/cancelled — no-op
@@ -425,7 +435,7 @@ public final class ExportManager {
                     self.applyETA(to: .single(event))
                 }
                 self.state = .completed(out)
-                self.rememberedCheckpointURL = nil
+                self.setRememberedCheckpointURL(nil)
             } catch {
                 self.handleRunError(error, out: out, isResumable: true)
             }
@@ -445,7 +455,7 @@ public final class ExportManager {
         guard case .paused(let out, _, _) = state else { return }
         let container = readContainerFromCheckpoint(out: out) ?? .mov
         ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
-        rememberedCheckpointURL = nil
+        setRememberedCheckpointURL(nil)
         state = .idle
         snapshot = .empty
         sourceLabel = ""
@@ -462,6 +472,43 @@ public final class ExportManager {
             return nil
         }
         return cp.settings.container
+    }
+
+    /// M6.1 Task 7: the SINGLE funnel for `rememberedCheckpointURL` mutations.
+    /// Writes the in-memory authoritative copy AND forwards to the persistence
+    /// hook (`writeRememberedCheckpointURL`) so AppPreferences/AppModel stay in
+    /// sync. Every state-machine assignment MUST route through here so launch-synth
+    /// reflects the last pause and `.completed`/discard/cancel clear it persistently.
+    /// (The launch SEED assignment in AppModel bypasses this — its value came FROM
+    /// prefs; re-saving would be a redundant no-op.)
+    private func setRememberedCheckpointURL(_ url: URL?) {
+        rememberedCheckpointURL = url
+        writeRememberedCheckpointURL(url)
+    }
+
+    /// M6.1 Task 7 / spec §5.5: launch-time synth. If `rememberedCheckpointURL`
+    /// points at a checkpoint that exists + decodes, synthesize
+    /// `.paused(out:checkpoint:reason:nil)` so the banner offers Resume/Discard
+    /// with NO coordinator running (Resume rebuilds it via `coordinatorFactory`).
+    /// Missing / corrupt / unreadable ⇒ leave `.idle`, no crash (D14); the stale
+    /// remembered URL is cleared via the hook so a later launch doesn't re-try.
+    /// Only fires from `.idle` (never overwrites a live state). Called once by
+    /// AppModel after seeding the URL + wiring the hook.
+    public func synthesizePausedStateIfNeeded() {
+        guard state == .idle else { return }
+        guard let url = rememberedCheckpointURL else { return }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            setRememberedCheckpointURL(nil)   // stale — checkpoint gone
+            return
+        }
+        guard let data = try? Data(contentsOf: url),
+              let cp = try? JSONDecoder().decode(ExportCheckpoint.self, from: data) else {
+            setRememberedCheckpointURL(nil)   // corrupt — no crash (D14)
+            return
+        }
+        // Valid checkpoint ⇒ synthesize .paused. The remembered URL already holds
+        // `url` (read above), so no hook re-fire is needed on the success path.
+        state = .paused(out: cp.out, checkpoint: url, reason: nil)
     }
 
     /// Reset to `.idle` (clears snapshot/result so the banner dismisses).
@@ -627,7 +674,7 @@ public final class ExportManager {
                 }
                 self.state = .completed(completionURL)
                 if isResumable {
-                    self.rememberedCheckpointURL = nil   // clean completion ⇒ no checkpoint to remember
+                    self.setRememberedCheckpointURL(nil)   // clean completion ⇒ no checkpoint to remember
                 }
             } catch {
                 self.handleRunError(error, out: completionURL, isResumable: isResumable)
@@ -662,22 +709,22 @@ public final class ExportManager {
                 let container = readContainerFromCheckpoint(out: out) ?? .mov
                 ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
             }
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
         case ExportError.cancelled:
             state = .cancelled
             if isResumable {   // P3: GUI cancel = abandon (D3)
                 let container = readContainerFromCheckpoint(out: out) ?? .mov
                 ExportCoordinator.discardCheckpointAndChunks(out: out, container: container)
             }
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
         case ExportError.paused:   // cooperative pause (only reachable from .runResumable)
             state = .paused(out: out, checkpoint: cpURL, reason: nil)
-            rememberedCheckpointURL = cpURL
+            setRememberedCheckpointURL(cpURL)
         case ExportError.diskFull:
             if isResumable {
                 state = .paused(out: out, checkpoint: cpURL,
                                 reason: "Not enough free disk space. Free space and resume.")
-                rememberedCheckpointURL = cpURL
+                setRememberedCheckpointURL(cpURL)
             } else {
                 state = .failed("Not enough free disk space.")
             }
@@ -685,7 +732,7 @@ public final class ExportManager {
             if isResumable {
                 state = .paused(out: out, checkpoint: cpURL,
                                 reason: "The video encoder failed. Resume from the last checkpoint.")
-                rememberedCheckpointURL = cpURL
+                setRememberedCheckpointURL(cpURL)
             } else {
                 state = .failed("The video encoder encountered an error.")
             }
@@ -693,19 +740,19 @@ public final class ExportManager {
             if isResumable {
                 state = .paused(out: out, checkpoint: cpURL,
                                 reason: "Metal is unavailable. Switch to CPU and resume.")
-                rememberedCheckpointURL = cpURL
+                setRememberedCheckpointURL(cpURL)
             } else {
                 state = .failed("Metal is unavailable. Try the CPU backend.")
             }
         case ExportError.checkpointSourceChanged:
             state = .failed("A source genome changed since the export was paused.")
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
         case ExportError.checkpointUnreadable:
             state = .failed("The export checkpoint is unreadable. Start a new export.")
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
         case ExportError.checkpointSchemaUnsupported:
             state = .failed("The export checkpoint format is unsupported by this version.")
-            rememberedCheckpointURL = nil
+            setRememberedCheckpointURL(nil)
         default:
             state = .failed(error.localizedDescription)
         }

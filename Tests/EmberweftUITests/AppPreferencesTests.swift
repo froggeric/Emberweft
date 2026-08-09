@@ -301,4 +301,56 @@ final class AppPreferencesTests: XCTestCase {
                            "detail should mention the preset's spp")
         }
     }
+
+    // MARK: - rememberedCheckpointURL (M6.1 D4)
+
+    /// Default is nil (no remembered paused export).
+    func testRememberedCheckpointURLDefaultsToNil() {
+        XCTAssertNil(AppPreferences().rememberedCheckpointURL)
+    }
+
+    /// The URL round-trips through save/load (encode is synthesized from the
+    /// CodingKey; decode is additive via decodeIfPresent).
+    func testRememberedCheckpointURLRoundTrips() throws {
+        let dir = try tempDir()
+        var prefs = AppPreferences()
+        let url = URL(fileURLWithPath: "/tmp/test.emberweft-export.json")
+        prefs.rememberedCheckpointURL = url
+        try prefs.save(directory: dir)
+
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertEqual(loaded.rememberedCheckpointURL?.path, url.path)
+        XCTAssertEqual(loaded, prefs, "full struct must round-trip including the new field")
+    }
+
+    /// A pre-M6.1 `preferences.json` (no `rememberedCheckpointURL` key) must load
+    /// with nil rather than failing/quarantining — the field is purely additive
+    /// (custom decoder uses decodeIfPresent). Guards against a schema break on upgrade.
+    func testLegacyPrefsMissingRememberedCheckpointURLLoadsNil() throws {
+        let dir = try tempDir()
+        let json = """
+        {"backend":"metal","defaultSamplesPerPixel":8,"density":"medium",
+         "directorySources":[],"previewHeight":480,"previewSamplesPerPixel":2,
+         "previewWidth":854,"previewPreset":"draft","previewOversample":1,
+         "qualityPreset":"medium","seed":1,"targetFPS":60,
+         "thumbnailBackend":"metal","thumbnailHeight":144,"thumbnailRenderHeight":720,
+         "thumbnailRenderWidth":1280,"thumbnailSPP":8,"thumbnailWidth":256}
+        """
+        try Data(json.utf8).write(to: dir.appendingPathComponent("preferences.json"))
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertNil(loaded.rememberedCheckpointURL,
+                     "legacy file without the field must decode to nil (additive — P11)")
+        XCTAssertEqual(loaded.backend, .metal)
+    }
+
+    /// `nil` (explicit) also round-trips — encoded as JSON null and decoded back
+    /// to nil by decodeIfPresent.
+    func testRememberedCheckpointURLNilRoundTrips() throws {
+        let dir = try tempDir()
+        let prefs = AppPreferences()
+        XCTAssertNil(prefs.rememberedCheckpointURL)
+        try prefs.save(directory: dir)
+        let loaded = AppPreferences.load(directory: dir)
+        XCTAssertNil(loaded.rememberedCheckpointURL)
+    }
 }
