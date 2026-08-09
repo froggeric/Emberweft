@@ -336,25 +336,16 @@ struct ExportSheet: View {
         case .single(let flame, let name, let fileURL):
             // P8: ALWAYS thread a source so the VM routes to the pausable
             // `.runResumable` path (not the `.runJob` fallback). File-backed ⇒
-            // SHA-256-gated resume (the D6-strong path).
-            let sources = [ExportCheckpoint.Source(
-                fileURL: fileURL, flameIndex: 0, sha256: nil,
-                serializedText: nil, displayName: name)]
+            // SHA-256-gated resume (the D6-strong path). Construction is in the
+            // tested `ExportSources` helper (flameIndex/serializedText logic).
+            let sources = ExportSources.single(flame: flame, fileURL: fileURL, displayName: name)
             await model.exportManager.exportSingle(flame: flame, displayName: name,
                                                    out: resolved, seed: s, sources: sources)
         case .sequence(let flames, let name, let fileURLs):
-            // P8: one source per flame. A nil `fileURL` slot falls back to the
-            // flame's `serializedText` so the checkpoint is still resumable (the
-            // D6 text path — weaker than URL+hash, but correct).
-            let sources = flames.enumerated().map { (i, flame) -> ExportCheckpoint.Source in
-                let url = fileURLs?[i]
-                return ExportCheckpoint.Source(
-                    fileURL: url,
-                    flameIndex: i,
-                    sha256: nil,
-                    serializedText: url == nil ? Flam3Serializer.serialize([flame]) : nil,
-                    displayName: "\(name) #\(i + 1)")
-            }
+            // P8: one source per flame via the tested `ExportSources` helper.
+            // flameIndex is the within-source parse index (0), NOT the sequence
+            // position — see ExportSources.sequence.
+            let sources = ExportSources.sequence(flames: flames, fileURLs: fileURLs, displayName: name)
             await model.exportManager.exportSequence(flames: flames, displayName: name,
                                                     out: resolved, seed: s, sources: sources)
         case .batch(let items):
