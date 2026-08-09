@@ -151,6 +151,16 @@ final class ExportManagerTests: XCTestCase {
             storedSingleCont = nil
             cont?.finish(throwing: ExportError.cancelled)
         }
+
+        /// M6.1 Task 4 ordering fix: minimal conforming stubs so the package
+        /// (incl. EmberweftUITests) keeps compiling after `runResumable`/`pause`
+        /// were added to `ExportCoordinating`. Task 6 (step 6.1) replaces these
+        /// with scripted behavior the VM pause/resume tests need.
+        func runResumable(_ job: ExportJob, checkpointIntervalFrames: Int,
+                          resumeFrom checkpointURL: URL?) async -> AsyncThrowingStream<ExportProgress, Error> {
+            return AsyncThrowingStream { continuation in continuation.finish() }
+        }
+        func pause() async { }
     }
 
     // MARK: - Helpers

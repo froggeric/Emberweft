@@ -55,14 +55,15 @@ final class RenderFramesInterleavedTests: XCTestCase {
         return mx
     }
 
-    /// P9: a temporary INTERNAL test wrapper that delegates to the shared
-    /// `buildRenderContext` (NO logic duplication) — opens one VideoEncoder at
-    /// `job.out`, runs `renderFramesInterleaved` over `0..<plan.totalFrames`,
-    /// finish()es, returns `job.out`. DELETED in Task 4 once `runResumable`
-    /// (interval >= total) covers this one-chunk case.
+    /// Migrated in Task 4: the temporary `_testRenderInterleavedToDisk` wrapper
+    /// is deleted now that `runResumable(interval >= total)` covers the
+    /// one-chunk case. The byte-identity proof routes through the REAL resumable
+    /// path (one chunk = the whole timeline) — same `maxAbsDiff == 0` pin.
     private func renderInterleaved(_ job: ExportJob, backend: ExportCoordinator.Backend) async throws -> URL {
         let coord = ExportCoordinator(backend: backend)
-        return try await coord._testRenderInterleavedToDisk(job: job)
+        let stream = await coord.runResumable(job, checkpointIntervalFrames: 999_999, resumeFrom: nil)
+        for try await _ in stream {}
+        return job.out
     }
 
     private func runJob(_ job: ExportJob, backend: ExportCoordinator.Backend) async throws {

@@ -45,6 +45,18 @@ public actor ExportCoordinator: ExportCoordinating {
     /// cached frame. Pure side-channel.
     internal private(set) var appendedFrameCount: Int = 0
 
+    /// M6.1 test seams (deterministic between-chunk pause/cancel for
+    /// `RunResumableTests`). The value is the chunkIndex at whose TOP the flag
+    /// flips — so to keep chunk 0 and stop before chunk 1, set `1`. They set the
+    /// SAME `paused`/`cancelled` flags the real `pause()`/`cancel()` set, so the
+    /// exact chunk-top code path is exercised (not a parallel path). Production
+    /// code never reads these. Set via the actor-isolated setters below (an
+    /// actor's stored properties cannot be written directly from outside).
+    internal var _testPauseAfterChunk: Int?
+    internal var _testCancelAfterChunk: Int?
+    internal func _setTestPauseAfterChunk(_ index: Int?) { _testPauseAfterChunk = index }
+    internal func _setTestCancelAfterChunk(_ index: Int?) { _testCancelAfterChunk = index }
+
     /// `backend` is the ALREADY-RESOLVED choice. Metal availability + the
     /// `--strict-backend` fallback/refuse decision are made by `ExportCommand`
     /// (which can `await MainActor.run { MetalRenderer.isAvailable }` from its
@@ -81,6 +93,14 @@ public actor ExportCoordinator: ExportCoordinating {
     }
 
     public func cancel() async { cancelled = true }
+
+    /// M6.1: cooperative pause. Sets the `paused` flag, checked at each chunk
+    /// top (and per-frame inside `renderFramesInterleaved`) in `runResumableBody`.
+    /// The in-flight chunk is abandoned (its temp is removed; it is NOT
+    /// checkpointed) and re-renders from its start on resume. The checkpoint +
+    /// completed chunks survive. `paused` is reset to `false` at the top of
+    /// `runResumableBody` (P10) so a second run after a pause does not re-throw.
+    public func pause() async { paused = true }
 
     /// Batch (serial) export. Runs `jobs` in input array order on ONE
     /// `ExportCoordinator` (self) — Metal is single-device, so serial dispatch
@@ -137,6 +157,30 @@ public actor ExportCoordinator: ExportCoordinating {
             Task { [self] in
                 do { try await self.runLongFormJob(job) { p in continuation.yield(p) }; continuation.finish() }
                 catch { continuation.finish(throwing: error) }
+            }
+        }
+    }
+
+    /// M6.1: resumable dispatch (fresh-run path; resume is Task 5). Chunks the
+    /// timeline at frame-count edges, encodes each chunk via
+    /// `renderFramesInterleaved` (byte-identical per-frame loop), writes the
+    /// checkpoint after each chunk, concats all chunks, atomic-renames to `out`,
+    /// deletes checkpoint + chunks on success. `pause()` between chunks throws
+    /// `.paused` (checkpoint + completed chunks survive); `cancel()` throws
+    /// `.cancelled` (P3: the coordinator does NOT discard on cancel — discard is
+    /// the caller's job; it cannot tell GUI Cancel from CLI SIGINT apart). Same
+    /// unstructured-Task + Sendable-continuation shape as `run`/`runLongForm`.
+    public func runResumable(_ job: ExportJob, checkpointIntervalFrames: Int,
+                             resumeFrom checkpointURL: URL?) -> AsyncThrowingStream<ExportProgress, Error> {
+        AsyncThrowingStream { continuation in
+            Task { [self] in
+                do {
+                    try await self.runResumableBody(job, interval: checkpointIntervalFrames,
+                                                   resumeFrom: checkpointURL) { p in continuation.yield(p) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
         }
     }
@@ -373,29 +417,6 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
-    /// TEMPORARY test hook (Task 3 only). Delegates to the shared `buildRenderContext`
-    /// so there is zero params/plan/budget duplication. Removed in Task 4 once
-    /// `runResumable(interval >= totalFrames)` covers this one-chunk case.
-    internal func _testRenderInterleavedToDisk(job: ExportJob) async throws -> URL {
-        let ctx = try buildRenderContext(for: job)
-        let encoder = try VideoEncoder(settings: job.settings, outputURL: job.partialURL)
-        try encoder.start()
-        do {
-            var rendered = 0
-            try await renderFramesInterleaved(plan: ctx.plan, params: ctx.params, budget: ctx.budget,
-                                              useMetal: ctx.useMetal, range: 0..<ctx.plan.totalFrames,
-                                              loopRepeatCount: job.loopRepeatCount, into: encoder,
-                                              globalRendered: &rendered, total: ctx.plan.totalFrames,
-                                              yield: { _ in })
-            try await encoder.finish()
-        } catch {
-            encoder.cancel(); try? FileManager.default.removeItem(at: job.partialURL); throw error
-        }
-        if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
-        try FileManager.default.moveItem(at: job.partialURL, to: job.out)
-        return job.out
-    }
-
     /// The 3-branch render dispatch (off-main Metal / MainActor Metal / CPU),
     /// factored out of `renderFrames` so the repeat=1 and repeat>1 paths share
     /// one identical render codepath. Field names mirror the original inline
@@ -558,6 +579,177 @@ public actor ExportCoordinator: ExportCoordinating {
         // on the same volume → rename is atomic.
         if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
         try FileManager.default.moveItem(at: job.partialURL, to: job.out)
+    }
+
+    /// M6.1: resumable body (fresh-run path; resume read-branch is Task 5).
+    /// Chunk the timeline at frame-count edges, encode each chunk via
+    /// `renderFramesInterleaved`, write the checkpoint after each chunk, concat
+    /// via `concatChunks`, atomic-rename to `out`, delete checkpoint + chunks on
+    /// success. SKIPS `checkLoopRepeatMemory` (the interleaved loop builds NO
+    /// per-segment cache → O(1) memory; `diskPrecheck` runs inside
+    /// `buildRenderContext` and is accurate — it scales by `loopRepeatCount`,
+    /// and the interleaved path emits loop frames `loopRepeatCount×` inline).
+    ///
+    /// P10: `paused` is reset to `false` at the top (a second run after a pause
+    /// must not re-throw). P3 (D18): the cancel AND pause paths remove ONLY the
+    /// in-progress chunk temp (`encoder.cancel()` + `try? rm chunk temp`) and
+    /// rethrow — they NEVER touch the checkpoint or completed chunks. There is
+    /// NO `defer { remove chunks }` (that pattern in `runLongFormJob` would
+    /// delete chunks on pause). Discard happens exclusively on success (here)
+    /// and via the VM/`discardPaused` (caller — the coordinator cannot
+    /// distinguish GUI Cancel from CLI SIGINT).
+    private func runResumableBody(_ job: ExportJob, interval: Int, resumeFrom: URL?,
+                                  yield: @Sendable (ExportProgress) -> Void) async throws {
+        // P10: a leftover `paused` from a prior run must not poison this one.
+        paused = false
+
+        let ctx = try buildRenderContext(for: job)
+        let plan = ctx.plan
+        let params = ctx.params
+        let budget = ctx.budget
+        let useMetal = ctx.useMetal
+        let total = plan.totalFrames
+
+        // Fresh-run checkpoint (resume read-branch is Task 5). Sources are built
+        // from the job's flames via the serialized-text fallback (the coordinator
+        // has no source file URLs; the VM threads those in Task 6). On resume,
+        // Task 5 re-parses `serializedText` to reconstruct each `Flame`.
+        let cp: ExportCheckpoint
+        if let _ = resumeFrom {
+            // Task 5 implements the read + verify + skip-completed branch.
+            preconditionFailure("resume — Task 5")
+        } else {
+            cp = ExportCheckpoint(
+                settings: job.settings, framesPerSegment: job.framesPerSegment,
+                transitionFramesPerSegment: job.transitionFramesPerSegment,
+                segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
+                loopCycles: job.loopCycles, stagger: job.stagger, out: job.out,
+                loopRepeatCount: job.loopRepeatCount, checkpointIntervalFrames: interval,
+                totalGlobalFrames: total, completedChunkIndexes: [],
+                sources: Self.freshSources(for: job))
+        }
+        var completed = cp.completedChunkIndexes
+        let chunkCount = cp.chunkCount
+        let container = job.settings.container
+        let checkpointURL = ExportCheckpoint.checkpointURL(out: job.out)
+
+        // Seeding progress (fresh run starts at 0; Task 5 seeds the non-zero
+        // resume offset). One event so the bar starts at the true position.
+        var globalRendered = 0
+        yield(ExportProgress(phase: .rendering, currentFrame: 0, totalFrames: total,
+                             elapsed: 0, renderFPS: 0))
+
+        let safeInterval = max(1, interval)
+        for chunkIndex in 0..<chunkCount {
+            let chunkURL = ExportCheckpoint.chunkURL(out: job.out, index: chunkIndex, container: container)
+
+            // Test seam (deterministic between-chunk stop): set the same flag the
+            // real `cancel()`/`pause()` set, so the chunk-top check below fires.
+            if let cancelAfter = _testCancelAfterChunk, cancelAfter == chunkIndex { cancelled = true }
+            // Chunk-top checks (P3: NO checkpoint/completed-chunk discard here —
+            // only the in-progress chunk temp, defensively; at a fresh chunk-top
+            // it does not exist yet so this is a no-op).
+            if cancelled || Task.isCancelled {
+                try? FileManager.default.removeItem(at: chunkURL)
+                throw ExportError.cancelled
+            }
+            if let pauseAfter = _testPauseAfterChunk, pauseAfter == chunkIndex { paused = true }
+            if paused {
+                try? FileManager.default.removeItem(at: chunkURL)
+                throw ExportError.paused
+            }
+
+            // Skip a completed chunk whose file is still present (Task 5's resume
+            // drops a completed index whose file is missing → re-render). On a
+            // fresh run `completed` is always empty here.
+            if completed.contains(chunkIndex)
+                && FileManager.default.fileExists(atPath: chunkURL.path) {
+                continue
+            }
+
+            let range = chunkIndex * safeInterval ..< min((chunkIndex + 1) * safeInterval, total)
+            // Defensive: clear any stale temp at this path (crash recovery /
+            // re-render of a dropped chunk; AVAssetWriter refuses to overwrite).
+            try? FileManager.default.removeItem(at: chunkURL)
+            let encoder = try VideoEncoder(settings: job.settings, outputURL: chunkURL)
+            try encoder.start()
+            do {
+                try await renderFramesInterleaved(plan: plan, params: params, budget: budget,
+                                                  useMetal: useMetal, range: range,
+                                                  loopRepeatCount: job.loopRepeatCount,
+                                                  into: encoder, globalRendered: &globalRendered,
+                                                  total: total, yield: yield)
+                try await encoder.finish()
+            } catch {
+                // P3: remove ONLY this in-progress chunk's temp; the checkpoint
+                // and completed chunks are untouched (discard is the caller's job).
+                encoder.cancel()
+                try? FileManager.default.removeItem(at: chunkURL)
+                throw error
+            }
+            // Chunk done: record it + rewrite the checkpoint (atomic + sorted
+            // keys → byte-stable across writes, rule #2). The checkpoint's own
+            // `encode(to:)` already sorts `completedChunkIndexes`; `.sortedKeys`
+            // also orders the field-name keys (belt-and-suspenders).
+            completed.insert(chunkIndex)
+            let updated = ExportCheckpoint(
+                settings: cp.settings, framesPerSegment: cp.framesPerSegment,
+                transitionFramesPerSegment: cp.transitionFramesPerSegment,
+                segmentCount: cp.segmentCount, selector: cp.selector, seed: cp.seed,
+                loopCycles: cp.loopCycles, stagger: cp.stagger, out: cp.out,
+                loopRepeatCount: cp.loopRepeatCount,
+                checkpointIntervalFrames: cp.checkpointIntervalFrames,
+                totalGlobalFrames: cp.totalGlobalFrames,
+                completedChunkIndexes: completed, sources: cp.sources)
+            let encoderJSON = JSONEncoder()
+            encoderJSON.outputFormatting = [.sortedKeys]
+            let data = try encoderJSON.encode(updated)
+            try data.write(to: checkpointURL, options: [.atomic])
+        }
+
+        // Concatenate all chunks in index order (passthrough — no re-encode).
+        yield(ExportProgress(phase: .concatenating, currentFrame: total, totalFrames: total,
+                             elapsed: 0, renderFPS: 0))
+        let chunkURLs = (0..<chunkCount).map {
+            ExportCheckpoint.chunkURL(out: job.out, index: $0, container: container)
+        }
+        try await concatChunks(urls: chunkURLs, container: container, partialURL: job.partialURL)
+        // Atomic handoff (same pattern as `runJob`/`runLongFormJob`).
+        if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
+        try FileManager.default.moveItem(at: job.partialURL, to: job.out)
+        // Success cleanup: delete the checkpoint + ALL chunk temps.
+        Self.discardCheckpointAndChunks(out: job.out, container: container)
+    }
+
+    /// Build checkpoint `Source`s for a fresh run from the job's flames. The
+    /// coordinator has no source file URLs (the VM threads those in Task 6), so
+    /// this uses the `serializedText` fallback (`Flam3Serializer.serialize`).
+    /// On resume, Task 5 re-parses `serializedText` to reconstruct each `Flame`.
+    private static func freshSources(for job: ExportJob) -> [ExportCheckpoint.Source] {
+        job.flames.enumerated().map { (i, flame) in
+            ExportCheckpoint.Source(fileURL: nil, flameIndex: i, sha256: nil,
+                                    serializedText: Flam3Serializer.serialize([flame]),
+                                    displayName: "flame \(i)")
+        }
+    }
+
+    /// M6.1 (D4): delete the checkpoint + ALL chunk temps beside `out`. `static`
+    /// — no actor, no coordinator — so it works after pause has nilled the
+    /// coordinator (the real post-pause condition). Sweeps by the
+    /// `emberweft-chunk-` prefix (D16: distinct from `runLongForm`'s `m6-seg-`).
+    /// Called here on success; by the VM's `discardPaused` / GUI-cancel catch
+    /// (Task 6); never by the CLI SIGINT path (D3′ — keeps for `--resume`).
+    public static func discardCheckpointAndChunks(out: URL, container: ExportSettings.Container) {
+        let cp = ExportCheckpoint.checkpointURL(out: out)
+        try? FileManager.default.removeItem(at: cp)
+        let dir = out.deletingLastPathComponent()
+        let stem = ExportCheckpoint.sanitizedStem(out)
+        let prefix = "\(stem).emberweft-chunk-"
+        if let entries = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
+            for e in entries where e.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(e))
+            }
+        }
     }
 
     /// Batch body (actor-isolated). Iterates `jobs.indices` in order. For each
