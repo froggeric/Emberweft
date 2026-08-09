@@ -6,6 +6,21 @@ import FlameKit
 ///
 /// Deterministic: the same `(flame, params)` always yields an identical image.
 public enum ReferenceRenderer {
+    /// PRE-DE single-flame histogram: chaos game ONLY (S1 — the EMA target for
+    /// M6.1 temporal smoothing). Density estimation is intentionally NOT applied
+    /// here; the smoothing coordinator EMAs the pre-DE accumulator, then DE +
+    /// display run once on `H_acc`. `render(flame:params:)` below calls this then
+    /// layers DE + tone-map on top.
+    ///
+    /// `params.spatialFilterRadius` is threaded from `flame.quality.filterRadius`
+    /// internally — the grid's gutter width depends on the filter radius
+    /// (rect.c:656), so it must be set at grid-allocation time. Callers pass the
+    /// bare `params`; the returned histogram's grid reflects the flame's filter.
+    public static func histogram(flame: Flame, params: RenderParams) -> Histogram {
+        let p = params.settingSpatialFilterRadius(flame.quality.filterRadius)
+        return ChaosGame.iterate(flame: flame, params: p)
+    }
+
     /// Render `flame` at `params` to an 8-bit RGBA image.
     public static func render(flame: Flame, params: RenderParams) -> RGBA8Image {
         // Thread `flame.quality.filterRadius` into `params.spatialFilterRadius`
@@ -16,7 +31,7 @@ public enum ReferenceRenderer {
         // callers without access to `flame.quality`, but the renderer always has
         // both. `settingSpatialFilterRadius` returns a copy (Sendable sound).
         let p = params.settingSpatialFilterRadius(flame.quality.filterRadius)
-        var hist = ChaosGame.iterate(flame: flame, params: p)
+        var hist = histogram(flame: flame, params: params)   // PRE-DE; re-derives p internally (idempotent)
         if flame.quality.estimatorRadius > 0 {
             hist = DensityEstimation.apply(hist,
                 radius: flame.quality.estimatorRadius,
@@ -34,39 +49,23 @@ public enum ReferenceRenderer {
             spatialFilterRadius: p.spatialFilterRadius)
     }
 
-    /// Temporal motion-blur render: faithful port of flam3's `temporal_samples`
-    /// loop (rect.c:754-905). Runs N chaos sub-passes at sub-times across a
-    /// ±width/2 window, each with `samplesPerPixel/N` budget and
-    /// `color_scalar = weight` baked into its dmap, then accumulates into one
-    /// histogram. DE + tone-map run ONCE. Cost-neutral (rect.c:833).
-    ///
-    /// For a box filter every `weight` is 1.0 and `sumfilt=1.0`, so the per-pass
-    /// `colorScalar` is 1.0 and `k2` is unchanged — the brightness math collapses
-    /// to the single-pass case (only the per-pass ISAAC seed salt differs,
-    /// contributing only Monte-Carlo shot noise). For gaussian/exp the weighted
-    /// `colorScalar` is exactly canceled by `sumfilt` in `k2`, preserving total
-    /// light by construction.
-    ///
-    /// - Parameters:
-    ///   - blendAt: returns the `Flame` at a given time (time in frames; the
-    ///     caller adds each sub-sample's `delta` to `centerTime`).
-    ///   - centerTime: the frame's center time, passed to `blendAt`. Quality /
-    ///     camera params for the center flame drive DE + tone-map.
-    ///   - temporal: the `(delta, weight)` sub-samples from `TemporalFilter.samples`.
-    ///   - sumfilt: the temporal filter's `Σweights/N`, threaded into `k2`
-    ///     (rect.c:937). Box → 1.0; pass through unchanged.
-    ///   - params: the base render params. `samplesPerPixel` is split across the
-    ///     N sub-passes (rect.c:833); `sampleDensity` passed to tone-map is the
-    ///     ORIGINAL value, matching flam3's `k2` formula.
-    public static func render(
+    /// PRE-DE temporal motion-blur histogram: faithful port of flam3's
+    /// `temporal_samples` chaos+accumulate stage (rect.c:754-905), WITHOUT
+    /// density estimation and WITHOUT `sumfilt` (S1: pre-DE; S9: sumfilt is
+    /// tone-map-only). Runs N chaos sub-passes at sub-times across a ±width/2
+    /// window, each with `samplesPerPixel/N` budget and `color_scalar = weight`
+    /// baked into its dmap, then accumulates into one histogram. The smoothing
+    /// coordinator EMAs this pre-DE accumulator across frames, then DE + display
+    /// run once on `H_acc`. `render(blendAt:…)` below calls this then layers
+    /// DE + tone-map (with `sumfilt`) on top.
+    public static func histogram(
         blendAt: (Double) -> Flame,
         centerTime: Double,
         temporal: [(delta: Double, weight: Double)],
-        sumfilt: Double,
         params: RenderParams
-    ) -> RGBA8Image {
+    ) -> Histogram {
         precondition(!temporal.isEmpty,
-            "ReferenceRenderer.render(blendAt:…): temporal must contain at least one sub-sample")
+            "ReferenceRenderer.histogram(blendAt:…): temporal must contain at least one sub-sample")
         let center = blendAt(centerTime)
         // Thread the center flame's `filterRadius` into `params.spatialFilterRadius`
         // — quality / display params are frame-level (rect.c:911-937), driven by
@@ -105,6 +104,46 @@ public enum ReferenceRenderer {
                 colorScalar: sub.weight)
             hist.accumulate(subHist)
         }
+        return hist
+    }
+
+    /// Temporal motion-blur render: faithful port of flam3's `temporal_samples`
+    /// loop (rect.c:754-905). Runs N chaos sub-passes at sub-times across a
+    /// ±width/2 window, each with `samplesPerPixel/N` budget and
+    /// `color_scalar = weight` baked into its dmap, then accumulates into one
+    /// histogram. DE + tone-map run ONCE. Cost-neutral (rect.c:833).
+    ///
+    /// For a box filter every `weight` is 1.0 and `sumfilt=1.0`, so the per-pass
+    /// `colorScalar` is 1.0 and `k2` is unchanged — the brightness math collapses
+    /// to the single-pass case (only the per-pass ISAAC seed salt differs,
+    /// contributing only Monte-Carlo shot noise). For gaussian/exp the weighted
+    /// `colorScalar` is exactly canceled by `sumfilt` in `k2`, preserving total
+    /// light by construction.
+    ///
+    /// - Parameters:
+    ///   - blendAt: returns the `Flame` at a given time (time in frames; the
+    ///     caller adds each sub-sample's `delta` to `centerTime`).
+    ///   - centerTime: the frame's center time, passed to `blendAt`. Quality /
+    ///     camera params for the center flame drive DE + tone-map.
+    ///   - temporal: the `(delta, weight)` sub-samples from `TemporalFilter.samples`.
+    ///   - sumfilt: the temporal filter's `Σweights/N`, threaded into `k2`
+    ///     (rect.c:937). Box → 1.0; pass through unchanged.
+    ///   - params: the base render params. `samplesPerPixel` is split across the
+    ///     N sub-passes (rect.c:833); `sampleDensity` passed to tone-map is the
+    ///     ORIGINAL value, matching flam3's `k2` formula.
+    public static func render(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams
+    ) -> RGBA8Image {
+        let center = blendAt(centerTime)
+        // PRE-DE chaos + temporal accumulate (S1). Recomputes `center` and the
+        // filter-radius-threaded `params` internally — byte-identical to the
+        // inlined body that lived here before the extraction.
+        let hist = histogram(blendAt: blendAt, centerTime: centerTime, temporal: temporal, params: params)
+        let p = params.settingSpatialFilterRadius(center.quality.filterRadius)
         let h = center.quality.estimatorRadius > 0
             ? DensityEstimation.apply(hist,
                 radius: center.quality.estimatorRadius,
@@ -116,14 +155,14 @@ public enum ReferenceRenderer {
         // frame-level density, not the per-sub-pass count. The per-pass budget
         // only governs how many chaos samples each sub-pass fires.
         return ToneMapping.render(histogram: h,
-            width: params.width, height: params.height, oversample: params.oversample,
+            width: p.width, height: p.height, oversample: p.oversample,
             gamma: center.quality.gamma, gammaThreshold: center.quality.gammaThreshold,
             vibrancy: center.quality.vibrancy,
             brightness: center.quality.brightness,
-            sampleDensity: Double(params.samplesPerPixel),
+            sampleDensity: Double(p.samplesPerPixel),
             pixelsPerUnit: center.camera.scale * pow(2, center.camera.zoom),
             sumfilt: sumfilt,
             highlightPower: center.quality.highlightPower,
-            spatialFilterRadius: params.spatialFilterRadius)
+            spatialFilterRadius: p.spatialFilterRadius)
     }
 }
