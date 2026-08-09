@@ -27,6 +27,12 @@ public actor ExportCoordinator: ExportCoordinating {
     /// `OffMainTemporalParityTests`); nil ⇒ `.metalUnavailable`.
     private let useOffMainMetal: Bool
     private var cancelled = false
+    /// M6.1: set by `pause()` (Task 4) and checked at the top of each frame in
+    /// `renderFramesInterleaved` (single pause site — spec D5). The flag itself
+    /// is added in Task 3 so the interleaved loop compiles; Task 4 adds the
+    /// `pause()` method that sets it. Unrelated to the existing `renderFrames`
+    /// (which never reads it).
+    private var paused = false
 
     /// Test seam: number of images produced by the render dispatch
     /// (`renderImage`) in this coordinator's lifetime. Counts each frame ONCE —
@@ -331,6 +337,63 @@ public actor ExportCoordinator: ExportCoordinating {
                 gf = segEnd
             }
         }
+    }
+
+    /// NEW (M6.1): per-global-frame render loop for the resumable path ONLY. Renders
+    /// each frame once, appends `reps`× inline (reps = loopRepeatCount for a loop frame,
+    /// 1 for a transition frame). Byte-identical to `renderFrames` (pinned). O(1) memory
+    /// (no per-segment cache). `reps` decided per frame ⇒ frame-count chunks can span a
+    /// loop→transition boundary (the F2 case the existing renderFrames repeat>1 path
+    /// mishandles). See spec §4.5.
+    private func renderFramesInterleaved(
+        plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
+        useMetal: Bool, range: Range<Int>, loopRepeatCount: Int,
+        into encoder: VideoEncoder, globalRendered: inout Int, total: Int,
+        yield: @Sendable (ExportProgress) -> Void
+    ) async throws {
+        let start = ProcessInfo.processInfo.systemUptime
+        var outputIndex = 0
+        for gf in range {
+            if cancelled || Task.isCancelled { throw ExportError.cancelled }
+            if paused { throw ExportError.paused }
+            let d = plan.descriptor(for: gf)
+            let img = try await renderImage(descriptor: d, plan: plan, params: params,
+                                            budget: budget, useMetal: useMetal)
+            renderCallCount += 1
+            let reps = (d.kind == .loop) ? max(1, loopRepeatCount) : 1
+            for _ in 0..<reps {
+                try await encoder.append(img, atFrame: outputIndex)
+                outputIndex += 1
+                appendedFrameCount += 1
+            }
+            globalRendered += 1
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            yield(ExportProgress(phase: .rendering, currentFrame: globalRendered, totalFrames: total,
+                                 elapsed: elapsed, renderFPS: elapsed > 0 ? Double(globalRendered) / elapsed : 0))
+        }
+    }
+
+    /// TEMPORARY test hook (Task 3 only). Delegates to the shared `buildRenderContext`
+    /// so there is zero params/plan/budget duplication. Removed in Task 4 once
+    /// `runResumable(interval >= totalFrames)` covers this one-chunk case.
+    internal func _testRenderInterleavedToDisk(job: ExportJob) async throws -> URL {
+        let ctx = try buildRenderContext(for: job)
+        let encoder = try VideoEncoder(settings: job.settings, outputURL: job.partialURL)
+        try encoder.start()
+        do {
+            var rendered = 0
+            try await renderFramesInterleaved(plan: ctx.plan, params: ctx.params, budget: ctx.budget,
+                                              useMetal: ctx.useMetal, range: 0..<ctx.plan.totalFrames,
+                                              loopRepeatCount: job.loopRepeatCount, into: encoder,
+                                              globalRendered: &rendered, total: ctx.plan.totalFrames,
+                                              yield: { _ in })
+            try await encoder.finish()
+        } catch {
+            encoder.cancel(); try? FileManager.default.removeItem(at: job.partialURL); throw error
+        }
+        if FileManager.default.fileExists(atPath: job.out.path) { try FileManager.default.removeItem(at: job.out) }
+        try FileManager.default.moveItem(at: job.partialURL, to: job.out)
+        return job.out
     }
 
     /// The 3-branch render dispatch (off-main Metal / MainActor Metal / CPU),
