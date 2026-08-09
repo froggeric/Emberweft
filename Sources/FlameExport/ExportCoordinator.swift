@@ -959,6 +959,34 @@ public actor ExportCoordinator: ExportCoordinating {
         yield(ExportProgress(phase: .rendering, currentFrame: globalRendered, totalFrames: total,
                              elapsed: 0, renderFPS: 0))
 
+        // M6.1 slice 2 / Task 9 (§9.5): full-window warm-on-resume. On resume
+        // (decodedCP != nil) AND smoothing active (α < 1.0), reconstruct the
+        // accumulator bit-identically to a never-paused run by rendering the
+        // pre-DE histogram for every global frame in [0, F) and feeding the EMA
+        // (discarding images — no encoder append). F = the first global frame of
+        // the first incomplete chunk. F == 0 (chunk-0 / fresh run) ⇒ no warmup.
+        // The EMA is an IIR filter (H_acc at F depends on ALL frames 0…F), so only
+        // a FULL-window warmup reconstructs H_acc bit-identically — a short τ-window
+        // would leave a (1−α)^τ ≈ 35% residual at α=0.10. Reuses T8's
+        // `renderHistogramForFrame` so the warmup reproduces the EXACT histogram
+        // sequence a never-paused run would have produced. Cooperatively
+        // cancelable per frame (reuses `.rendering` progress — no new Phase case).
+        if decodedCP != nil && job.settings.smoothingAlpha < 1.0 {
+            let firstIncomplete = (0..<chunkCount).first { !completed.contains($0) } ?? chunkCount
+            let F = min(firstIncomplete * safeInterval, total)
+            for gf in 0..<F {
+                if cancelled || Task.isCancelled { throw ExportError.cancelled }
+                let d = plan.descriptor(for: gf)
+                let h = try await renderHistogramForFrame(descriptor: d, plan: plan,
+                                                          params: params, budget: budget,
+                                                          useMetal: useMetal)
+                HistogramEMA.update(&smoothingAccumulator, current: h,
+                                     alpha: job.settings.smoothingAlpha)
+                yield(ExportProgress(phase: .rendering, currentFrame: gf,
+                                     totalFrames: total, elapsed: 0, renderFPS: 0))
+            }
+        }
+
         for chunkIndex in 0..<chunkCount {
             let chunkURL = ExportCheckpoint.chunkURL(out: job.out, index: chunkIndex, container: container)
 
