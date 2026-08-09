@@ -7,6 +7,44 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.1] — M6.1 export pause/resume
+
+Long GUI exports (a multi-day, genome-default sequence) are now pausable and
+resumable without losing rendered work, plus crash recovery. Engine parity is
+unchanged (no renderer math touched; the resume pixel-identity pins hold).
+
+### Added
+- **Export pause/resume + crash recovery** — `ExportCoordinator.runResumable`
+  chunks the timeline at frame-count edges (default 30), encodes each chunk via
+  a new `renderFramesInterleaved` loop, writes an `ExportCheckpoint` after each
+  chunk, and passthrough-concats on completion. Pause keeps the checkpoint +
+  completed chunks; Resume rebuilds the identical plan + budget and re-parses
+  SHA-256-verified source bytes, so resumed frames are byte-identical (rule #2).
+  A checkpoint left by a quit/crash is resumable at the next launch (a
+  remembered-checkpoint URL in `AppPreferences` synthesizes a `.paused` card).
+- **`renderFramesInterleaved`** — a per-global-frame render loop for the
+  resumable path, byte-identical to the existing `renderFrames` (decides
+  repeat-count per frame, so frame-count chunks can span a loop→transition
+  boundary). Renders each frame once (loop-repeat speedup preserved), O(1)
+  memory. The existing `renderFrames` is unchanged.
+- **GUI Pause/Resume/Discard** — the progress banner gains a Pause button
+  (gated on an `isPausable` flag) and a paused card (Resume/Discard).
+  Recoverable failures (disk-full) surface as `.paused(reason:)` with a Resume
+  offer rather than a terminal failure.
+- **CLI `--checkpoint-frames` / `--resume` / `--discard`** — checkpointed CLI
+  runs; SIGINT keeps the checkpoint (the existing `DispatchSourceSignal`
+  pattern) so `--resume` is real crash recovery. `--resume` enforces the
+  checkpoint recipe as authoritative (conflicting flags error).
+
+### Changed
+- `runResumable(_:sources:checkpointIntervalFrames:resumeFrom:)` takes
+  file-backed `sources` so the checkpoint uses the URL+SHA-256 primary path
+  (re-reads exact source bytes on resume); the serialized-text fallback covers
+  URL-less flames.
+
+### Deferred to M6.1 slice 2
+- **Temporal smoothing** (across-frame histogram EMA for low-spp quality).
+
 ## [v0.5.0] — M6 GUI export (the video-export studio)
 
 The export feature is complete: a full GUI export studio plus mastering-quality
