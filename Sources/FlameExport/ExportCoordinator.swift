@@ -46,6 +46,17 @@ public actor ExportCoordinator: ExportCoordinating {
     /// cached frame. Pure side-channel.
     internal private(set) var appendedFrameCount: Int = 0
 
+    /// M6.1 slice 2: run-scoped across-frame histogram accumulator for temporal
+    /// smoothing. `nil` at run start (cold-start); the first smoothed frame COPIES
+    /// the histogram verbatim (`HistogramEMA.update` cold-start branch). Fed once
+    /// per rendered global frame in `renderSmoothedFrame`; replayed loop-repeat
+    /// copies never re-feed it (they append the cached image). Reset to `nil` ONCE
+    /// per run at the top-level body entry (`runJob`/`runLongFormJob`/
+    /// `runResumableBody`) — NOT inside `renderFrames`/`renderFramesInterleaved`
+    /// (those are per-chunk workers; resetting there breaks cross-chunk EMA
+    /// continuity, S2).
+    private var smoothingAccumulator: Histogram?
+
     /// M6.1 test seams (deterministic between-chunk pause/cancel for
     /// `RunResumableTests`). The value is the chunkIndex at whose TOP the flag
     /// flips — so to keep chunk 0 and stop before chunk 1, set `1`. They set the
@@ -220,6 +231,10 @@ public actor ExportCoordinator: ExportCoordinating {
     /// (which captures the `AsyncThrowingStream.Continuation`, itself Sendable)
     /// crosses the actor boundary cleanly under Swift 6 strict concurrency.
     private func runJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
+        // M6.1 slice 2 (S2): reset the run-scoped smoothing accumulator ONCE at
+        // the top-level entry — NOT inside `renderFrames` (a per-chunk worker;
+        // resetting there breaks cross-chunk EMA continuity).
+        smoothingAccumulator = nil
         // Loop-repeat memory guard (v0.5.0) — checked BEFORE disk/encoder so a
         // refused job leaves no partial file. No-op when loopRepeatCount == 1.
         // Width/height are read directly from settings (the same values
@@ -243,6 +258,7 @@ public actor ExportCoordinator: ExportCoordinating {
             // inline loop; the extraction only factors the body into a helper.
             try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
                                    range: 0..<plan.totalFrames, loopRepeatCount: job.loopRepeatCount,
+                                   smoothingAlpha: job.settings.smoothingAlpha,
                                    into: encoder, yield: yield)
             try await encoder.finish()
         } catch {
@@ -281,10 +297,18 @@ public actor ExportCoordinator: ExportCoordinating {
         useMetal: Bool,
         range: Range<Int>,
         loopRepeatCount: Int = 1,
+        smoothingAlpha: Double = 1.0,
         into encoder: VideoEncoder,
         yield: @Sendable (ExportProgress) -> Void
     ) async throws {
         let start = ProcessInfo.processInfo.systemUptime
+        // M6.1 slice 2 (S10): smoothing is active iff α<1 AND the export is
+        // multi-frame (export-WIDE `plan.totalFrames`, NOT this chunk's
+        // `range.count` — a single-frame chunk in a multi-frame export still
+        // smoothes). Computed ONCE per loop; the accumulator is NOT reset here
+        // (it is run-scoped, reset at the top-level entry — S2).
+        let smoothingOn = (smoothingAlpha < 1.0) && (plan.totalFrames > 1)
+        let alpha = smoothingAlpha
 
         // --- repeat == 1: the byte-for-byte pre-change path (untouched) ---
         // Every animate↔export byte-identity pin routes through here. The only
@@ -295,8 +319,14 @@ public actor ExportCoordinator: ExportCoordinating {
             for gf in range {
                 if cancelled || Task.isCancelled { throw ExportError.cancelled }
                 let d = plan.descriptor(for: gf)
-                let img = try await renderImage(descriptor: d, plan: plan, params: params,
-                                                budget: budget, useMetal: useMetal)
+                // M6.1 slice 2: smoothing-ON dispatches through the accumulator
+                // (histogram → EMA → DE+display); OFF is the VERBATIM `renderImage`
+                // call (byte-identical to the pre-smoothing path).
+                let img = smoothingOn
+                    ? try await renderSmoothedFrame(d, plan: plan, params: params,
+                                                    budget: budget, useMetal: useMetal, alpha: alpha)
+                    : try await renderImage(descriptor: d, plan: plan, params: params,
+                                            budget: budget, useMetal: useMetal)
                 renderCallCount += 1
                 // PTS is LOCAL to this encoder's session (session always starts at
                 // .zero). For `runJob` range.lowerBound == 0 so this is identical to
@@ -340,8 +370,15 @@ public actor ExportCoordinator: ExportCoordinating {
                 for f in gf..<segEnd {
                     if cancelled || Task.isCancelled { throw ExportError.cancelled }
                     let fd = plan.descriptor(for: f)
-                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
-                                                    budget: budget, useMetal: useMetal)
+                    // M6.1 slice 2: smoothing feeds the accumulator ONCE per
+                    // rendered (cached) frame; the replay below appends the
+                    // identical cached bytes `loopRepeatCount`× (no re-feed → no
+                    // inter-copy flicker, S5).
+                    let img = smoothingOn
+                        ? try await renderSmoothedFrame(fd, plan: plan, params: params,
+                                                        budget: budget, useMetal: useMetal, alpha: alpha)
+                        : try await renderImage(descriptor: fd, plan: plan, params: params,
+                                                budget: budget, useMetal: useMetal)
                     cache.append(img)
                     renderCallCount += 1
                     rendered += 1
@@ -368,8 +405,13 @@ public actor ExportCoordinator: ExportCoordinating {
                 for f in gf..<segEnd {
                     if cancelled || Task.isCancelled { throw ExportError.cancelled }
                     let fd = plan.descriptor(for: f)
-                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
-                                                    budget: budget, useMetal: useMetal)
+                    // M6.1 slice 2: transition segments are never loop-repeated,
+                    // but smoothing still feeds the accumulator per rendered frame.
+                    let img = smoothingOn
+                        ? try await renderSmoothedFrame(fd, plan: plan, params: params,
+                                                        budget: budget, useMetal: useMetal, alpha: alpha)
+                        : try await renderImage(descriptor: fd, plan: plan, params: params,
+                                                budget: budget, useMetal: useMetal)
                     renderCallCount += 1
                     rendered += 1
                     try await encoder.append(img, atFrame: outputIndex)
@@ -394,17 +436,27 @@ public actor ExportCoordinator: ExportCoordinating {
     private func renderFramesInterleaved(
         plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
         useMetal: Bool, range: Range<Int>, loopRepeatCount: Int,
+        smoothingAlpha: Double = 1.0,
         into encoder: VideoEncoder, globalRendered: inout Int, total: Int,
         yield: @Sendable (ExportProgress) -> Void
     ) async throws {
         let start = ProcessInfo.processInfo.systemUptime
+        // M6.1 slice 2 (S10): same export-wide smoothing gate as `renderFrames`.
+        let smoothingOn = (smoothingAlpha < 1.0) && (plan.totalFrames > 1)
+        let alpha = smoothingAlpha
         var outputIndex = 0
         for gf in range {
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             if paused { throw ExportError.paused }
             let d = plan.descriptor(for: gf)
-            let img = try await renderImage(descriptor: d, plan: plan, params: params,
-                                            budget: budget, useMetal: useMetal)
+            // M6.1 slice 2: smoothing-ON dispatches through the accumulator; OFF
+            // is the VERBATIM `renderImage` call. `reps` inline appends replay the
+            // identical smoothed image (no re-feed → no inter-copy flicker, S5).
+            let img = smoothingOn
+                ? try await renderSmoothedFrame(d, plan: plan, params: params,
+                                                budget: budget, useMetal: useMetal, alpha: alpha)
+                : try await renderImage(descriptor: d, plan: plan, params: params,
+                                        budget: budget, useMetal: useMetal)
             renderCallCount += 1
             let reps = (d.kind == .loop) ? max(1, loopRepeatCount) : 1
             for _ in 0..<reps {
@@ -468,6 +520,205 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
+    // MARK: - M6.1 slice 2: smoothing dispatch (CPU + Metal)
+
+    /// Smoothing-ON frame dispatch (T8): render one frame's pre-DE histogram, EMA
+    /// it into the run-scoped `smoothingAccumulator` (T1 helper), then DE+display
+    /// the accumulator once. Used at all four `renderImage` sites in `renderFrames`/
+    /// `renderFramesInterleaved` when `smoothingOn` (α<1 AND multi-frame). The OFF
+    /// branch is the caller's verbatim `renderImage` call (byte-identical to the
+    /// pre-smoothing path); this method is only reached when smoothing is active.
+    ///
+    /// Cold-start (`smoothingAccumulator == nil`): `HistogramEMA.update` copies the
+    /// frame's histogram verbatim ⇒ frame 0 is byte-identical to the OFF path on
+    /// CPU (identical Double histogram → identical DE+ToneMapping; pinned by
+    /// `testColdStartCPUByteIdentity`). α = 1.0 ⇒ acc becomes `current` exactly
+    /// (OFF equivalence).
+    private func renderSmoothedFrame(
+        _ d: FrameDescriptor,
+        plan: FramePlan,
+        params: RenderParams,
+        budget: MetalRenderer.ThreadSeedBudget?,
+        useMetal: Bool,
+        alpha: Double
+    ) async throws -> RGBA8Image {
+        let h = try await renderHistogramForFrame(descriptor: d, plan: plan, params: params,
+                                                  budget: budget, useMetal: useMetal)
+        HistogramEMA.update(&smoothingAccumulator, current: h, alpha: alpha)
+        return try await displayAccumulator(descriptor: d, plan: plan, params: params, useMetal: useMetal)
+    }
+
+    /// Pre-DE histogram for one frame — mirrors `renderImage`'s 3-branch
+    /// concurrency wrapping (S7) and `plan.temporalSamples > 1` temporal/single
+    /// switch, but returns the pre-DE `Histogram` (T3 CPU / T6 Metal) instead of
+    /// the displayed `RGBA8Image`. DE+display run once on the accumulator in
+    /// `displayAccumulator`. Branch order + wrapping are identical to `renderImage`
+    /// so the histogram is computed exactly as the fused/single render path would
+    /// (cold-start byte-identity with the OFF path holds because the same histogram
+    /// feeds the same DE+display).
+    private func renderHistogramForFrame(
+        descriptor d: FrameDescriptor,
+        plan: FramePlan,
+        params: RenderParams,
+        budget: MetalRenderer.ThreadSeedBudget?,
+        useMetal: Bool
+    ) async throws -> Histogram {
+        if useMetal && useOffMainMetal {
+            // Off-main Metal (GUI path): never touches the MainActor. nil ⇒ Metal
+            // unavailable / readback failed ⇒ `.metalUnavailable`.
+            let maybeH: Histogram? = await Task.detached(priority: .userInitiated) {
+                plan.temporalSamples > 1
+                    ? MetalRenderer.renderTemporalHistogramOffMain(
+                        blendAt: d.blendAt, centerTime: d.blend,
+                        temporal: d.temporal, sumfilt: d.sumfilt,
+                        params: params, seedBudget: budget)
+                    : MetalRenderer.renderHistogramOffMain(
+                        flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+            }.value
+            guard let h = maybeH else { throw ExportError.metalUnavailable }
+            return h
+        } else if useMetal {
+            // MainActor Metal (CLI path): the histogram entries are `@MainActor`.
+            return await MainActor.run {
+                autoreleasepool {
+                    plan.temporalSamples > 1
+                        ? MetalRenderer.renderTemporalHistogram(
+                            blendAt: d.blendAt, centerTime: d.blend,
+                            temporal: d.temporal, sumfilt: d.sumfilt, params: params, seedBudget: budget)
+                        : MetalRenderer.renderHistogram(
+                            flame: d.blendAt(d.blend), params: params, seedBudget: budget)
+                }
+            }
+        } else {
+            // CPU: `ReferenceRenderer.histogram` is nonisolated.
+            return await Task.detached(priority: .userInitiated) {
+                plan.temporalSamples > 1
+                    ? ReferenceRenderer.histogram(
+                        blendAt: d.blendAt, centerTime: d.blend,
+                        temporal: d.temporal, params: params)
+                    : ReferenceRenderer.histogram(
+                        flame: d.blendAt(d.blend), params: params)
+            }.value
+        }
+    }
+
+    /// DE + display on `smoothingAccumulator` (non-nil after the EMA step in
+    /// `renderSmoothedFrame`). The center flame `d.blendAt(d.blend)` drives
+    /// quality/camera params, exactly as `renderImage`'s display step does. The
+    /// 3-branch wrapping mirrors `renderImage`/`renderHistogramForFrame`.
+    ///
+    /// All-zero guard (P2.5): a fully-empty accumulator (counts sum zero ⇒ chaos
+    /// game fired no hits; colors/alpha are zero too under the chaos-game + EMA
+    /// invariant) returns a black frame directly, bypassing DE/display — a
+    /// faithful empty-frame result on both backends. Else:
+    /// - CPU → `DensityEstimation.apply` (guard `estimatorRadius > 0`) then
+    ///   `ToneMapping.render` with `d.sumfilt` (S13 — use `d.sumfilt`, NOT a
+    ///   hardcoded 1.0; matches `ReferenceRenderer.render`).
+    /// - Metal → `MetalRenderer.renderSmoothedDisplay(OffMain)` with the DE params
+    ///   + display params from `center` (the T5 signature carries no `sumfilt`;
+    ///   real ES genomes are box ⇒ sumfilt=1.0, and the Metal↔CPU parity pin
+    ///   guards any divergence).
+    private func displayAccumulator(
+        descriptor d: FrameDescriptor,
+        plan: FramePlan,
+        params: RenderParams,
+        useMetal: Bool
+    ) async throws -> RGBA8Image {
+        guard let hist = smoothingAccumulator else {
+            // Unreachable after `renderSmoothedFrame`'s EMA step (which sets the
+            // accumulator), but satisfy the unwrap defensively.
+            return RGBA8Image(width: params.width, height: params.height,
+                              pixels: [UInt8](repeating: 0, count: params.width * params.height * 4))
+        }
+        let center = d.blendAt(d.blend)
+        // Thread the center flame's `filterRadius` into the display params (same
+        // rationale as `ReferenceRenderer.render`/`renderFusedCore`: the grid's
+        // gutter width depends on the filter radius).
+        let p = params.settingSpatialFilterRadius(center.quality.filterRadius)
+        // P2.5 all-zero guard.
+        if hist.sampleSum == 0 {
+            return RGBA8Image(width: params.width, height: params.height,
+                              pixels: [UInt8](repeating: 0, count: params.width * params.height * 4))
+        }
+        if useMetal && useOffMainMetal {
+            let maybeImg: RGBA8Image? = await Task.detached(priority: .userInitiated) {
+                MetalRenderer.renderSmoothedDisplayOffMain(
+                    histogram: hist,
+                    deRadius: Double(center.quality.estimatorRadius),
+                    deMinimum: center.quality.estimatorMinimum,
+                    deCurve: center.quality.estimatorCurveRate,
+                    width: p.width, height: p.height, oversample: p.oversample,
+                    gamma: center.quality.gamma, gammaThreshold: center.quality.gammaThreshold,
+                    vibrancy: center.quality.vibrancy, brightness: center.quality.brightness,
+                    sampleDensity: Double(p.samplesPerPixel),
+                    pixelsPerUnit: center.camera.scale * pow(2, center.camera.zoom),
+                    highlightPower: center.quality.highlightPower,
+                    spatialFilterRadius: p.spatialFilterRadius)
+            }.value
+            guard let img = maybeImg else { throw ExportError.metalUnavailable }
+            return img
+        } else if useMetal {
+            return try await MainActor.run {
+                try autoreleasepool {
+                    try MetalRenderer.renderSmoothedDisplay(
+                        histogram: hist,
+                        deRadius: Double(center.quality.estimatorRadius),
+                        deMinimum: center.quality.estimatorMinimum,
+                        deCurve: center.quality.estimatorCurveRate,
+                        width: p.width, height: p.height, oversample: p.oversample,
+                        gamma: center.quality.gamma, gammaThreshold: center.quality.gammaThreshold,
+                        vibrancy: center.quality.vibrancy, brightness: center.quality.brightness,
+                        sampleDensity: Double(p.samplesPerPixel),
+                        pixelsPerUnit: center.camera.scale * pow(2, center.camera.zoom),
+                        highlightPower: center.quality.highlightPower,
+                        spatialFilterRadius: p.spatialFilterRadius)
+                }
+            }
+        } else {
+            return await Task.detached(priority: .userInitiated) {
+                var h = hist
+                if center.quality.estimatorRadius > 0 {
+                    h = DensityEstimation.apply(h,
+                        radius: center.quality.estimatorRadius,
+                        minimum: center.quality.estimatorMinimum,
+                        curve: center.quality.estimatorCurveRate)
+                }
+                return ToneMapping.render(histogram: h,
+                    width: p.width, height: p.height, oversample: p.oversample,
+                    gamma: center.quality.gamma, gammaThreshold: center.quality.gammaThreshold,
+                    vibrancy: center.quality.vibrancy,
+                    brightness: center.quality.brightness,
+                    sampleDensity: Double(p.samplesPerPixel),
+                    pixelsPerUnit: center.camera.scale * pow(2, center.camera.zoom),
+                    sumfilt: d.sumfilt,
+                    highlightPower: center.quality.highlightPower,
+                    spatialFilterRadius: p.spatialFilterRadius)
+            }.value
+        }
+    }
+
+    // MARK: - M6.1 slice 2 test seams (TemporalSmoothingDispatchTests)
+    // Exposes the private smoothing dispatch + accumulator lifecycle so the
+    // dispatch pins (cold-start byte-identity, Metal↔CPU parity) can run WITHOUT
+    // a full encoder round-trip. Production never calls these.
+
+    /// Test seam: reset the run-scoped accumulator (mirrors the top-level-entry
+    /// reset in `runJob`/`runLongFormJob`/`runResumableBody`).
+    internal func resetSmoothingAccumulator() { smoothingAccumulator = nil }
+
+    /// Test seam: render one frame through the smoothing dispatch (histogram →
+    /// EMA → DE+display). `resetAccumulator` mirrors a fresh run start so a test
+    /// can drive a cold-start or a continuation without a whole export.
+    internal func renderSmoothedFrameForTest(
+        descriptor d: FrameDescriptor, plan: FramePlan, params: RenderParams,
+        budget: MetalRenderer.ThreadSeedBudget?, useMetal: Bool, alpha: Double,
+        resetAccumulator: Bool
+    ) async throws -> RGBA8Image {
+        if resetAccumulator { smoothingAccumulator = nil }
+        return try await renderSmoothedFrame(d, plan: plan, params: params,
+                                             budget: budget, useMetal: useMetal, alpha: alpha)
+    }
+
     /// Passthrough-concatenate already-encoded chunk files (in array order) into
     /// `partialURL` (no re-encode → keyframes preserved). Caller does the atomic
     /// rename to `out`. Shared by `runLongFormJob` and `runResumableBody`
@@ -511,6 +762,9 @@ public actor ExportCoordinator: ExportCoordinating {
     /// the timeline on segment edges, encode each chunk to a temp `.mov`, concat
     /// via passthrough, atomic-rename to `out`.
     private func runLongFormJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
+        // M6.1 slice 2 (S2): reset the run-scoped smoothing accumulator ONCE at
+        // the top-level entry (cross-chunk EMA continuity).
+        smoothingAccumulator = nil
         // Loop-repeat memory guard (v0.5.0) — same gate as single export. Kept
         // BEFORE `buildRenderContext` so the side-effect order is unchanged
         // (memory guard → disk precheck → encoder). Width/height are read
@@ -565,6 +819,7 @@ public actor ExportCoordinator: ExportCoordinating {
             do {
                 try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
                                        range: frameStart..<frameEnd, loopRepeatCount: job.loopRepeatCount,
+                                       smoothingAlpha: job.settings.smoothingAlpha,
                                        into: encoder, yield: yield)
                 try await encoder.finish()
             } catch {
@@ -605,6 +860,11 @@ public actor ExportCoordinator: ExportCoordinating {
                                   yield: @Sendable (ExportProgress) -> Void) async throws {
         // P10: a leftover `paused` from a prior run must not poison this one.
         paused = false
+        // M6.1 slice 2 (S2): reset the run-scoped smoothing accumulator ONCE at
+        // the top-level entry. On resume the abandoned chunk re-renders from its
+        // start with a fresh EMA (no cross-run accumulator checkpointing; the
+        // frames are byte-identical to a fresh run of that chunk's range).
+        smoothingAccumulator = nil
 
         // Task 5: resume branch. The checkpoint's recipe is AUTHORITATIVE (D11):
         // on resume, rebuild the ExportJob from the checkpoint + SHA-256-verified
@@ -736,6 +996,7 @@ public actor ExportCoordinator: ExportCoordinating {
                 try await renderFramesInterleaved(plan: plan, params: params, budget: budget,
                                                   useMetal: useMetal, range: range,
                                                   loopRepeatCount: job.loopRepeatCount,
+                                                  smoothingAlpha: job.settings.smoothingAlpha,
                                                   into: encoder, globalRendered: &globalRendered,
                                                   total: total, yield: yield)
                 try await encoder.finish()

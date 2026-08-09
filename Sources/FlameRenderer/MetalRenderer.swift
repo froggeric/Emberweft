@@ -1292,7 +1292,7 @@ public enum MetalRenderer {
     /// split: this is the MainActor entry; `renderSmoothedDisplayOffMain` is the
     /// background-queue twin.
     @MainActor
-    static func renderSmoothedDisplay(
+    public static func renderSmoothedDisplay(
         histogram: Histogram,
         deRadius: Double, deMinimum: Double, deCurve: Double,
         width: Int, height: Int, oversample: Int,
@@ -1333,7 +1333,7 @@ public enum MetalRenderer {
     /// `@MainActor apply`+`render` path: the GPU computation is
     /// thread-independent (pinned by `OffMainDisplayParityTests`).
     nonisolated
-    static func renderSmoothedDisplayOffMain(
+    public static func renderSmoothedDisplayOffMain(
         histogram: Histogram,
         deRadius: Double, deMinimum: Double, deCurve: Double,
         width: Int, height: Int, oversample: Int,
