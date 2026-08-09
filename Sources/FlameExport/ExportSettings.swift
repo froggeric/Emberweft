@@ -13,7 +13,44 @@ public struct ExportSettings: Codable, Sendable, Equatable {
     public var bitrate: Bitrate = .auto
     public var segmentFrameBudget: Int = 0   // >0 => long-form chunk size in frames
     public var metadata: [MetadataItem] = []
+    /// User-facing temporal-smoothing choice (M6.1 slice 2). `.auto` ⇒ derive α
+    /// from `quality` via `TemporalSmoothing.alpha(for:)`; `.off` ⇒ α = 1.0 (OFF).
+    /// Rides in the resume checkpoint via `settings` (this whole struct encodes),
+    /// so α reproduces on resume for free — no schema bump.
+    public var temporalSmoothing: TemporalSmoothing = .auto
+    /// Resolved EMA weight α ∈ (0, 1] (1.0 = OFF / byte-identical unsmoothed).
+    /// Resolved ONCE at `resolve(…)`-build time from the quality tier (R3), so the
+    /// renderers read a single concrete number with no inverse-tier lookup or
+    /// `EmberweftUI` dependency from `FlameExport`.
+    public var smoothingAlpha: Double = 1.0
     public init() {}
+
+    /// P1.1 backward-compat: a v0.5.1 checkpoint blob (no `temporalSmoothing` /
+    /// `smoothingAlpha` keys) MUST decode without throwing. We decode the two new
+    /// fields via `decodeIfPresent` and default them to `.auto` and the
+    /// `.auto`-tier α recomputed from the DECODED quality (so a stripped v0.5.1
+    /// blob lands in the right tier, not a stale 1.0).
+    ///
+    /// NOTE: this is the ONLY custom Codable requirement — `CodingKeys` and
+    /// `encode(to:)` stay SYNTHESIZED (the new fields are plain `var … = default`,
+    /// so they encode normally). Defining an explicit `CodingKeys` here would
+    /// force a hand-written `encode(to:)` for every field — avoided (round-trip is
+    /// pinned by `testRoundTripPreservesSmoothingFields`).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        codec = try c.decode(ExportSettings.Codec.self, forKey: .codec)
+        resolution = try c.decode(ExportSettings.Resolution.self, forKey: .resolution)
+        fps = try c.decode(Int.self, forKey: .fps)
+        quality = try c.decode(ExportQuality.self, forKey: .quality)
+        temporalSamples = try c.decode(Int.self, forKey: .temporalSamples)
+        container = try c.decode(ExportSettings.Container.self, forKey: .container)
+        bitrate = try c.decode(ExportSettings.Bitrate.self, forKey: .bitrate)
+        segmentFrameBudget = try c.decode(Int.self, forKey: .segmentFrameBudget)
+        metadata = try c.decode([MetadataItem].self, forKey: .metadata)
+        temporalSmoothing = try c.decodeIfPresent(TemporalSmoothing.self, forKey: .temporalSmoothing) ?? .auto
+        smoothingAlpha = try c.decodeIfPresent(Double.self, forKey: .smoothingAlpha)
+            ?? TemporalSmoothing.auto.alpha(for: quality)
+    }
 
     public enum Codec: String, Codable, Sendable, CaseIterable { case h264, hevc, proRes422HQ }
     public enum Container: String, Codable, Sendable, CaseIterable { case mp4, mov }
@@ -100,13 +137,21 @@ public extension ExportSettings {
         resolution: ExportSettings.Resolution,
         segmentFrameBudget: Int,
         baseFlame: Flame,
-        backend: ExportCoordinator.Backend
+        backend: ExportCoordinator.Backend,
+        temporalSmoothing: TemporalSmoothing = .auto
     ) -> ExportSettings {
         var settings = ExportSettings()
         settings.codec = codec
         settings.container = container
         settings.fps = fps
         settings.quality = quality
+        // M6.1 slice 2: carry the smoothing decision + resolve α ONCE here from
+        // the quality tier (R3 — α for ANY spp via the ramp; no inverse-tier
+        // lookup). The default `.auto` keeps the ~8 test + 2 production
+        // `resolve(…)` call sites compiling unchanged; threading the user's
+        // actual toggle is T10 (GUI) / T11 (CLI).
+        settings.temporalSmoothing = temporalSmoothing
+        settings.smoothingAlpha = temporalSmoothing.alpha(for: quality)
         // Motion-blur default: mirror AnimateCommand exactly. When the requested
         // value is the "use genome default" sentinel (1) and the genome carries a
         // temporalSamples > 1, use the genome's value; then cap on Metal to bound
