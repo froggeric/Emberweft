@@ -544,8 +544,12 @@ public actor ExportCoordinator: ExportCoordinating {
     ) async throws -> RGBA8Image {
         let h = try await renderHistogramForFrame(descriptor: d, plan: plan, params: params,
                                                   budget: budget, useMetal: useMetal)
-        HistogramEMA.update(&smoothingAccumulator, current: h, alpha: alpha)
-        return try await displayAccumulator(descriptor: d, plan: plan, params: params, useMetal: useMetal)
+        // T1′ (2026-08-10): the causal `HistogramEMA` was DELETED and replaced by
+        // `TemporalBoxWindow` (centered box window). This EMA-based dispatch is now
+        // DEAD — T8′ rewrites it as a feed/emit loop over `TemporalBoxWindow`. The
+        // fatalError keeps T1′ independently build-green without guessing T8′ wiring.
+        fatalError("T8′ replaces this EMA dispatch with TemporalBoxWindow feed/emit")
+
     }
 
     /// Pre-DE histogram for one frame — mirrors `renderImage`'s 3-branch
@@ -980,10 +984,12 @@ public actor ExportCoordinator: ExportCoordinating {
                 let h = try await renderHistogramForFrame(descriptor: d, plan: plan,
                                                           params: params, budget: budget,
                                                           useMetal: useMetal)
-                HistogramEMA.update(&smoothingAccumulator, current: h,
-                                     alpha: job.settings.smoothingAlpha)
-                yield(ExportProgress(phase: .rendering, currentFrame: gf,
-                                     totalFrames: total, elapsed: 0, renderFPS: 0))
+                // T1′ (2026-08-10): `HistogramEMA` was DELETED; T9′ rewrites this
+                // full-window EMA warmup as an h-frame pre-roll margin feeding a
+                // `TemporalBoxWindow`. DEAD until T9′ — fatalError keeps the build green.
+                _ = h
+                fatalError("T9′ replaces this EMA warmup with a TemporalBoxWindow pre-roll")
+
             }
         }
 
