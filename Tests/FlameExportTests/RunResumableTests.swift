@@ -551,4 +551,61 @@ final class RunResumableTests: XCTestCase {
                                      + "(per-chunk window margins must reconstruct the identical window)")
         }
     }
+
+    /// Early-pause resume pin: pausing BEFORE the first checkpoint interval
+    /// completes (here: pause at chunk-top 0 ⇒ NO chunk completes) must still
+    /// leave a resumable checkpoint, and resume must SUCCEED (not throw
+    /// `.checkpointUnreadable`). Regression: without the initial checkpoint write
+    /// before the chunk loop, an early pause wrote no checkpoint at all (the in-loop
+    /// write fires only after a chunk completes), so resume hit file-not-found ⇒
+    /// `.checkpointUnreadable`. (Owner-reported: paused after 12 frames at High,
+    /// interval 30 — mid-first-chunk — resume failed "checkpoint unreadable".)
+    func testResumeSmoothingEarlyPauseBeforeFirstChunk() async throws {
+        let dir = tmpDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outFresh = dir.appendingPathComponent("fresh.mov")
+        let outResume = dir.appendingPathComponent("resume.mov")
+
+        // Never-paused reference.
+        let coordFresh = ExportCoordinator(backend: .cpu)
+        let streamFresh = await coordFresh.runResumable(
+            try makeSmoothingJob(out: outFresh, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
+        for try await _ in streamFresh {}
+
+        // Pause at chunk-top 0 — NO chunk completes (0 frames rendered pre-pause).
+        let coordPause = ExportCoordinator(backend: .cpu)
+        await coordPause._setTestPauseAfterChunk(0)
+        let streamPause = await coordPause.runResumable(
+            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
+        do {
+            for try await _ in streamPause {}
+            XCTFail("expected ExportError.paused")
+        } catch ExportError.paused {
+            // expected
+        } catch {
+            XCTFail("expected ExportError.paused, got \(error)")
+        }
+
+        // THE FIX: an early pause (no chunk completed) must still leave a checkpoint.
+        let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cpURL.path),
+                      "early pause must leave an initial checkpoint to resume from")
+
+        // Resume must SUCCEED (previously threw `.checkpointUnreadable`).
+        let resumeCoord = ExportCoordinator(backend: .cpu)
+        let streamResume = await resumeCoord.runResumable(
+            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: cpURL)
+        for try await _ in streamResume {}
+
+        // Byte-identity: resumed (re-rendered chunk 0 + rest) == never-paused.
+        let a = try await decodeFrames(outFresh), b = try await decodeFrames(outResume)
+        XCTAssertEqual(a.count, b.count)
+        for i in 0..<a.count {
+            XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0,
+                                     "early-pause resume pixel diff at frame \(i)")
+        }
+    }
 }
