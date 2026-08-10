@@ -1089,6 +1089,17 @@ public actor ExportCoordinator: ExportCoordinating {
         let container = job.settings.container
         let checkpointURL = ExportCheckpoint.checkpointURL(out: job.out)
 
+        // Initial checkpoint BEFORE the chunk loop. A pause/cancel before the first
+        // chunk completes (e.g. paused mid-first-chunk, frame < checkpointInterval)
+        // must still leave a resumable checkpoint on disk. Without this, no chunk had
+        // completed to write one, so resume hit `.checkpointUnreadable` (file-not-
+        // found). With it, an early pause leaves `completed == []` ⇒ resume re-renders
+        // chunk 0 (the standard chunked-resume granularity). Idempotent on resume
+        // (re-persists the filtered `cp`; the in-loop write after each chunk overwrites).
+        let initialCheckpointJSON = JSONEncoder()
+        initialCheckpointJSON.outputFormatting = [.sortedKeys]
+        try initialCheckpointJSON.encode(cp).write(to: checkpointURL, options: [.atomic])
+
         // Seeding progress (D9): fresh starts at 0; resume seeds at
         // `Σ completed-chunk frame counts` so the bar does NOT jump to 0. One
         // event so the bar starts at the true position.
