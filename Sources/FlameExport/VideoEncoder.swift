@@ -284,4 +284,15 @@ public enum ExportError: Error, Equatable, Sendable {
     /// estimated cache; `availableMB` is the threshold. Checked BEFORE any
     /// rendering/encoding starts, so no partial file is left.
     case loopRepeatMemoryExceeded(neededMB: Int, availableMB: Int)
+    /// T8′ temporal smoothing (centered box window) requires every histogram fed
+    /// to one `TemporalBoxWindow` to share the same accumulator-grid dimensions
+    /// (`gridWidth`/`gridHeight`). The grid is a step function of each frame's
+    /// center-flame `filterRadius` (via `flam3SpatialFilterWidth`); a transition
+    /// between genomes whose `filter` attrs fall in different width buckets
+    /// (e.g. the default 0.5 vs an explicit 1.0) produces histograms with
+    /// incompatible grids — averaging them is undefined. Thrown INSTEAD of the
+    /// `TemporalBoxWindow.feed` precondition trap, so the export fails with a
+    /// clear message rather than crashing. Fix: disable smoothing
+    /// (`temporalSmoothing: .off`) or use a library whose genomes share a filter.
+    case smoothingGridMismatch(frame: Int)
 }

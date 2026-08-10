@@ -23,9 +23,18 @@ public enum TemporalSmoothing: String, Codable, Sendable, CaseIterable, Equatabl
     /// `.spp(2)` → 10; `.spp(8)` → 5; `.spp(30)` → 3; `.spp(≥64)` → 0 (the ramp
     /// clamps α to 1.0 at spp ≥ 64, i.e. OFF).
     public func halfWidth(for quality: ExportQuality) -> Int {
-        let a = alpha(for: quality)
-        if a >= 1.0 { return 0 }
-        return max(0, Int((1.0 / a).rounded()))
+        Self.halfWidth(forAlpha: alpha(for: quality))
+    }
+
+    /// Canonical centered-box-window half-width from a resolved α. The SINGLE
+    /// source of truth for the `α → h` mapping (used by `halfWidth(for:)` above
+    /// and by `ExportCoordinator`'s smoothing gate). Returns **0** (OFF) when α is
+    /// not in the open interval `(0, 1)`: `α ≥ 1.0` (OFF), `α ≤ 0`, or non-finite
+    /// (NaN/Inf — defensively OFF rather than trapping on `Int(1/0)`/`Int(NaN)`).
+    /// For `α ∈ (0,1)`: `h = max(0, round(1/α))`.
+    public static func halfWidth(forAlpha alpha: Double) -> Int {
+        if !alpha.isFinite || alpha >= 1.0 || alpha <= 0 { return 0 }
+        return max(0, Int((1.0 / alpha).rounded()))
     }
 
     /// Continuous log-linear ramp through anchors `(spp, α) = (2,0.10),
