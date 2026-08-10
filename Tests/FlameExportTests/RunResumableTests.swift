@@ -476,20 +476,19 @@ final class RunResumableTests: XCTestCase {
         }
     }
 
-    // MARK: - Task 9: full-window warm-on-resume for temporal smoothing
+    // MARK: - T8′ resume byte-identity for temporal smoothing (centered box window)
 
-    /// Build a smoothing-ON job (α = 0.1) matching `makeJob`'s fixture (sierpinski,
-    /// 160x100, ProRes, spp 20, ts 1). `segmentCount: 2` → 1 loop (8 frames) + 1
-    /// transition (8 frames) = 16 global frames. α = 0.1 ⇒ EMA time constant
-    /// τ ≈ 1/α ≈ 10 frames; the residual after a short τ-window warmup would be
-    /// (1−α)^τ ≈ 0.35, so a full-window [0,F) warmup is required for byte-identity.
+    /// Build a smoothing-ON job (α = 0.1 ⇒ centered-box-window half-width
+    /// h = round(1/0.1) = 10) matching `makeJob`'s fixture (sierpinski, 160x100,
+    /// ProRes, spp 20, ts 1). `segmentCount: 2` → 1 loop (8 frames) + 1 transition
+    /// (8 frames) = 16 global frames.
     private func makeSmoothingJob(out: URL, loopRepeatCount: Int) throws -> ExportJob {
         let flames = try genome("sierpinski.flam3")
         var settings = ExportSettings()
         settings.codec = .proRes422HQ; settings.container = .mov
         settings.resolution = .custom(width: 160, height: 100); settings.fps = 30
         settings.quality = .spp(20); settings.temporalSamples = 1
-        settings.smoothingAlpha = 0.1   // smoothing ON — EMA τ ≈ 10 frames
+        settings.smoothingAlpha = 0.1   // smoothing ON — h ≈ 10 frames
         return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                          transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
                          seed: 42, loopCycles: 1, stagger: 0, out: out,
@@ -497,11 +496,13 @@ final class RunResumableTests: XCTestCase {
     }
 
     /// §9.5 resume byte-identity pin (smoothing ON): a smoothing-ON export paused
-    /// DEEP (after chunks 0,1 of 4, F = 8 ≈ τ at α=0.1) and resumed produces
-    /// byte-identical frames to a never-paused export of the same job. Without the
-    /// full-window warmup [0,F), the cold accumulator diverges from the never-paused
-    /// run's warmed accumulator (the IIR residual (1−α)^F ≈ 0.43 at α=0.1, F=8), so
-    /// the resumed chunk's smoothed frames would differ.
+    /// DEEP (after chunks 0,1 of 4; chunk size 4, h=10) and resumed produces
+    /// byte-identical frames to a never-paused export of the same job. T8′ (centered
+    /// box window) makes this trivial: each chunk builds a FRESH per-call window fed
+    /// an h-frame-margin extended range, so each chunk is self-contained — resume
+    /// simply re-renders the chunk and its margins reconstruct the identical window.
+    /// There is NO run-scoped accumulator and NO warmup (the old causal-EMA
+    /// `[0,F)` full-window warmup is gone).
     func testResumeSmoothingByteIdentity() async throws {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -547,7 +548,7 @@ final class RunResumableTests: XCTestCase {
         for i in 0..<a.count {
             XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0,
                                      "smoothing resume pixel diff at frame \(i) "
-                                     + "(warmup [0,F) must reconstruct the accumulator)")
+                                     + "(per-chunk window margins must reconstruct the identical window)")
         }
     }
 }

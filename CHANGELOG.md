@@ -10,25 +10,28 @@ implications of porting flam3) is the owner's decision and under review.
 ## [Unreleased] — M6.1 slice 2: temporal smoothing
 
 Low-spp exports (Low / Medium / High quality) no longer flicker — the "tiny dots
-moving around" trajectory-divergence flicker is gone. An across-frame histogram
-EMA is applied before the display pipeline. Engine parity and the animate/export
-mastering path are unchanged (byte-identical); the feature is export-only.
+moving around" trajectory-divergence flicker is gone, smoothed from the very first
+frame. A centered (non-causal) box window is applied over per-frame histograms
+before the display pipeline. Engine parity and the animate/export mastering path
+are unchanged (byte-identical); the feature is export-only.
 
 ### Added
-- **Temporal smoothing (export)** — `H_acc = (1−α)·H_acc_prev + α·H_current` on the
-  Double histogram, then density-estimation + log-density + tone-map run once on
-  `H_acc`. α is a continuous log-linear ramp from the quality tier (Low 0.10,
-  Medium 0.20, High 0.35, ramping to OFF at spp 64); genome-default and the
-  single-frame mastering path are untouched (α = 1.0), so every animate/export
-  byte-identity pin stays green. Export-only (the realtime preview is unchanged).
+- **Temporal smoothing (export) — centered box window.** Per output frame, the
+  histogram is the average over a centered window `[m−h, m+h]` (half-width
+  `h = round(1/α)`: Low→10 / Med→5 / High→3), then density-estimation + log-density
+  + tone-map run once. Centered (not a causal EMA) so it smooths from frame 1 with
+  no startup ramp and no temporal lag; box weights give the minimum-variance
+  estimate for the per-frame Monte-Carlo noise (max flicker kill). Genome-default,
+  spp ≥ 64, and the single-frame mastering path are untouched (`h == 0` ⇒ OFF), so
+  every animate/export byte-identity pin stays green. Export-only.
 - **Metal via fused-chaos + atomicBuf readback** — the smoothing path reuses the
-  fused chaos pass, reads the atomic histogram buffer back, host-decodes it, EMAs,
-  and runs DE + display off-main. No new Metal shader; the existing fused cores and
-  the realtime/thumbnail paths are byte-unchanged (additive variants only).
-- **Full-window warmup on resume** — the EMA accumulator is reconstructed
-  bit-identically to a never-paused run by re-rendering histograms for frames
-  `[0,F)` on resume (the accumulator is not serialized in the checkpoint). Resumed
-  exports stay byte-identical to never-paused ones.
+  fused chaos pass, reads the atomic histogram buffer back, host-decodes it, windows
+  it, and runs DE + display off-main. No new Metal shader; the existing fused cores
+  and the realtime/thumbnail paths are byte-unchanged (additive variants only).
+- **Per-chunk window with h-frame margins** — each export chunk uses a fresh window
+  fed an extended range (lookback + lookahead), so chunks are self-contained. Resume
+  is trivial (re-render the chunk + margins); resumed exports are byte-identical to
+  never-paused ones.
 - **GUI toggle + CLI flag** — a "Temporal smoothing" checkbox in the export sheet
   (auto on at the named tiers, off at genome-default) with a resolved-α label, and
   a `--temporal-smoothing on|off` CLI recipe flag.
@@ -40,6 +43,12 @@ mastering path are unchanged (byte-identical); the feature is export-only.
   is byte-identical.
 - `DensityEstimationMetal` / `DisplayPipelineMetal` gain `nonisolated *Core`
   functions so DE + display run off-main for the smoothing display step.
+
+### Known limitations
+- Smoothing-ON peak memory is `2h+1` Double histograms (~1.7 GB at 1080p for h=10,
+  ~7 GB at 4K); a RAM guard is pending. A transition between genomes with different
+  spatial-filter radii (different grid dimensions) throws a graceful
+  `ExportError.smoothingGridMismatch` (uniform-filter genomes are unaffected).
 
 ## [v0.5.1] — M6.1 export pause/resume
 
