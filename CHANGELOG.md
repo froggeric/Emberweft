@@ -7,7 +7,7 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
-## [Unreleased] — M6.1 slice 2: temporal smoothing
+## [v0.5.2] — M6.1 slice 2: temporal smoothing
 
 Low-spp exports (Low / Medium / High quality) no longer flicker — the "tiny dots
 moving around" trajectory-divergence flicker is gone, smoothed from the very first
@@ -43,6 +43,13 @@ are unchanged (byte-identical); the feature is export-only.
   is byte-identical.
 - `DensityEstimationMetal` / `DisplayPipelineMetal` gain `nonisolated *Core`
   functions so DE + display run off-main for the smoothing display step.
+
+### Fixed
+- **Early-pause resume** — pausing before the first checkpoint interval completed
+  left no checkpoint on disk (the per-chunk write fires only after a chunk
+  completes), so resume failed with "checkpoint unreadable". An initial checkpoint
+  is now written at the start of the run, so an early pause (e.g. mid-first-chunk)
+  is always resumable (resume re-renders the partial first chunk).
 
 ### Known limitations
 - Smoothing-ON peak memory is `2h+1` Double histograms (~1.7 GB at 1080p for h=10,

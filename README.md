@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.5.1: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, and loop render-once-repeat, plus export pause/resume + crash recovery (v0.5.1) — are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.5.2: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, and loop render-once-repeat, plus export pause/resume + crash recovery, and temporal smoothing for low-spp exports (v0.5.2) — are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4 + M6 + M6.1 pause/resume complete, v0.5.1):**
+**Works now (M0–M4 + M6 + M6.1 complete, v0.5.2):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -63,11 +63,12 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.3.1** | ✅ Done | **M4 polish:** configurable preview presets + live FPS readout (both playback windows); `testFiniteDeterministicRenders` crash fix (`intTrunc` guard) |
 | **v0.3.2** | ✅ Done | **M4 polish:** distinct preview/export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target |
 | **v0.4.0** | ✅ Done | **M6:** `emberweft export` to MP4/MOV (H.264 + HEVC), long-form concat, batch; `FramePlan` extraction; `ThreadSeedBudget` acceleration |
+| **v0.5.2** | ✅ Done | **M6.1 slice 2 temporal smoothing:** centered box window over per-frame histograms (smooth from frame 1, no lag), Metal fused-chaos + atomicBuf readback, per-chunk window + resume; early-pause checkpoint fix |
 | **v0.5.1** | ✅ Done | **M6.1 export pause/resume:** Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard` |
 | **v0.5.0** | ✅ Done | **M6 GUI export:** export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing, loop render-once-repeat |
 | M4 | ✅ Done | Native SwiftUI generative-flame studio |
 | M5 | Current | macOS screensaver bundle |
-| M6 | ✅ Done | Export pipeline + codecs (engine + CLI v0.4.0; GUI export studio v0.5.0; pause/resume v0.5.1; temporal smoothing → M6.1 slice 2) |
+| M6 | ✅ Done | Export pipeline + codecs (engine + CLI v0.4.0; GUI export studio v0.5.0; pause/resume v0.5.1; temporal smoothing v0.5.2) |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
 
@@ -263,4 +264,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 + M6 + M6.1 slice 1 are complete (v0.5.1):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, loop render-once-repeat) all work today. **M6.1 slice 1** (export pause/resume, v0.5.1, branch `m6.1-export-followup`) is done; **M6.1 slice 2** (temporal smoothing) and **M5** (the macOS screensaver bundle) are next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 + M6 + M6.1 are complete (v0.5.2):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, loop render-once-repeat, temporal smoothing for low-spp exports) all work today. **M6.1** (export pause/resume v0.5.1 + temporal smoothing v0.5.2) is done; **M5** (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).
