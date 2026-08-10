@@ -49,7 +49,11 @@ enum DisplayPipelineMetal {
     /// Render `histogram` to an 8-bit RGBA image via the full Metal display
     /// pipeline. Deterministic in `(histogram, width, height, oversample, gamma,
     /// gammaThreshold, vibrancy, brightness, sampleDensity, pixelsPerUnit,
-    /// highlightPower, spatialFilterRadius)`.
+    /// highlightPower, spatialFilterRadius)`. Thin `@MainActor` delegate that
+    /// sources the device/queue/PSOs from `MetalRenderer`'s cached MainActor
+    /// state (the SAME `_logPso`/`_dispPso` the fused path uses — a PSO is a pure
+    /// function of kernel+device, so cached vs freshly-built is byte-identical)
+    /// and forwards to `renderCore`.
     @MainActor
     static func render(histogram: Histogram, width: Int, height: Int, oversample: Int,
                        gamma: Double, gammaThreshold: Double, vibrancy: Double,
@@ -57,14 +61,44 @@ enum DisplayPipelineMetal {
                        sampleDensity: Double, pixelsPerUnit: Double,
                        highlightPower: Double = -1.0,
                        spatialFilterRadius: Double = 0.5) throws -> RGBA8Image {
-        precondition(MemoryLayout<DisplayParams>.size == 64,
-                     "DisplayParams size drifted from MSL mirror (64 bytes)")
-        guard let (device, library) = MetalRenderer.deviceAndLibrary() else {
+        guard let (device, _) = MetalRenderer.deviceAndLibrary() else {
             throw NSError(domain: "MetalRenderer", code: 20)
         }
         guard let queue = MetalRenderer.commandQueue else {
             throw NSError(domain: "MetalRenderer", code: 21)
         }
+        guard let psos = MetalRenderer.fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
+        }
+        return try renderCore(histogram: histogram, width: width, height: height,
+                              oversample: oversample, gamma: gamma,
+                              gammaThreshold: gammaThreshold, vibrancy: vibrancy,
+                              brightness: brightness, sampleDensity: sampleDensity,
+                              pixelsPerUnit: pixelsPerUnit, highlightPower: highlightPower,
+                              spatialFilterRadius: spatialFilterRadius,
+                              device: device, queue: queue,
+                              logPso: psos.log, displayPso: psos.display)
+    }
+
+    /// Actor-agnostic core — the body of `render` with all Metal handles passed
+    /// in. `nonisolated` so it runs identically on the MainActor (via `render`)
+    /// OR on a dedicated background queue (via
+    /// `MetalRenderer.renderSmoothedDisplayOffMain`, which sources PSOs from
+    /// `offMainCache`). Output is byte-identical either way — the GPU
+    /// computation is independent of the encoding thread. Body is VERBATIM from
+    /// the former `render` (precondition → k1/k2 → spatial kernel → pack →
+    /// dispatch → readback); only the PSO sourcing changed (built-per-call →
+    /// passed-in) and the spatial kernel is built here (same as `render` did).
+    nonisolated
+    static func renderCore(histogram: Histogram, width: Int, height: Int, oversample: Int,
+                           gamma: Double, gammaThreshold: Double, vibrancy: Double,
+                           brightness: Double, sampleDensity: Double, pixelsPerUnit: Double,
+                           highlightPower: Double, spatialFilterRadius: Double,
+                           device: MTLDevice, queue: MTLCommandQueue,
+                           logPso: MTLComputePipelineState,
+                           displayPso: MTLComputePipelineState) throws -> RGBA8Image {
+        precondition(MemoryLayout<DisplayParams>.size == 64,
+                     "DisplayParams size drifted from MSL mirror (64 bytes)")
 
         let gw = histogram.gridWidth, gh = histogram.gridHeight
         let binCount = gw * gh
@@ -135,15 +169,10 @@ enum DisplayPipelineMetal {
         let outBuf = device.makeBuffer(length: outBytes, options: .storageModeShared)!
         memset(outBuf.contents(), 0, outBytes)
 
-        // --- Pipeline states (fixed Metal API per T2/T5/T8 proven pattern) ---
-        guard let f1 = library.makeFunction(name: "logDensity") else {
-            throw NSError(domain: "MetalRenderer", code: 22)
-        }
-        let pso1 = try device.makeComputePipelineState(function: f1)
-        guard let f2 = library.makeFunction(name: "displayPipeline") else {
-            throw NSError(domain: "MetalRenderer", code: 23)
-        }
-        let pso2 = try device.makeComputePipelineState(function: f2)
+        // --- Pipeline states (passed in by the caller — fixed Metal API per
+        // T2/T5/T8 proven pattern) ---
+        let pso1 = logPso
+        let pso2 = displayPso
 
         guard let cb = queue.makeCommandBuffer() else {
             throw NSError(domain: "MetalRenderer", code: 24)

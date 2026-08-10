@@ -44,6 +44,13 @@ extension EmberweftCLI {
         // `--checkpoint-frames > 0` and `--segment-frames > 0` are passed,
         // `--checkpoint-frames` wins (see the dispatch below).
         var checkpointFrames = 0
+        // Task 11 (M6.1 slice 2): `--temporal-smoothing on|off` (RECIPE flag R7).
+        // `on` → `.auto` (derive α from quality via the ramp); `off` → `.off`
+        // (α=1.0, byte-identical to the unsmoothed path). Default `.auto`. Like
+        // the other recipe flags, it sets `anyRecipeFlagExplicit = true` so the D11
+        // resume gate rejects `--resume --temporal-smoothing …` (the checkpoint's
+        // stored `settings.smoothingAlpha` is authoritative on resume).
+        var temporalSmoothing: TemporalSmoothing = .auto
         // `--resume <out>`: read the checkpoint beside `<out>` and complete the run.
         // `--discard <out>`: delete the checkpoint + chunk temps beside `<out>`.
         // Both are standalone MODE flags (handled before genome loading); exactly
@@ -159,6 +166,13 @@ extension EmberweftCLI {
                     // its own frame-count chunking and ignores segmentFrameBudget).
                     guard let v = value() else { return missing("--checkpoint-frames") }
                     checkpointFrames = max(0, Int(v) ?? 0); i += 2
+                case "--temporal-smoothing":
+                    // Task 11 (M6.1 slice 2): `on` (default) → `.auto` (α from the
+                    // quality ramp); `off` → `.off` (α=1.0). RECIPE flag R7 → sets
+                    // `anyRecipeFlagExplicit` so `--resume` rejects it (D11).
+                    guard let v = value() else { return missing("--temporal-smoothing") }
+                    temporalSmoothing = (v.lowercased() == "off") ? .off : .auto
+                    anyRecipeFlagExplicit = true; i += 2
                 case "--resume":
                     // Task 9 (M6.1): complete a previously-checkpointed run beside
                     // `<out>`. The checkpoint's recipe is AUTHORITATIVE (D11) — no
@@ -382,7 +396,8 @@ extension EmberweftCLI {
         var settings = Self.resolveExportSettings(
             codec: codec, container: container, fps: fps, quality: quality,
             temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
-            segmentFrames: segmentFrames, renderable: renderable, fallbackFlame: flames[0], backend: backend)
+            segmentFrames: segmentFrames, renderable: renderable, fallbackFlame: flames[0], backend: backend,
+            temporalSmoothing: temporalSmoothing)
 
         // --- HEVC availability probe + fallback (Task 5 AC3) ---
         // H.264 is universally available on the target, so we only probe when
@@ -459,6 +474,12 @@ extension EmberweftCLI {
             return 2
         }
         if let onlyFrame, png {
+            // Task 11 (M6.1 slice 2): the 1-frame PNG mastering path bypasses the
+            // coordinator (no multi-frame EMA), so temporal smoothing can't apply.
+            // Force `.off` defensively — guards against future refactors and makes
+            // the intent explicit (P2.2). The params built below carry no smoothing
+            // state either way; this is belt-and-suspenders.
+            temporalSmoothing = .off
             var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
                                     transitionFramesPerSegment: transitionFramesPerSegment,
                                     selector: Sequential(seed: seed), seed: seed)
@@ -645,7 +666,8 @@ extension EmberweftCLI {
     static func resolveExportSettings(
         codec: String, container: String, fps: Int, quality: String,
         temporalSamples: Int, bitrate: String, resolution: String,
-        segmentFrames: Int, renderable: [Flame], fallbackFlame: Flame, backend: String
+        segmentFrames: Int, renderable: [Flame], fallbackFlame: Flame, backend: String,
+        temporalSmoothing: TemporalSmoothing = .auto
     ) -> ExportSettings {
         // --- String → enum parsing (VERBATIM from the original; the resolver
         // takes parsed enums so this is the ONLY place strings are interpreted) ---
@@ -688,7 +710,8 @@ extension EmberweftCLI {
             temporalSamples: temporalSamples,
             codec: codecEnum, container: containerEnum, fps: fps, bitrate: bitrateEnum,
             resolution: resolutionEnum, segmentFrameBudget: segmentFrames,
-            baseFlame: baseFlame, backend: backendEnum)
+            baseFlame: baseFlame, backend: backendEnum,
+            temporalSmoothing: temporalSmoothing)
 
         // --- Metal temporal cap notice (the resolver is SILENT; the CLI prints) ---
         // Mirrors the original (ExportCommand.swift:378-382) EXACTLY: the notice
@@ -765,7 +788,8 @@ extension EmberweftCLI {
         let settings = resolveExportSettings(
             codec: codec, container: container, fps: fps, quality: quality,
             temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
-            segmentFrames: segmentFrames, renderable: renderable0, fallbackFlame: firstFlame, backend: backend)
+            segmentFrames: segmentFrames, renderable: renderable0, fallbackFlame: firstFlame, backend: backend,
+            temporalSmoothing: .auto)   // batch: smoothing is batch-wide from quality; no per-entry override
 
         // HEVC availability (probe once — codec is batch-wide).
         if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {

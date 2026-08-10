@@ -475,4 +475,79 @@ final class RunResumableTests: XCTestCase {
                                      "multi-flame flameIndex=1 pixel diff at frame \(i)")
         }
     }
+
+    // MARK: - Task 9: full-window warm-on-resume for temporal smoothing
+
+    /// Build a smoothing-ON job (α = 0.1) matching `makeJob`'s fixture (sierpinski,
+    /// 160x100, ProRes, spp 20, ts 1). `segmentCount: 2` → 1 loop (8 frames) + 1
+    /// transition (8 frames) = 16 global frames. α = 0.1 ⇒ EMA time constant
+    /// τ ≈ 1/α ≈ 10 frames; the residual after a short τ-window warmup would be
+    /// (1−α)^τ ≈ 0.35, so a full-window [0,F) warmup is required for byte-identity.
+    private func makeSmoothingJob(out: URL, loopRepeatCount: Int) throws -> ExportJob {
+        let flames = try genome("sierpinski.flam3")
+        var settings = ExportSettings()
+        settings.codec = .proRes422HQ; settings.container = .mov
+        settings.resolution = .custom(width: 160, height: 100); settings.fps = 30
+        settings.quality = .spp(20); settings.temporalSamples = 1
+        settings.smoothingAlpha = 0.1   // smoothing ON — EMA τ ≈ 10 frames
+        return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
+                         transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
+                         seed: 42, loopCycles: 1, stagger: 0, out: out,
+                         loopRepeatCount: loopRepeatCount)
+    }
+
+    /// §9.5 resume byte-identity pin (smoothing ON): a smoothing-ON export paused
+    /// DEEP (after chunks 0,1 of 4, F = 8 ≈ τ at α=0.1) and resumed produces
+    /// byte-identical frames to a never-paused export of the same job. Without the
+    /// full-window warmup [0,F), the cold accumulator diverges from the never-paused
+    /// run's warmed accumulator (the IIR residual (1−α)^F ≈ 0.43 at α=0.1, F=8), so
+    /// the resumed chunk's smoothed frames would differ.
+    func testResumeSmoothingByteIdentity() async throws {
+        let dir = tmpDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outFresh = dir.appendingPathComponent("fresh.mov")
+        let outResume = dir.appendingPathComponent("resume.mov")
+
+        // Never-paused: run the smoothing-ON job through runResumable (same path
+        // as the resume, so both use renderFramesInterleaved with smoothing).
+        let coordFresh = ExportCoordinator(backend: .cpu)
+        let streamFresh = await coordFresh.runResumable(
+            try makeSmoothingJob(out: outFresh, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
+        for try await _ in streamFresh {}
+
+        // Paused DEEP: interval 4 → 4 chunks (4 frames each); pause at chunk-top
+        // of 2 (chunks 0,1 complete → F = 2*4 = 8 ≈ τ at α=0.1).
+        let coordPause = ExportCoordinator(backend: .cpu)
+        await coordPause._setTestPauseAfterChunk(2)
+        let streamPause = await coordPause.runResumable(
+            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
+        do {
+            for try await _ in streamPause {}
+            XCTFail("expected ExportError.paused")
+        } catch ExportError.paused {
+            // expected — checkpoint + chunks 0,1 remain on disk
+        } catch {
+            XCTFail("expected ExportError.paused, got \(error)")
+        }
+
+        // Resume from the checkpoint.
+        let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
+        let resumeCoord = ExportCoordinator(backend: .cpu)
+        let streamResume = await resumeCoord.runResumable(
+            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            sources: [], checkpointIntervalFrames: 4, resumeFrom: cpURL)
+        for try await _ in streamResume {}
+
+        // Byte-identity: resumed output == never-paused output.
+        let a = try await decodeFrames(outFresh), b = try await decodeFrames(outResume)
+        XCTAssertEqual(a.count, b.count,
+                       "frame count mismatch (smoothing resume byte-identity)")
+        for i in 0..<a.count {
+            XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0,
+                                     "smoothing resume pixel diff at frame \(i) "
+                                     + "(warmup [0,F) must reconstruct the accumulator)")
+        }
+    }
 }

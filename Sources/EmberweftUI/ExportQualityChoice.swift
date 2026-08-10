@@ -28,6 +28,24 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
         }
     }
 
+    /// M6.1 slice 2 / Task 10: resolved-α read-only label for the export sheet.
+    /// Computes `TemporalSmoothing.auto.alpha(for: exportQuality)` (the value the
+    /// sheet shows as a hint when smoothing is ON at this quality tier) and
+    /// formats it as e.g. "α = 0.20, ≈5-frame blend". At `.genomeDefault` (or any
+    /// tier where α ≥ 1.0) smoothing is a no-op, so this returns "off".
+    ///
+    /// The "≈N-frame blend" is `1/α` rounded (the EMA's effective window: α = 0.20
+    /// ⇒ ~5-frame blend). The label reflects the `.auto` (ON) α; the `.off` toggle
+    /// position is surfaced separately by the sheet (the toggle itself).
+    public var smoothingAlphaLabel: String {
+        let alpha = TemporalSmoothing.auto.alpha(for: exportQuality)
+        if alpha >= 1.0 {
+            return "off"
+        }
+        let frames = Int((1.0 / alpha).rounded())
+        return String(format: "α = %.2f, ≈%d-frame blend", alpha, frames)
+    }
+
     /// Seed the default sheet choice from the dormant prefs field (the sheet's
     /// Quality picker defaults from `prefs.qualityPreset`). There is no
     /// `.genomeDefault` preset, so callers wanting genome-default must set it

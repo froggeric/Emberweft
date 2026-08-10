@@ -7,6 +7,40 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [Unreleased] — M6.1 slice 2: temporal smoothing
+
+Low-spp exports (Low / Medium / High quality) no longer flicker — the "tiny dots
+moving around" trajectory-divergence flicker is gone. An across-frame histogram
+EMA is applied before the display pipeline. Engine parity and the animate/export
+mastering path are unchanged (byte-identical); the feature is export-only.
+
+### Added
+- **Temporal smoothing (export)** — `H_acc = (1−α)·H_acc_prev + α·H_current` on the
+  Double histogram, then density-estimation + log-density + tone-map run once on
+  `H_acc`. α is a continuous log-linear ramp from the quality tier (Low 0.10,
+  Medium 0.20, High 0.35, ramping to OFF at spp 64); genome-default and the
+  single-frame mastering path are untouched (α = 1.0), so every animate/export
+  byte-identity pin stays green. Export-only (the realtime preview is unchanged).
+- **Metal via fused-chaos + atomicBuf readback** — the smoothing path reuses the
+  fused chaos pass, reads the atomic histogram buffer back, host-decodes it, EMAs,
+  and runs DE + display off-main. No new Metal shader; the existing fused cores and
+  the realtime/thumbnail paths are byte-unchanged (additive variants only).
+- **Full-window warmup on resume** — the EMA accumulator is reconstructed
+  bit-identically to a never-paused run by re-rendering histograms for frames
+  `[0,F)` on resume (the accumulator is not serialized in the checkpoint). Resumed
+  exports stay byte-identical to never-paused ones.
+- **GUI toggle + CLI flag** — a "Temporal smoothing" checkbox in the export sheet
+  (auto on at the named tiers, off at genome-default) with a resolved-α label, and
+  a `--temporal-smoothing on|off` CLI recipe flag.
+
+### Changed
+- `ExportSettings` gains `temporalSmoothing` + a resolved `smoothingAlpha` (rides
+  in the checkpoint via `settings`; v0.5.1 checkpoints decode via `decodeIfPresent`).
+- `ReferenceRenderer` is split to expose a pre-DE `histogram(...)`; `render(...)`
+  is byte-identical.
+- `DensityEstimationMetal` / `DisplayPipelineMetal` gain `nonisolated *Core`
+  functions so DE + display run off-main for the smoothing display step.
+
 ## [v0.5.1] — M6.1 export pause/resume
 
 Long GUI exports (a multi-day, genome-default sequence) are now pausable and

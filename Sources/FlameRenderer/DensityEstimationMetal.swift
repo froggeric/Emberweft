@@ -11,24 +11,57 @@ import FlameKit
 /// Doubles. Passthrough when `radius == 0` (the path the frozen radius=0 goldens
 /// hit). Count mass is preserved exactly; color mass matches the CPU
 /// approximation to within float precision.
-@MainActor
+///
+/// `apply` is `@MainActor` (sources device/queue/PSO from `MetalRenderer`'s
+/// cached MainActor state). `applyCore` is the `nonisolated` actor-agnostic
+/// extraction — all Metal handles passed in — so the off-main smoothed-display
+/// path (`MetalRenderer.renderSmoothedDisplayOffMain`) can run DE off-main
+/// without freezing the UI. Both produce byte-identical output (a PSO is a pure
+/// function of kernel+device; the encoding thread is irrelevant).
 enum DensityEstimationMetal {
 
     /// Apply the Metal density-estimation kernel. Returns `hist` unchanged when
     /// `radius <= 0` (exact passthrough — the golden path). Deterministic in
-    /// `(hist, radius, minimum, curve)` across repeated calls.
+    /// `(hist, radius, minimum, curve)` across repeated calls. Thin `@MainActor`
+    /// delegate that sources the device/queue/PSO from `MetalRenderer`'s cached
+    /// MainActor state (the SAME `_densityPso` the fused path uses — a PSO is a
+    /// pure function of kernel+device, so cached vs freshly-built is byte-identical)
+    /// and forwards to `applyCore`.
+    @MainActor
     static func apply(_ hist: Histogram,
                       radius: Double,
                       minimum: Double,
                       curve: Double) throws -> Histogram {
         guard radius > 0 else { return hist }
-        guard let (device, library) = MetalRenderer.deviceAndLibrary() else {
+        guard let (device, _) = MetalRenderer.deviceAndLibrary() else {
             throw NSError(domain: "MetalRenderer", code: 13)
         }
         guard let queue = MetalRenderer.commandQueue else {
             throw NSError(domain: "MetalRenderer", code: 14)
         }
+        guard let densityPso = MetalRenderer.fusedPipelines()?.density else {
+            throw NSError(domain: "MetalRenderer", code: 15)
+        }
+        return try applyCore(hist, radius: radius, minimum: minimum, curve: curve,
+                             device: device, queue: queue, densityPso: densityPso)
+    }
 
+    /// Actor-agnostic core — the body of `apply` (after the radius guard) with
+    /// all Metal handles passed in. `nonisolated` so it runs identically on the
+    /// MainActor (via `apply`) OR on a dedicated background queue (via
+    /// `MetalRenderer.renderSmoothedDisplayOffMain`, which sources PSOs from
+    /// `offMainCache`). Output is byte-identical either way — the GPU
+    /// computation is independent of the encoding thread. Body is VERBATIM from
+    /// the former `apply` (pack → dispatch → unpack); only the PSO sourcing
+    /// changed (built-per-call → passed-in).
+    nonisolated
+    static func applyCore(_ hist: Histogram,
+                          radius: Double,
+                          minimum: Double,
+                          curve: Double,
+                          device: MTLDevice,
+                          queue: MTLCommandQueue,
+                          densityPso: MTLComputePipelineState) throws -> Histogram {
         let gw = hist.gridWidth, gh = hist.gridHeight
         let binCount = gw * gh
 
@@ -58,11 +91,8 @@ enum DensityEstimationMetal {
         let workBuf = device.makeBuffer(length: workBytes, options: .storageModeShared)!
         memset(workBuf.contents(), 0, workBytes)
 
-        // --- Pipeline + 2D dispatch (fixed Metal API per T2/T5's proven pattern) ---
-        guard let function = library.makeFunction(name: "densityEstimation") else {
-            throw NSError(domain: "MetalRenderer", code: 15)
-        }
-        let pso = try device.makeComputePipelineState(function: function)
+        // --- 2D dispatch (fixed Metal API per T2/T5's proven pattern) ---
+        let pso = densityPso
 
         guard let cb = queue.makeCommandBuffer(),
               let enc = cb.makeComputeCommandEncoder() else {

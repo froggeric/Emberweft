@@ -127,6 +127,14 @@ public final class ExportManager {
     public var backendChoice: BackendChoice = .auto
     /// 1 ⇒ genome default (resolved, motion blur); see `ExportSettings.resolve`.
     public var temporalSamples: Int = 1
+    /// M6.1 slice 2 / Task 10: temporal-smoothing toggle. `.auto` ⇒ derive α
+    /// from the quality tier via `TemporalSmoothing.alpha(for:)` (the continuous
+    /// ramp); `.off` ⇒ force α = 1.0 (byte-identical to the unsmoothed path).
+    /// Threaded through `resolveSettings` → `ExportSettings.resolve`. The sheet
+    /// binds this two-way (`.auto` ⇄ `.off`); at `.genomeDefault` quality the
+    /// toggle is a no-op (α collapses to 1.0 regardless), so the sheet disables
+    /// it there. Default `.auto` matches the `ExportSettings.resolve` default.
+    public var temporalSmoothing: TemporalSmoothing = .auto
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
     /// Default 15 s — the owner's optimal loop render length. Combined with
     /// `loopRepeatCount == 2`, a 15 s loop renders once (15 s of render cost)
@@ -478,12 +486,48 @@ public final class ExportManager {
     /// `cancel()`/`discardPaused()` so the chunk sweep uses the right extension
     /// without bloating the `.paused` state enum with a redundant container.
     internal func readContainerFromCheckpoint(out: URL) -> ExportSettings.Container? {
+        decodedCheckpoint(out: out)?.settings.container
+    }
+
+    /// M6.1 slice 2 / Task 9: decode the FULL checkpoint beside `out` (resilient —
+    /// corrupt/missing ⇒ nil). Shared by `readContainerFromCheckpoint` (container
+    /// only) and `resumeWarmupNotice` (full checkpoint for the F computation).
+    internal func decodedCheckpoint(out: URL) -> ExportCheckpoint? {
         let cpURL = ExportCheckpoint.checkpointURL(out: out)
         guard let data = try? Data(contentsOf: cpURL),
               let cp = try? JSONDecoder().decode(ExportCheckpoint.self, from: data) else {
             return nil
         }
-        return cp.settings.container
+        return cp
+    }
+
+    /// M6.1 slice 2 / Task 9 (S15): CPU warmup notice for the paused surface.
+    /// When the resolved backend is `.cpu`, smoothing is active (α < 1.0), and
+    /// there are completed chunks to warm up over (F > 0), returns a notice
+    /// estimating the CPU warmup cost before resume. Nil otherwise (Metal resume,
+    /// smoothing OFF, fresh run F==0, or not paused). A NOTICE — the resume still
+    /// proceeds; this only surfaces the cost so the user can switch to Metal.
+    ///
+    /// Computed (pure derivation from `state`/`resumableJob`/the checkpoint file):
+    /// re-evaluates when `state` changes (the `@Observable` tracking fires on the
+    /// `state` read inside). `F` = first global frame of the first incomplete
+    /// chunk, matching the coordinator's warmup [0,F) range exactly.
+    public var resumeWarmupNotice: String? {
+        guard case .paused(let out, _, _) = state else { return nil }
+        guard let job = resumableJob else { return nil }
+        guard resolveBackend(metalAvailable: MetalRenderer.isAvailable) == .cpu else { return nil }
+        guard job.settings.smoothingAlpha < 1.0 else { return nil }
+        guard let cp = decodedCheckpoint(out: out) else { return nil }
+        let safeInterval = max(1, cp.checkpointIntervalFrames)
+        let firstIncomplete = (0..<cp.chunkCount).first { !cp.completedChunkIndexes.contains($0) }
+            ?? cp.chunkCount
+        let F = min(firstIncomplete * safeInterval, cp.totalGlobalFrames)
+        guard F > 0 else { return nil }
+        // Rough CPU per-frame render cost (CLAUDE.md: ~6–17 s/frame on CPU).
+        let perFrameCPUSeconds = 10.0
+        let warmupSeconds = Int(Double(F) * perFrameCPUSeconds)
+        return "CPU warmup: ~\(F) frames (~\(warmupSeconds) s) before resume. "
+            + "Consider Metal for faster resume."
     }
 
     /// M6.1 Task 7: the SINGLE funnel for `rememberedCheckpointURL` mutations.
@@ -564,13 +608,18 @@ public final class ExportManager {
         case runBatch(jobs: [ExportJob], baseDir: URL)
     }
 
-    private func resolveSettings(baseFlame: Flame, backend: ExportCoordinator.Backend) -> ExportSettings {
+    /// Resolve the concrete `ExportSettings` from the sheet's editable config.
+    /// `internal` (not `private`) so `EmberweftUITests` can pin the
+    /// `temporalSmoothing` threading (Task 10) — `@testable import` reaches
+    /// `internal` but not `private`. Pure value derivation; no I/O.
+    internal func resolveSettings(baseFlame: Flame, backend: ExportCoordinator.Backend) -> ExportSettings {
         ExportSettings.resolve(
             quality: qualityChoice.exportQuality,
             temporalSamples: temporalSamples,
             codec: codec, container: container, fps: fps, bitrate: bitrate,
             resolution: resolution, segmentFrameBudget: 0,
-            baseFlame: baseFlame, backend: backend)
+            baseFlame: baseFlame, backend: backend,
+            temporalSmoothing: temporalSmoothing)
     }
 
     /// Resolve a batch item's `out` via `BatchPath.resolve` (the D13 gate) and

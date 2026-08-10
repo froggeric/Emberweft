@@ -191,57 +191,29 @@ public enum MetalRenderer {
         let params = params.settingSpatialFilterRadius(flame.quality.filterRadius)
 
         // -------- Shared chaos payload (mirrors ChaosGameMetal.iterate) --------
-        let xforms = MetalHost.packXforms(flame)
-        let finalXform = MetalHost.packFinalXform(flame)
+        // Degenerate (zero-weight) flame guard: emit a black frame (mirrors
+        // ChaosGameMetal.iterate). encodeChaos assumes non-degenerate — it would
+        // build a zero-weight distrib table whose weighted pick is undefined.
         let weights = flame.xforms.map { max(0, $0.weight) }
         guard weights.reduce(0, +) > 0 else {
-            // Degenerate (zero-weight) flame: emit a black frame.
             return RGBA8Image(width: params.width, height: params.height,
                               pixels: [UInt8](repeating: 0, count: params.width * params.height * 4))
         }
-        let distribInt = Flam3XformDistrib.build(weights)
-        let distrib = distribInt.map { UInt32(min($0, max(0, flame.xforms.count - 1))) }
 
-        let whiteLevel = 255.0
-        let colorScalar = 1.0
-        let dmapD = buildDmap(flame.palette, whiteLevel: whiteLevel, colorScalar: colorScalar)
-        let dmap = dmapD.map { SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z)) }
-        let dmapAlpha = [Float](repeating: Float(whiteLevel * colorScalar), count: 256)
-
-        var fp = MetalHost.buildFrameParams(flame, params)
-        fp.hasFinal = finalXform != nil ? 1 : 0
-        let threadSeeds = seedBudget?.seeds(forPass: 0, threadCount: Int(fp.threadCount))
-            ?? MetalHost.buildThreadSeeds(seed: params.seed, threadCount: Int(fp.threadCount))
-
-        func buf<T>(_ values: [T]) -> MTLBuffer {
-            values.withUnsafeBytes { raw in
-                device.makeBuffer(bytes: raw.baseAddress!,
-                                  length: raw.count,
-                                  options: .storageModeShared)!
-            }
-        }
-        let xformsBuf    = buf(xforms)
-        let finalBuf     = finalXform.map { buf($0) }
-                                   ?? device.makeBuffer(length: GPUXform.bytesPerXform,
-                                                        options: .storageModeShared)!
-        let distribBuf   = buf(distrib)
-        let dmapBuf      = buf(dmap)
-        let dmapAlphaBuf = buf(dmapAlpha)
-        var fpLocal = fp
-        let fpBuf        = device.makeBuffer(bytes: &fpLocal,
-                                             length: MemoryLayout<GPUFrameParams>.stride,
-                                             options: .storageModeShared)!
-        let seedsBuf     = buf(threadSeeds)
+        // -------- Chaos stage (shared extraction, T6) -------------------------
+        // encodeChaos builds the chaos payload + atomicBuf + command buffer +
+        // encChaos dispatch — everything up to encChaos.endEncoding(). The
+        // decode/DE/log/display stages continue below using the returned cb +
+        // atomicBuf. BEHAVIOR UNCHANGED (D5): same payload, same buffer layout,
+        // same dispatch — only factored into a shared helper (also used by
+        // renderFusedCoreToHistogram). The floatBuf/display allocs move after
+        // encChaos (pure device.makeBuffer calls, no side effects on the chaos
+        // encoding → no behavioral change).
+        let (atomicBuf, fp, binCount, cb) = try encodeChaos(
+            flame: flame, params: params, device: device, queue: queue,
+            chaosPso: psos.chaos, seedBudget: seedBudget)
 
         let gw = params.gridWidth, gh = params.gridHeight
-        let binCount = gw * gh
-
-        // AtomicBin host mirror (5×uint32) — layout MUST match MSL AtomicBin.
-        struct AtomicBinHost { var count: UInt32 = 0; var r: UInt32 = 0; var g: UInt32 = 0; var b: UInt32 = 0; var a: UInt32 = 0 }
-        let atomicBuf = device.makeBuffer(
-            length: binCount * MemoryLayout<AtomicBinHost>.stride,
-            options: .storageModeShared)!
-        memset(atomicBuf.contents(), 0, binCount * MemoryLayout<AtomicBinHost>.stride)
 
         // FloatBin buffers (5×float). Fully overwritten by their producers
         // (decode writes every cell of floatBufA; density writes every cell of
@@ -286,6 +258,23 @@ public enum MetalRenderer {
         let dpBuf = device.makeBuffer(bytes: &dpExact,
                                       length: MemoryLayout<DisplayPipelineMetal.DisplayParams>.size,
                                       options: .storageModeShared)!
+
+        // Shared MTLBuffer builder (same nested form as encodeChaos /
+        // renderTemporalFusedCore). Stays here for the display + DE payload allocs.
+        func buf<T>(_ values: [T]) -> MTLBuffer {
+            values.withUnsafeBytes { raw in
+                device.makeBuffer(bytes: raw.baseAddress!,
+                                  length: raw.count,
+                                  options: .storageModeShared)!
+            }
+        }
+        // fpBuf for decode/log/display — rebuilt from the fp encodeChaos returned
+        // (byte-identical to the fpBuf encChaos used internally: same
+        // GPUFrameParams value, same device.makeBuffer(bytes:) copy).
+        var fpDecode = fp
+        let fpBuf = device.makeBuffer(bytes: &fpDecode,
+                                      length: MemoryLayout<GPUFrameParams>.stride,
+                                      options: .storageModeShared)!
         let spatialBuf = buf(kernelFloat)
 
         let accumRGBBytes = binCount * 3 * MemoryLayout<Float>.stride
@@ -305,36 +294,12 @@ public enum MetalRenderer {
         let deDimsBuf = buf(deDims)
 
         // -------- Pipeline states (passed in by the caller) --------
-        let chaosPso   = psos.chaos
         let decodePso  = psos.decode
         let densityPso = psos.density
         let logPso     = psos.log
         let dispPso    = psos.display
 
-        guard let cb = queue.makeCommandBuffer() else {
-            throw NSError(domain: "MetalRenderer", code: 24)
-        }
-        let tpg = MetalHost.threadsPerGroup
         let tpg2D = 16
-
-        // -------- Encoder 1: chaosGame (writes atomicBuf, uint32 atomics) --------
-        guard let encChaos = cb.makeComputeCommandEncoder() else {
-            throw NSError(domain: "MetalRenderer", code: 13)
-        }
-        encChaos.setComputePipelineState(chaosPso)
-        encChaos.setBuffer(xformsBuf,    offset: 0, index: 0)
-        encChaos.setBuffer(finalBuf,     offset: 0, index: 1)
-        encChaos.setBuffer(distribBuf,   offset: 0, index: 2)
-        encChaos.setBuffer(dmapBuf,      offset: 0, index: 3)
-        encChaos.setBuffer(dmapAlphaBuf, offset: 0, index: 4)
-        encChaos.setBuffer(fpBuf,        offset: 0, index: 5)
-        encChaos.setBuffer(seedsBuf,     offset: 0, index: 6)
-        encChaos.setBuffer(atomicBuf,    offset: 0, index: 7)
-        let tc = Int(fp.threadCount)
-        let groups = (tc + tpg - 1) / tpg
-        encChaos.dispatchThreadgroups(MTLSize(width: groups, height: 1, depth: 1),
-                                      threadsPerThreadgroup: MTLSize(width: tpg, height: 1, depth: 1))
-        encChaos.endEncoding()
 
         // -------- Encoder 2: atomicBinToFloatBin (atomicBuf → floatBufA) --------
         guard let encDec = cb.makeComputeCommandEncoder() else {
@@ -409,6 +374,160 @@ public enum MetalRenderer {
             dst.baseAddress!.copyMemory(from: outBuf.contents(), byteCount: outBytes)
         }
         return RGBA8Image(width: params.width, height: params.height, pixels: pixels)
+    }
+
+    // MARK: - Shared chaos encoding (T6 extraction)
+
+    /// Shared chaos-encoding extraction (T6): build the chaos payload, allocate +
+    /// zero the `atomicBuf`, create the command buffer, dispatch `encChaos`, and
+    /// return what the caller needs — `(atomicBuf, fp, binCount, cb)`. This is the
+    /// chaos-ONLY portion of the former `renderFusedCore` (everything up to
+    /// `encChaos.endEncoding()`), factored so the new readback variant
+    /// (`renderFusedCoreToHistogram`) can encode chaos identically then commit +
+    /// readback + decode instead of continuing to decode/DE/log/display.
+    ///
+    /// `params` MUST already be spatial-filter-threaded by the caller (same as
+    /// `renderFusedCore` does before calling this). The caller is also responsible
+    /// for the zero-weight guard (different return type per caller).
+    ///
+    /// BEHAVIOR UNCHANGED (D5): the chaos payload, buffer layout, and dispatch
+    /// are byte-identical to the former inline code in `renderFusedCore` —
+    /// verified by `FusedUnfusedParityTests` (fused == unfused, byte-exact). The
+    /// `atomicBuf` sizing uses `MetalHistogramDecode.AtomicBinHost` (the
+    /// parity-proven host mirror, T4) — same layout as the former local struct
+    /// (5×UInt32, 20 B, no padding), so the buffer size + memset are identical.
+    static func encodeChaos(
+        flame: Flame,
+        params: RenderParams,
+        device: MTLDevice,
+        queue: MTLCommandQueue,
+        chaosPso: MTLComputePipelineState,
+        seedBudget: MetalRenderer.ThreadSeedBudget?
+    ) throws -> (atomicBuf: MTLBuffer, fp: GPUFrameParams,
+                 binCount: Int, commandBuffer: MTLCommandBuffer) {
+        // -------- Shared chaos payload (mirrors ChaosGameMetal.iterate) --------
+        let xforms = MetalHost.packXforms(flame)
+        let finalXform = MetalHost.packFinalXform(flame)
+        let weights = flame.xforms.map { max(0, $0.weight) }
+        let distribInt = Flam3XformDistrib.build(weights)
+        let distrib = distribInt.map { UInt32(min($0, max(0, flame.xforms.count - 1))) }
+
+        let whiteLevel = 255.0
+        let colorScalar = 1.0
+        let dmapD = buildDmap(flame.palette, whiteLevel: whiteLevel, colorScalar: colorScalar)
+        let dmap = dmapD.map { SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z)) }
+        let dmapAlpha = [Float](repeating: Float(whiteLevel * colorScalar), count: 256)
+
+        var fp = MetalHost.buildFrameParams(flame, params)
+        fp.hasFinal = finalXform != nil ? 1 : 0
+        let threadSeeds = seedBudget?.seeds(forPass: 0, threadCount: Int(fp.threadCount))
+            ?? MetalHost.buildThreadSeeds(seed: params.seed, threadCount: Int(fp.threadCount))
+
+        func buf<T>(_ values: [T]) -> MTLBuffer {
+            values.withUnsafeBytes { raw in
+                device.makeBuffer(bytes: raw.baseAddress!,
+                                  length: raw.count,
+                                  options: .storageModeShared)!
+            }
+        }
+        let xformsBuf    = buf(xforms)
+        let finalBuf     = finalXform.map { buf($0) }
+                                   ?? device.makeBuffer(length: GPUXform.bytesPerXform,
+                                                        options: .storageModeShared)!
+        let distribBuf   = buf(distrib)
+        let dmapBuf      = buf(dmap)
+        let dmapAlphaBuf = buf(dmapAlpha)
+        var fpLocal = fp
+        let fpBuf        = device.makeBuffer(bytes: &fpLocal,
+                                             length: MemoryLayout<GPUFrameParams>.stride,
+                                             options: .storageModeShared)!
+        let seedsBuf     = buf(threadSeeds)
+
+        let gw = params.gridWidth, gh = params.gridHeight
+        let binCount = gw * gh
+
+        // AtomicBin: 5×uint32 per bin. Uses the T4 host mirror (S8 — no new local
+        // struct). Layout MUST match MSL AtomicBin; identical to the former local.
+        let atomicBuf = device.makeBuffer(
+            length: binCount * MemoryLayout<MetalHistogramDecode.AtomicBinHost>.stride,
+            options: .storageModeShared)!
+        memset(atomicBuf.contents(), 0,
+               binCount * MemoryLayout<MetalHistogramDecode.AtomicBinHost>.stride)
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw NSError(domain: "MetalRenderer", code: 24)
+        }
+        let tpg = MetalHost.threadsPerGroup
+
+        // -------- Encoder 1: chaosGame (writes atomicBuf, uint32 atomics) --------
+        guard let encChaos = cb.makeComputeCommandEncoder() else {
+            throw NSError(domain: "MetalRenderer", code: 13)
+        }
+        encChaos.setComputePipelineState(chaosPso)
+        encChaos.setBuffer(xformsBuf,    offset: 0, index: 0)
+        encChaos.setBuffer(finalBuf,     offset: 0, index: 1)
+        encChaos.setBuffer(distribBuf,   offset: 0, index: 2)
+        encChaos.setBuffer(dmapBuf,      offset: 0, index: 3)
+        encChaos.setBuffer(dmapAlphaBuf, offset: 0, index: 4)
+        encChaos.setBuffer(fpBuf,        offset: 0, index: 5)
+        encChaos.setBuffer(seedsBuf,     offset: 0, index: 6)
+        encChaos.setBuffer(atomicBuf,    offset: 0, index: 7)
+        let tc = Int(fp.threadCount)
+        let groups = (tc + tpg - 1) / tpg
+        encChaos.dispatchThreadgroups(MTLSize(width: groups, height: 1, depth: 1),
+                                      threadsPerThreadgroup: MTLSize(width: tpg, height: 1, depth: 1))
+        encChaos.endEncoding()
+
+        return (atomicBuf, fp, binCount, cb)
+    }
+
+    // MARK: - Fused readback histogram (T6, smoothing-ON Metal path)
+
+    /// Encode chaos ONLY (via the shared `encodeChaos`), commit, read `atomicBuf`
+    /// back, decode via `MetalHistogramDecode.decode` (T4) → pre-DE Double
+    /// `Histogram`. This is the single-pass readback variant — the Metal half of
+    /// the smoothing-ON per-frame histogram for non-temporal (N=1) renders. T8
+    /// EMAs the returned histogram, then calls T5's `renderSmoothedDisplay(OffMain)`
+    /// for DE + display.
+    ///
+    /// No decode PSO / DE / log / display — those run separately via T5's
+    /// `applyCore`+`renderCore` (the smoothing split). `colorScale` comes from the
+    /// FULL-budget `GPUFrameParams` (built inside `encodeChaos` via
+    /// `MetalHost.buildFrameParams`, which reads `params.totalSamples`).
+    ///
+    /// Actor-agnostic — the Metal handles are passed in so this runs identically on
+    /// the MainActor (via `renderHistogram`) OR off-main (via
+    /// `renderHistogramOffMain`). Output is byte-identical either way.
+    static func renderFusedCoreToHistogram(
+        flame: Flame,
+        params: RenderParams,
+        device: MTLDevice,
+        queue: MTLCommandQueue,
+        psos: (chaos: MTLComputePipelineState, decode: MTLComputePipelineState,
+               density: MTLComputePipelineState, log: MTLComputePipelineState,
+               display: MTLComputePipelineState),
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) throws -> Histogram {
+        // Thread spatialFilterRadius (same rationale as renderFusedCore).
+        let params = params.settingSpatialFilterRadius(flame.quality.filterRadius)
+
+        // Zero-weight guard: empty Histogram, no trap (mirrors
+        // ChaosGameMetal.iterate).
+        let weights = flame.xforms.map { max(0, $0.weight) }
+        guard weights.reduce(0, +) > 0 else {
+            return Histogram(gridWidth: params.gridWidth, gridHeight: params.gridHeight)
+        }
+
+        // Chaos → commit → readback → decode. No decode PSO / DE / log / display.
+        let (atomicBuf, fp, binCount, cb) = try encodeChaos(
+            flame: flame, params: params, device: device, queue: queue,
+            chaosPso: psos.chaos, seedBudget: seedBudget)
+        cb.commit()
+        cb.waitUntilCompleted()
+        return MetalHistogramDecode.decode(
+            histBuf: atomicBuf, binCount: binCount,
+            gridWidth: params.gridWidth, gridHeight: params.gridHeight,
+            colorScale: Double(fp.colorScale))
     }
 
     // MARK: - Realtime (MainActor) fused entry
@@ -786,6 +905,183 @@ public enum MetalRenderer {
         return RGBA8Image(width: params.width, height: params.height, pixels: pixels)
     }
 
+    // MARK: - Temporal readback histogram (T6, smoothing-ON Metal path)
+
+    /// Temporal twin of `renderFusedCoreToHistogram`: encode N chaos passes into
+    /// ONE `atomicBuf` (cleared ONCE, accumulated across passes), commit, read
+    /// `atomicBuf` back, decode via `MetalHistogramDecode.decode` (T4) → pre-DE
+    /// Double `Histogram`. This is the Metal half of the smoothing-ON per-frame
+    /// histogram for motion-blurred (temporal) renders. T8 EMAs the returned
+    /// histogram, then calls T5's `renderSmoothedDisplay(OffMain)` for DE + display.
+    ///
+    /// The per-pass loop is REPLICATED BYTE-IDENTICALLY from
+    /// `renderTemporalFusedCore` (R8): same dmap rebuild with
+    /// `colorScalar=sub.weight`, same `params.seed &+ UInt64(i)` salt, same
+    /// thread-budget split (`baseBudget`/`remBudget`), same `perPassThreads`
+    /// rounding, same dispatch into the SAME uncleared `atomicBuf`, same full-
+    /// budget `fp.colorScale`. Only the post-chaos stage differs (commit + readback
+    /// + decode vs decode-PSO + DE + log + display).
+    ///
+    /// Gaussian/exp guard: `fatalError`s on any sub-pass with `weight != 1.0`
+    /// (same as `render(blendAt:…)`). Real ES genomes use box exclusively.
+    ///
+    /// Actor-agnostic — runs identically on the MainActor (via
+    /// `renderTemporalHistogram`) OR off-main (via `renderTemporalHistogramOffMain`).
+    static func renderTemporalFusedCoreToHistogram(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams,
+        device: MTLDevice,
+        queue: MTLCommandQueue,
+        psos: (chaos: MTLComputePipelineState, decode: MTLComputePipelineState,
+               density: MTLComputePipelineState, log: MTLComputePipelineState,
+               display: MTLComputePipelineState),
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) throws -> Histogram {
+        precondition(!temporal.isEmpty,
+            "renderTemporalFusedCoreToHistogram: temporal must contain at least one sub-sample")
+        // Gaussian/exp guard — same boundary as render(blendAt:…).
+        for sub in temporal where sub.weight != 1.0 {
+            fatalError("""
+                MetalRenderer.renderTemporalFusedCoreToHistogram: non-box temporal \
+                filters (sub-sample weight != 1.0) are not supported on Metal — only \
+                box is (all real ES genomes use box). Got a sub-sample with \
+                weight=\(sub.weight). Use ReferenceRenderer for gaussian/exp.
+                """)
+        }
+        let center = blendAt(centerTime)
+        // Thread spatialFilterRadius (same rationale as renderTemporalFusedCore).
+        let params = params.settingSpatialFilterRadius(center.quality.filterRadius)
+        let N = temporal.count
+
+        let gw = params.gridWidth, gh = params.gridHeight
+        let binCount = gw * gh
+
+        // Local MTLBuffer builder (same form as renderTemporalFusedCore's `buf`).
+        func buf<T>(_ values: [T]) -> MTLBuffer {
+            values.withUnsafeBytes { raw in
+                device.makeBuffer(bytes: raw.baseAddress!,
+                                   length: raw.count,
+                                   options: .storageModeShared)!
+            }
+        }
+
+        // -------- AtomicBin: cleared ONCE; N chaos encoders accumulate --------
+        // into it (NOT cleared between passes). Uses MetalHistogramDecode's host
+        // mirror (S8 — no new local struct); layout MUST match MSL AtomicBin.
+        let atomicBuf = device.makeBuffer(
+            length: binCount * MemoryLayout<MetalHistogramDecode.AtomicBinHost>.stride,
+            options: .storageModeShared)!
+        memset(atomicBuf.contents(), 0,
+               binCount * MemoryLayout<MetalHistogramDecode.AtomicBinHost>.stride)
+
+        // -------- Full-budget GPUFrameParams (colorScale uses the FULL T) --------
+        // `colorScale` MUST use the FULL budget T = width*height*samplesPerPixel
+        // (see renderTemporalFusedCore's comment). The decode step reads this
+        // value to un-scale the uint32 atomics back to dmap-units Doubles.
+        var fp = MetalHost.buildFrameParams(center, params)
+        let centerFinal = MetalHost.packFinalXform(center)
+        fp.hasFinal = centerFinal != nil ? 1 : 0
+
+        let tpg = MetalHost.threadsPerGroup
+        let tcFull = Int(fp.threadCount)   // pinnedThreadCount(totalSamples: T)
+
+        // Per-pass thread count: ≈ tcFull / N, rounded UP to a multiple of tpg.
+        // For N=1 this collapses to tcFull. Same math as renderTemporalFusedCore.
+        let target = tcFull / N
+        let rounded = ((target + tpg - 1) / tpg) * tpg
+        let perPassThreads = max(tpg, rounded)
+
+        // Distribute the integer budget T across N passes (rect.c:833).
+        let T = params.totalSamples
+        let baseBudget = T / N
+        let remBudget = T % N
+
+        let chaosPso = psos.chaos
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw NSError(domain: "MetalRenderer", code: 24)
+        }
+
+        // -------- Encoder 1 (LOOP): N chaos passes into the SAME atomicBuf ----
+        // VERBATIM replication of renderTemporalFusedCore's per-pass loop (R8):
+        // same dmap rebuild (colorScalar=sub.weight), same seed salt
+        // (params.seed &+ UInt64(i)), same budget split, same dispatch into the
+        // same uncleared atomicBuf, same full-budget fp.colorScale.
+        for (i, sub) in temporal.enumerated() {
+            let perPassBudget = baseBudget + (i < remBudget ? 1 : 0)
+            guard perPassBudget > 0 else { continue }
+            let passFlame = blendAt(centerTime + sub.delta)
+
+            let passXforms = MetalHost.packXforms(passFlame)
+            let passFinalXform = MetalHost.packFinalXform(passFlame)
+            let passWeights = passFlame.xforms.map { max(0, $0.weight) }
+            guard passWeights.reduce(0, +) > 0 else { continue }   // degenerate
+            let passDistribInt = Flam3XformDistrib.build(passWeights)
+            let passDistrib = passDistribInt.map {
+                UInt32(min($0, max(0, passFlame.xforms.count - 1)))
+            }
+
+            let whiteLevel = 255.0
+            let passDmapD = buildDmap(passFlame.palette,
+                                      whiteLevel: whiteLevel, colorScalar: sub.weight)
+            let passDmap = passDmapD.map {
+                SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z))
+            }
+            let passDmapAlpha = [Float](repeating: Float(whiteLevel * sub.weight), count: 256)
+
+            let passThreadSeeds = seedBudget?.seeds(forPass: i, threadCount: perPassThreads)
+                ?? MetalHost.buildThreadSeeds(seed: params.seed &+ UInt64(i),
+                                              threadCount: perPassThreads)
+
+            var fpLocal = MetalHost.buildFrameParams(passFlame, params)
+            fpLocal.threadCount = UInt32(perPassThreads)
+            fpLocal.iterationsPerThread = UInt32(perPassBudget / perPassThreads)
+            fpLocal.remainder = UInt32(perPassBudget % perPassThreads)
+            fpLocal.hasFinal = passFinalXform != nil ? 1 : 0
+
+            let xformsBuf    = buf(passXforms)
+            let finalBuf     = passFinalXform.map { buf($0) }
+                                       ?? device.makeBuffer(length: GPUXform.bytesPerXform,
+                                                            options: .storageModeShared)!
+            let distribBuf   = buf(passDistrib)
+            let dmapBuf      = buf(passDmap)
+            let dmapAlphaBuf = buf(passDmapAlpha)
+            var fpPassLocal = fpLocal
+            let fpBuf        = device.makeBuffer(bytes: &fpPassLocal,
+                                                 length: MemoryLayout<GPUFrameParams>.stride,
+                                                 options: .storageModeShared)!
+            let seedsBuf     = buf(passThreadSeeds)
+
+            guard let encChaos = cb.makeComputeCommandEncoder() else {
+                throw NSError(domain: "MetalRenderer", code: 13)
+            }
+            encChaos.setComputePipelineState(chaosPso)
+            encChaos.setBuffer(xformsBuf,    offset: 0, index: 0)
+            encChaos.setBuffer(finalBuf,     offset: 0, index: 1)
+            encChaos.setBuffer(distribBuf,   offset: 0, index: 2)
+            encChaos.setBuffer(dmapBuf,      offset: 0, index: 3)
+            encChaos.setBuffer(dmapAlphaBuf, offset: 0, index: 4)
+            encChaos.setBuffer(fpBuf,        offset: 0, index: 5)
+            encChaos.setBuffer(seedsBuf,     offset: 0, index: 6)
+            encChaos.setBuffer(atomicBuf,    offset: 0, index: 7)   // SAME uncleared
+            let groups = (perPassThreads + tpg - 1) / tpg
+            encChaos.dispatchThreadgroups(MTLSize(width: groups, height: 1, depth: 1),
+                                          threadsPerThreadgroup: MTLSize(width: tpg, height: 1, depth: 1))
+            encChaos.endEncoding()
+        }
+
+        // -------- Commit + readback + decode (no decode PSO / DE / log / display) --------
+        cb.commit()
+        cb.waitUntilCompleted()
+        return MetalHistogramDecode.decode(
+            histBuf: atomicBuf, binCount: binCount,
+            gridWidth: gw, gridHeight: gh,
+            colorScale: Double(fp.colorScale))
+    }
+
     // MARK: - Realtime (MainActor) temporal entry
 
     /// MainActor temporal motion-blur render — the realtime/playback path. Builds
@@ -813,6 +1109,81 @@ public enum MetalRenderer {
                                            temporal: temporal, sumfilt: sumfilt,
                                            params: params, device: device, queue: queue,
                                            psos: psos, seedBudget: seedBudget)
+    }
+
+    // MARK: - Realtime (MainActor) histogram entries (T6, CLI MainActor R2)
+
+    /// MainActor fused readback histogram — the CLI's MainActor branch (R2). Builds
+    /// the cached device/queue/PSOs (MainActor-isolated) and delegates to
+    /// `renderFusedCoreToHistogram`. `fatalError`s on failure (same boundary as
+    /// `renderFused`). Returns the pre-DE Double `Histogram` for T8 to EMA.
+    @MainActor
+    public static func renderHistogram(
+        flame: Flame, params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) -> Histogram {
+        guard isAvailable else {
+            fatalError("MetalRenderer.renderHistogram called when isAvailable is false")
+        }
+        guard let (device, _) = deviceAndLibrary() else {
+            fatalError("MetalRenderer.renderHistogram: no Metal device")
+        }
+        guard let queue = commandQueue else {
+            fatalError("MetalRenderer.renderHistogram: no command queue")
+        }
+        guard let psos = fusedPipelines() else {
+            fatalError("MetalRenderer.renderHistogram: no fused pipelines")
+        }
+        do {
+            return try renderFusedCoreToHistogram(flame: flame, params: params,
+                                                  device: device, queue: queue, psos: psos,
+                                                  seedBudget: seedBudget)
+        } catch {
+            fatalError("Metal histogram readback failed: \(error)")
+        }
+    }
+
+    /// MainActor temporal readback histogram — the CLI's MainActor branch (R2).
+    /// Builds the cached device/queue/PSOs and delegates to
+    /// `renderTemporalFusedCoreToHistogram`. `fatalError`s on failure OR non-box
+    /// temporal (same boundaries as `render(blendAt:…)`).
+    @MainActor
+    public static func renderTemporalHistogram(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) -> Histogram {
+        guard isAvailable else {
+            fatalError("MetalRenderer.renderTemporalHistogram called when isAvailable is false")
+        }
+        // Box guard — same boundary as render(blendAt:…).
+        for sub in temporal where sub.weight != 1.0 {
+            fatalError("""
+                MetalRenderer.renderTemporalHistogram: non-box temporal filters \
+                (sub-sample weight != 1.0) are not supported on Metal — only box is. \
+                Got weight=\(sub.weight). Use ReferenceRenderer for gaussian/exp.
+                """)
+        }
+        guard let (device, _) = deviceAndLibrary() else {
+            fatalError("MetalRenderer.renderTemporalHistogram: no Metal device")
+        }
+        guard let queue = commandQueue else {
+            fatalError("MetalRenderer.renderTemporalHistogram: no command queue")
+        }
+        guard let psos = fusedPipelines() else {
+            fatalError("MetalRenderer.renderTemporalHistogram: no fused pipelines")
+        }
+        do {
+            return try renderTemporalFusedCoreToHistogram(
+                blendAt: blendAt, centerTime: centerTime, temporal: temporal,
+                sumfilt: sumfilt, params: params, device: device, queue: queue,
+                psos: psos, seedBudget: seedBudget)
+        } catch {
+            fatalError("Metal temporal histogram readback failed: \(error)")
+        }
     }
 
     // MARK: - Off-main temporal entry (the temporal twin of `renderOffMain`)
@@ -854,6 +1225,142 @@ public enum MetalRenderer {
                                                 temporal: temporal, sumfilt: sumfilt,
                                                 params: params, device: device, queue: queue,
                                                 psos: psos, seedBudget: seedBudget)
+        }
+    }
+
+    // MARK: - Off-main histogram entries (T6, GUI off-main)
+
+    /// Off-main fused readback histogram — the GUI export's off-main branch (T6).
+    /// Runs on `offMainQueue`, never touches the MainActor → cannot freeze the UI.
+    /// Returns the pre-DE Double `Histogram` for T8 to EMA. Returns nil iff Metal
+    /// is unavailable or the readback fails (callers fall back; never traps —
+    /// matches `renderOffMain`). Byte-identical to the MainActor
+    /// `renderHistogram`: the GPU computation is thread-independent.
+    nonisolated
+    public static func renderHistogramOffMain(
+        flame: Flame, params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) -> Histogram? {
+        offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            return try? renderFusedCoreToHistogram(flame: flame, params: params,
+                                                   device: device, queue: queue, psos: psos,
+                                                   seedBudget: seedBudget)
+        }
+    }
+
+    /// Off-main temporal readback histogram — the temporal twin of
+    /// `renderHistogramOffMain`. Runs on `offMainQueue`, never touches the
+    /// MainActor. Returns nil iff Metal is unavailable, the readback fails, OR
+    /// `temporal` carries a non-box weight (defensive — matches
+    /// `renderTemporalOffMain`'s box guard). Byte-identical to the MainActor
+    /// `renderTemporalHistogram`.
+    nonisolated
+    public static func renderTemporalHistogramOffMain(
+        blendAt: (Double) -> Flame,
+        centerTime: Double,
+        temporal: [(delta: Double, weight: Double)],
+        sumfilt: Double,
+        params: RenderParams,
+        seedBudget: MetalRenderer.ThreadSeedBudget? = nil
+    ) -> Histogram? {
+        // Defensive guards (same as renderTemporalOffMain): empty temporal → nil
+        // (the core's precondition would trap); non-box → nil (the core fatalErrors).
+        guard !temporal.isEmpty else { return nil }
+        for sub in temporal where sub.weight != 1.0 { return nil }
+        return offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            return try? renderTemporalFusedCoreToHistogram(
+                blendAt: blendAt, centerTime: centerTime, temporal: temporal,
+                sumfilt: sumfilt, params: params, device: device, queue: queue,
+                psos: psos, seedBudget: seedBudget)
+        }
+    }
+
+    // MARK: - Off-main DE+display (smoothed display)
+
+    /// Compose density-estimation (if `deRadius > 0`) then display on the passed
+    /// pre-DE histogram, on the MainActor — sourcing device/queue/PSOs from
+    /// `MetalRenderer`'s cached MainActor state. The CLI's MainActor branch (R2)
+    /// and the realtime path drive this. Thin orchestrator over the
+    /// `nonisolated` `DensityEstimationMetal.applyCore` +
+    /// `DisplayPipelineMetal.renderCore` (both byte-identical to the
+    /// `@MainActor apply`/`render` they were extracted from — a PSO is a pure
+    /// function of kernel+device). Mirrors the `renderFused`/`renderFusedCore`
+    /// split: this is the MainActor entry; `renderSmoothedDisplayOffMain` is the
+    /// background-queue twin.
+    @MainActor
+    public static func renderSmoothedDisplay(
+        histogram: Histogram,
+        deRadius: Double, deMinimum: Double, deCurve: Double,
+        width: Int, height: Int, oversample: Int,
+        gamma: Double, gammaThreshold: Double, vibrancy: Double,
+        brightness: Double, sampleDensity: Double, pixelsPerUnit: Double,
+        highlightPower: Double, spatialFilterRadius: Double
+    ) throws -> RGBA8Image {
+        guard let (device, _) = deviceAndLibrary() else {
+            throw NSError(domain: "MetalRenderer", code: 20)
+        }
+        guard let queue = commandQueue else {
+            throw NSError(domain: "MetalRenderer", code: 21)
+        }
+        guard let psos = fusedPipelines() else {
+            throw NSError(domain: "MetalRenderer", code: 27)
+        }
+        let deHist = deRadius > 0
+            ? try DensityEstimationMetal.applyCore(histogram, radius: deRadius,
+                                                   minimum: deMinimum, curve: deCurve,
+                                                   device: device, queue: queue,
+                                                   densityPso: psos.density)
+            : histogram
+        return try DisplayPipelineMetal.renderCore(
+            histogram: deHist, width: width, height: height, oversample: oversample,
+            gamma: gamma, gammaThreshold: gammaThreshold, vibrancy: vibrancy,
+            brightness: brightness, sampleDensity: sampleDensity,
+            pixelsPerUnit: pixelsPerUnit, highlightPower: highlightPower,
+            spatialFilterRadius: spatialFilterRadius,
+            device: device, queue: queue, logPso: psos.log, displayPso: psos.display)
+    }
+
+    /// Off-main twin of `renderSmoothedDisplay`: composes DE (if `deRadius > 0`)
+    /// then display on `offMainQueue`, sourcing PSOs from `offMainCache`. Never
+    /// touches the MainActor → cannot freeze the UI. Used by the GUI export
+    /// smoothing display step (T8). Returns nil iff Metal is unavailable or the
+    /// render fails (callers fall back; never traps — matches `renderOffMain`).
+    /// Byte-identical to the MainActor `renderSmoothedDisplay` / the
+    /// `@MainActor apply`+`render` path: the GPU computation is
+    /// thread-independent (pinned by `OffMainDisplayParityTests`).
+    nonisolated
+    public static func renderSmoothedDisplayOffMain(
+        histogram: Histogram,
+        deRadius: Double, deMinimum: Double, deCurve: Double,
+        width: Int, height: Int, oversample: Int,
+        gamma: Double, gammaThreshold: Double, vibrancy: Double,
+        brightness: Double, sampleDensity: Double, pixelsPerUnit: Double,
+        highlightPower: Double, spatialFilterRadius: Double
+    ) -> RGBA8Image? {
+        offMainQueue.sync {
+            guard let (device, library, queue) = offMainCache.handles() else { return nil }
+            guard let psos = offMainCache.pipelines(device: device, library: library) else { return nil }
+            do {
+                let deHist = deRadius > 0
+                    ? try DensityEstimationMetal.applyCore(histogram, radius: deRadius,
+                                                           minimum: deMinimum, curve: deCurve,
+                                                           device: device, queue: queue,
+                                                           densityPso: psos.density)
+                    : histogram
+                return try DisplayPipelineMetal.renderCore(
+                    histogram: deHist, width: width, height: height, oversample: oversample,
+                    gamma: gamma, gammaThreshold: gammaThreshold, vibrancy: vibrancy,
+                    brightness: brightness, sampleDensity: sampleDensity,
+                    pixelsPerUnit: pixelsPerUnit, highlightPower: highlightPower,
+                    spatialFilterRadius: spatialFilterRadius,
+                    device: device, queue: queue, logPso: psos.log, displayPso: psos.display)
+            } catch {
+                return nil
+            }
         }
     }
 
