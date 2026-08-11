@@ -488,7 +488,7 @@ final class RunResumableTests: XCTestCase {
         settings.codec = .proRes422HQ; settings.container = .mov
         settings.resolution = .custom(width: 160, height: 100); settings.fps = 30
         settings.quality = .spp(20); settings.temporalSamples = 1
-        settings.smoothingAlpha = 0.1   // smoothing ON — h ≈ 10 frames
+        settings.smoothingAlpha = 0.1   // smoothing ON — h = round(1/0.1) = 10 via halfWidth(forAlpha:)
         return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                          transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
                          seed: 42, loopCycles: 1, stagger: 0, out: out,

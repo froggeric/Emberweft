@@ -10,8 +10,12 @@ import FlameKit
 /// `QualityPreset` uses oversample 2).
 ///
 /// - `.genomeDefault` maps to `.genome` (byte-identical to `emberweft animate`).
-/// - `.low/.medium/.high` map to `.spp(2/8/30)` (same spp values as
-///   `AppPreferences.QualityPreset.samplesPerPixel`).
+/// - `.low/.medium/.high` map to `.spp(8/30/100)` (RETUNED 2026-08-11; was
+///   2/8/30). These are now EXPORT-SPECIFIC tiers, decoupled from the preview-
+///   side `AppPreferences.QualityPreset.samplesPerPixel` (still 2/8/30): the
+///   empirical grain+perf sweep found clean output needs effective spp ~330+
+///   (Standard), which temporal smoothing supplies as free supersampling
+///   (`smoothingLabel`).
 public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
     case genomeDefault
     case low
@@ -22,28 +26,28 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
     public var exportQuality: ExportQuality {
         switch self {
         case .genomeDefault: return .genome
-        case .low:           return .spp(2)
-        case .medium:        return .spp(8)
-        case .high:          return .spp(30)   // oversample pinned 1 by ExportQuality
+        case .low:           return .spp(8)
+        case .medium:        return .spp(30)
+        case .high:          return .spp(100)   // oversample pinned 1 by ExportQuality
         }
     }
 
-    /// M6.1 slice 2 / Task 10: resolved-α read-only label for the export sheet.
-    /// Computes `TemporalSmoothing.auto.alpha(for: exportQuality)` (the value the
-    /// sheet shows as a hint when smoothing is ON at this quality tier) and
-    /// formats it as e.g. "α = 0.20, ≈5-frame blend". At `.genomeDefault` (or any
-    /// tier where α ≥ 1.0) smoothing is a no-op, so this returns "off".
-    ///
-    /// The "≈N-frame blend" is `1/α` rounded (the EMA's effective window: α = 0.20
-    /// ⇒ ~5-frame blend). The label reflects the `.auto` (ON) α; the `.off` toggle
-    /// position is surfaced separately by the sheet (the toggle itself).
-    public var smoothingAlphaLabel: String {
-        let alpha = TemporalSmoothing.auto.alpha(for: exportQuality)
-        if alpha >= 1.0 {
+    /// Effective-spp label for the export sheet (the meaningful quality signal
+    /// after smoothing). For `.spp(n)` tiers the centered box window of
+    /// half-width `TemporalSmoothing.centeredHalfWidth` is FREE supersampling —
+    /// each emitted frame is the average of `2h+1` rendered neighbor frames — so
+    /// the effective spp is `n × (2h + 1)` (= `n × 11`), formatted e.g.
+    /// `"smoothed, ≈330 spp"`. At `.genomeDefault` smoothing is a no-op, so this
+    /// returns `"off"`. RETUNED 2026-08-11 (was an α framing,
+    /// `smoothingAlphaLabel`).
+    public var smoothingLabel: String {
+        switch exportQuality {
+        case .genome:
             return "off"
+        case .spp(let n):
+            let eff = n * (2 * TemporalSmoothing.centeredHalfWidth + 1)
+            return "smoothed, ≈\(eff) spp"
         }
-        let frames = Int((1.0 / alpha).rounded())
-        return String(format: "α = %.2f, ≈%d-frame blend", alpha, frames)
     }
 
     /// Seed the default sheet choice from the dormant prefs field (the sheet's

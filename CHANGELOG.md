@@ -7,6 +7,33 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.3] — export quality-tier retune (cleaner low/mid/high)
+
+Retunes the export quality tiers and makes the temporal-smoothing window uniform,
+based on an empirical grain + performance sweep. Low/Medium/High exports are now
+substantially cleaner for modest extra render time; the Standard tier reaches
+~genome-default cleanliness at ~33× the speed.
+
+### Changed
+- **Quality tiers raised:** Draft/Standard/High now map to **spp 8 / 30 / 100**
+  (was 2 / 8 / 30). The old values were inherited from the realtime preview
+  presets and under-sampled for export (grainy). Effective spp (after smoothing):
+  Draft ≈ 88, Standard ≈ 330 (≈ genome-default clean), High ≈ 1100 (cleaner than
+  genome-default).
+- **Uniform smoothing window:** the centered-box-window half-width is now **h = 5**
+  (an 11-frame window) for all smoothing-on tiers — the α that derives h is flat
+  (0.2 ⇒ round(1/0.2)=5), replacing the continuous ramp that gave tier-dependent
+  h (10/5/3) and clamped to OFF at spp ≥ 64 (which would have disabled smoothing
+  for the new High, spp 100). Temporal smoothing is free supersampling (one render
+  per frame regardless of h), so uniform h=5 gives the max grain reduction within
+  moderate motion blur.
+- The export sheet label now shows the **effective spp** (the quality after
+  smoothing), not the vestigial α.
+
+### Notes
+- Genome-default quality is unchanged (smoothing OFF; byte-identical to `animate`).
+  animate↔export byte-identity and Metal↔CPU parity are preserved.
+
 ## [v0.5.2] — M6.1 slice 2: temporal smoothing
 
 Low-spp exports (Low / Medium / High quality) no longer flicker — the "tiny dots
