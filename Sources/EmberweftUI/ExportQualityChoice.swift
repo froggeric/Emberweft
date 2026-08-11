@@ -32,6 +32,20 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
         }
     }
 
+    /// v0.5.5: the temporal-samples this tier auto-selects when picked in the
+    /// sheet (data-derived: motion blur that's free at the tier's spp). The user
+    /// can override the stepper after. `ExportSettings.resolve` treats ts=1 as
+    /// "use genome default" ONLY for genome-default quality (v0.5.4 gate); for the
+    /// named tiers ts is literal, so these values are the actual sub-pass counts.
+    public var recommendedTemporalSamples: Int {
+        switch self {
+        case .genomeDefault: return 1   // = "use genome default" sentinel (mastering path)
+        case .low:           return 1   // Draft: single-pass (ts=4 is +12% at spp 8)
+        case .medium:        return 4   // Standard: free mild blur at spp 30
+        case .high:          return 16  // High: free moderate blur at spp 100
+        }
+    }
+
     /// Effective-spp label for the export sheet (the meaningful quality signal
     /// after smoothing). For `.spp(n)` tiers the centered box window of
     /// half-width `TemporalSmoothing.centeredHalfWidth` is FREE supersampling —
