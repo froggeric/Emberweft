@@ -79,4 +79,15 @@ final class ExportQualityChoiceTests: XCTestCase {
         XCTAssertEqual(ExportQualityChoice.allCases,
                        [.genomeDefault, .low, .medium, .high])
     }
+
+    /// v0.5.5: each quality tier auto-selects a data-derived temporal-samples
+    /// value when picked (the sheet's quality-picker onChange sets the stepper).
+    /// Draft=1 (single-pass, fastest), Standard=4 (free at spp 30), High=16 (free
+    /// at spp 100), Genome=1 (= "use genome default" sentinel via the v0.5.4 gate).
+    func testRecommendedTemporalSamplesPerTier() {
+        XCTAssertEqual(ExportQualityChoice.genomeDefault.recommendedTemporalSamples, 1)
+        XCTAssertEqual(ExportQualityChoice.low.recommendedTemporalSamples, 1)
+        XCTAssertEqual(ExportQualityChoice.medium.recommendedTemporalSamples, 4)
+        XCTAssertEqual(ExportQualityChoice.high.recommendedTemporalSamples, 16)
+    }
 }

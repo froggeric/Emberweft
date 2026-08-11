@@ -89,6 +89,13 @@ struct ExportSheet: View {
                         }
                     }
                     .help(qualityHelp)
+                    .onChange(of: em.qualityChoice) { _, choice in
+                        // v0.5.5: picking a quality tier auto-sets temporal-samples
+                        // to its data-derived best value (Draft 1 / Standard 4 / High
+                        // 16 / Genome → 1 = genome default). The user can override the
+                        // stepper after.
+                        em.temporalSamples = choice.recommendedTemporalSamples
+                    }
 
                     Picker("Codec", selection: $em.codec) {
                         Text("ProRes 422 HQ").tag(ExportSettings.Codec.proRes422HQ)

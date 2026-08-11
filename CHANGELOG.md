@@ -7,6 +7,24 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.5] — quality tier auto-sets temporal samples
+
+Picking a quality tier in the export sheet now automatically sets temporal-samples
+to its most-appropriate value (data-derived: motion blur that's free at the tier's
+spp). The user can still override the stepper after.
+
+### Added
+- **Quality tier → temporal-samples auto-set.** Draft → 1 (single-pass, fastest),
+  Standard → 4 (free mild blur at spp 30), High → 16 (free moderate blur at
+  spp 100), Genome-default → 1 (= "use genome default", the mastering path).
+  Picking a tier sets the ts stepper via `ExportQualityChoice.recommendedTemporalSamples`;
+  the user can override.
+
+### Notes
+- Complements v0.5.4 (named tiers default to single-pass at ts=1) by making each
+  tier proactively set its best ts. ts is motion blur, not grain (grain scales with
+  samples-per-pixel). Genome-default is unchanged (byte-identical to `animate`).
+
 ## [v0.5.4] — temporal-samples default fix (faster low-quality exports)
 
 Fixes a temporal-samples default that made the named quality tiers slower than
