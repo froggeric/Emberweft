@@ -14,7 +14,7 @@ import FlameReference
 /// mirror `RenderFramesInterleavedTests` (kept duplicated — they are tiny, and
 /// extracting a shared test-support file is out of scope for this task).
 final class RunResumableTests: XCTestCase {
-    // Real fixture pattern (ExportLongFormTests.swift:36-41 / LoopRepeatTests.swift:23-28).
+    // Real fixture pattern (ExportLongFormTests.swift:36-41).
     private func genome(_ name: String) throws -> [Flame] {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -62,8 +62,8 @@ final class RunResumableTests: XCTestCase {
 
     /// Build a job matching `RenderFramesInterleavedTests`'s fixture (sierpinski,
     /// 160x100, ProRes, spp 20, ts 1). `segmentCount: 2` → 1 loop segment (8
-    /// frames) + 1 transition segment (8 frames) = 16 global frames at repeat 1.
-    private func makeJob(out: URL, loopRepeatCount: Int) throws -> ExportJob {
+    /// frames) + 1 transition segment (8 frames) = 16 global frames.
+    private func makeJob(out: URL) throws -> ExportJob {
         let flames = try genome("sierpinski.flam3")
         var settings = ExportSettings()
         settings.codec = .proRes422HQ; settings.container = .mov
@@ -71,8 +71,7 @@ final class RunResumableTests: XCTestCase {
         settings.quality = .spp(20); settings.temporalSamples = 1
         return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                          transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
-                         seed: 42, loopCycles: 1, stagger: 0, out: out,
-                         loopRepeatCount: loopRepeatCount)
+                         seed: 42, loopCycles: 1, stagger: 0, out: out)
     }
 
     private func runJob(_ job: ExportJob, backend: ExportCoordinator.Backend) async throws {
@@ -83,15 +82,14 @@ final class RunResumableTests: XCTestCase {
 
     /// Fresh-run pixel-identity: `runResumable` (one or many chunks) must produce
     /// output byte-identical to `run` of the same job. Routes through the real
-    /// resumable path (no test wrapper). `loopRepeatCount == 2` is the F2
-    /// headline case (boundary-spanning chunks must not corrupt repeat output).
-    private func freshMatchesRun(loopRepeatCount: Int, interval: Int) async throws {
+    /// resumable path (no test wrapper).
+    private func freshMatchesRun(interval: Int) async throws {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let outRun = dir.appendingPathComponent("run.mov")
         let outResumable = dir.appendingPathComponent("resumable.mov")
-        let jobRun = try makeJob(out: outRun, loopRepeatCount: loopRepeatCount)
-        let jobResumable = try makeJob(out: outResumable, loopRepeatCount: loopRepeatCount)
+        let jobRun = try makeJob(out: outRun)
+        let jobResumable = try makeJob(out: outResumable)
 
         try await runJob(jobRun, backend: .cpu)
         let coord = ExportCoordinator(backend: .cpu)
@@ -100,25 +98,22 @@ final class RunResumableTests: XCTestCase {
 
         let a = try await decodeFrames(outRun), b = try await decodeFrames(outResumable)
         XCTAssertEqual(a.count, b.count,
-                       "frame count mismatch (loopRepeatCount=\(loopRepeatCount), interval=\(interval))")
+                       "frame count mismatch (interval=\(interval))")
         for i in 0..<a.count {
             XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0,
-                                     "pixel diff at frame \(i) (loopRepeatCount=\(loopRepeatCount), interval=\(interval))")
+                                     "pixel diff at frame \(i) (interval=\(interval))")
         }
     }
 
-    func testFreshRunOneChunkMatchesRunRepeat1() async throws {
-        try await freshMatchesRun(loopRepeatCount: 1, interval: 999_999)
-    }
-    func testFreshRunOneChunkMatchesRunRepeat2() async throws {
-        try await freshMatchesRun(loopRepeatCount: 2, interval: 999_999)
+    func testFreshRunOneChunkMatchesRun() async throws {
+        try await freshMatchesRun(interval: 999_999)
     }
     /// Boundary-spanning chunks (interval 2 over 16 global frames → 8 chunks).
     /// Chunk 4 starts at global frame 8 = first transition frame, so chunks span
-    /// the loop→transition boundary (the F2 case). Interleaved per-frame `reps`
-    /// keeps it byte-identical to `run`.
+    /// the loop→transition boundary. The interleaved per-frame loop keeps it
+    /// byte-identical to `run`.
     func testBoundarySpanningChunk() async throws {
-        try await freshMatchesRun(loopRepeatCount: 2, interval: 2)
+        try await freshMatchesRun(interval: 2)
     }
 
     /// Pause between chunks (after chunk 0 completes) → throws `.paused`;
@@ -130,7 +125,7 @@ final class RunResumableTests: XCTestCase {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let out = dir.appendingPathComponent("pause.mov")
-        let job = try makeJob(out: out, loopRepeatCount: 1)  // 16 global frames
+        let job = try makeJob(out: out)  // 16 global frames
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestPauseAfterChunk(1)  // pause at chunk-top of 1 (interval 8 → 2 chunks)
         let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
@@ -163,7 +158,7 @@ final class RunResumableTests: XCTestCase {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let out = dir.appendingPathComponent("cancel.mov")
-        let job = try makeJob(out: out, loopRepeatCount: 1)
+        let job = try makeJob(out: out)
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestCancelAfterChunk(1)
         let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
@@ -188,7 +183,7 @@ final class RunResumableTests: XCTestCase {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let out = dir.appendingPathComponent("ok.mov")
-        let job = try makeJob(out: out, loopRepeatCount: 1)
+        let job = try makeJob(out: out)
         let coord = ExportCoordinator(backend: .cpu)
         let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         for try await _ in stream {}
@@ -221,7 +216,7 @@ final class RunResumableTests: XCTestCase {
         return ExportCheckpoint(
             settings: settings, framesPerSegment: 8, transitionFramesPerSegment: 8,
             segmentCount: 2, selector: .sequential, seed: 42, loopCycles: 1, stagger: 0,
-            out: out, loopRepeatCount: 1, checkpointIntervalFrames: interval,
+            out: out, checkpointIntervalFrames: interval,
             totalGlobalFrames: 16, completedChunkIndexes: completed, sources: sources)
     }
 
@@ -231,8 +226,8 @@ final class RunResumableTests: XCTestCase {
     /// clean pause OR a crash leaves (the resume code path is identical). Returns
     /// the decoded checkpoint for inspection.
     @discardableResult
-    private func seedPaused(out: URL, loopRepeatCount: Int = 1) async throws -> ExportCheckpoint {
-        let job = try makeJob(out: out, loopRepeatCount: loopRepeatCount)
+    private func seedPaused(out: URL) async throws -> ExportCheckpoint {
+        let job = try makeJob(out: out)
         let coord = ExportCoordinator(backend: .cpu)
         await coord._setTestPauseAfterChunk(1)
         let stream = await coord.runResumable(job, sources: [], checkpointIntervalFrames: 8, resumeFrom: nil)
@@ -257,13 +252,13 @@ final class RunResumableTests: XCTestCase {
         let outFresh = dir.appendingPathComponent("fresh.mov")
         let outResume = dir.appendingPathComponent("resume.mov")
 
-        try await runJob(try makeJob(out: outFresh, loopRepeatCount: 1), backend: .cpu)
-        let cp = try await seedPaused(out: outResume, loopRepeatCount: 1)
+        try await runJob(try makeJob(out: outFresh), backend: .cpu)
+        let cp = try await seedPaused(out: outResume)
         XCTAssertEqual(cp.completedChunkIndexes, [0], "chunk 0 must be recorded completed")
 
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
-        let stream = await resumeCoord.runResumable(try makeJob(out: outResume, loopRepeatCount: 1),
+        let stream = await resumeCoord.runResumable(try makeJob(out: outResume),
                                                      sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
@@ -284,15 +279,15 @@ final class RunResumableTests: XCTestCase {
         let outFresh = dir.appendingPathComponent("fresh.mov")
         let outCrash = dir.appendingPathComponent("crash.mov")
 
-        try await runJob(try makeJob(out: outFresh, loopRepeatCount: 1), backend: .cpu)
+        try await runJob(try makeJob(out: outFresh), backend: .cpu)
         // Simulate a crash: the pause-seed leaves a real checkpoint + chunk-0000
         // (the body never ran its success cleanup — exactly a kill -9 mid-run).
-        let cp = try await seedPaused(out: outCrash, loopRepeatCount: 1)
+        let cp = try await seedPaused(out: outCrash)
         XCTAssertEqual(cp.completedChunkIndexes, [0])
 
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outCrash)
-        let stream = await resumeCoord.runResumable(try makeJob(out: outCrash, loopRepeatCount: 1),
+        let stream = await resumeCoord.runResumable(try makeJob(out: outCrash),
                                                      sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
@@ -311,11 +306,11 @@ final class RunResumableTests: XCTestCase {
         let dir = tmpDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let out = dir.appendingPathComponent("d9.mov")
-        _ = try await seedPaused(out: out, loopRepeatCount: 1)  // chunk 0 (8 frames) done
+        _ = try await seedPaused(out: out)  // chunk 0 (8 frames) done
 
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: out)
-        let stream = await resumeCoord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
+        let stream = await resumeCoord.runResumable(try makeJob(out: out),
                                                      sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         var first: ExportProgress?
         for try await p in stream {
@@ -350,7 +345,7 @@ final class RunResumableTests: XCTestCase {
         try bytes.write(to: fileURL)
 
         let coord = ExportCoordinator(backend: .cpu)
-        let stream = await coord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
+        let stream = await coord.runResumable(try makeJob(out: out),
                                               sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         do {
             for try await _ in stream {}
@@ -379,7 +374,7 @@ final class RunResumableTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: json).write(to: cpURL)
 
         let coord = ExportCoordinator(backend: .cpu)
-        let stream = await coord.runResumable(try makeJob(out: out, loopRepeatCount: 1),
+        let stream = await coord.runResumable(try makeJob(out: out),
                                               sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}  // fresh start, completes normally
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path),
@@ -397,8 +392,8 @@ final class RunResumableTests: XCTestCase {
         let outFresh = dir.appendingPathComponent("fresh.mov")
         let outResume = dir.appendingPathComponent("missing.mov")
 
-        try await runJob(try makeJob(out: outFresh, loopRepeatCount: 1), backend: .cpu)
-        _ = try await seedPaused(out: outResume, loopRepeatCount: 1)
+        try await runJob(try makeJob(out: outFresh), backend: .cpu)
+        _ = try await seedPaused(out: outResume)
 
         // Delete chunk-0000 (simulating a lost chunk file).
         let chunk0 = ExportCheckpoint.chunkURL(out: outResume, index: 0, container: .mov)
@@ -407,7 +402,7 @@ final class RunResumableTests: XCTestCase {
 
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
-        let stream = await resumeCoord.runResumable(try makeJob(out: outResume, loopRepeatCount: 1),
+        let stream = await resumeCoord.runResumable(try makeJob(out: outResume),
                                                      sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
@@ -448,7 +443,7 @@ final class RunResumableTests: XCTestCase {
         try await runJob(ExportJob(settings: settings, flames: [flameBFromFile],
                                    framesPerSegment: 8, transitionFramesPerSegment: 8,
                                    segmentCount: 2, selector: .sequential, seed: 42,
-                                   loopCycles: 1, stagger: 0, out: outFresh, loopRepeatCount: 1),
+                                   loopCycles: 1, stagger: 0, out: outFresh),
                          backend: .cpu)
 
         // Checkpoint sources flameIndex 1 from the 2-flame file.
@@ -464,7 +459,7 @@ final class RunResumableTests: XCTestCase {
             ExportJob(settings: settings, flames: [flameBFromFile],
                       framesPerSegment: 8, transitionFramesPerSegment: 8,
                       segmentCount: 2, selector: .sequential, seed: 42,
-                      loopCycles: 1, stagger: 0, out: outResume, loopRepeatCount: 1),
+                      loopCycles: 1, stagger: 0, out: outResume),
             sources: [], checkpointIntervalFrames: 8, resumeFrom: cpURL)
         for try await _ in stream {}
 
@@ -482,7 +477,7 @@ final class RunResumableTests: XCTestCase {
     /// h = round(1/0.1) = 10) matching `makeJob`'s fixture (sierpinski, 160x100,
     /// ProRes, spp 20, ts 1). `segmentCount: 2` → 1 loop (8 frames) + 1 transition
     /// (8 frames) = 16 global frames.
-    private func makeSmoothingJob(out: URL, loopRepeatCount: Int) throws -> ExportJob {
+    private func makeSmoothingJob(out: URL) throws -> ExportJob {
         let flames = try genome("sierpinski.flam3")
         var settings = ExportSettings()
         settings.codec = .proRes422HQ; settings.container = .mov
@@ -491,8 +486,7 @@ final class RunResumableTests: XCTestCase {
         settings.smoothingAlpha = 0.1   // smoothing ON — h = round(1/0.1) = 10 via halfWidth(forAlpha:)
         return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                          transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
-                         seed: 42, loopCycles: 1, stagger: 0, out: out,
-                         loopRepeatCount: loopRepeatCount)
+                         seed: 42, loopCycles: 1, stagger: 0, out: out)
     }
 
     /// §9.5 resume byte-identity pin (smoothing ON): a smoothing-ON export paused
@@ -513,7 +507,7 @@ final class RunResumableTests: XCTestCase {
         // as the resume, so both use renderFramesInterleaved with smoothing).
         let coordFresh = ExportCoordinator(backend: .cpu)
         let streamFresh = await coordFresh.runResumable(
-            try makeSmoothingJob(out: outFresh, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outFresh),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         for try await _ in streamFresh {}
 
@@ -522,7 +516,7 @@ final class RunResumableTests: XCTestCase {
         let coordPause = ExportCoordinator(backend: .cpu)
         await coordPause._setTestPauseAfterChunk(2)
         let streamPause = await coordPause.runResumable(
-            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outResume),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         do {
             for try await _ in streamPause {}
@@ -537,7 +531,7 @@ final class RunResumableTests: XCTestCase {
         let cpURL = ExportCheckpoint.checkpointURL(out: outResume)
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let streamResume = await resumeCoord.runResumable(
-            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outResume),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: cpURL)
         for try await _ in streamResume {}
 
@@ -569,7 +563,7 @@ final class RunResumableTests: XCTestCase {
         // Never-paused reference.
         let coordFresh = ExportCoordinator(backend: .cpu)
         let streamFresh = await coordFresh.runResumable(
-            try makeSmoothingJob(out: outFresh, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outFresh),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         for try await _ in streamFresh {}
 
@@ -577,7 +571,7 @@ final class RunResumableTests: XCTestCase {
         let coordPause = ExportCoordinator(backend: .cpu)
         await coordPause._setTestPauseAfterChunk(0)
         let streamPause = await coordPause.runResumable(
-            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outResume),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: nil)
         do {
             for try await _ in streamPause {}
@@ -596,7 +590,7 @@ final class RunResumableTests: XCTestCase {
         // Resume must SUCCEED (previously threw `.checkpointUnreadable`).
         let resumeCoord = ExportCoordinator(backend: .cpu)
         let streamResume = await resumeCoord.runResumable(
-            try makeSmoothingJob(out: outResume, loopRepeatCount: 1),
+            try makeSmoothingJob(out: outResume),
             sources: [], checkpointIntervalFrames: 4, resumeFrom: cpURL)
         for try await _ in streamResume {}
 

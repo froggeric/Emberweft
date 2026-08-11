@@ -80,10 +80,8 @@ final class ExportManagerTests: XCTestCase {
         private(set) var cancelCount = 0
         private(set) var runPartialURLs: [URL] = []
         private(set) var runSegmentCounts: [Int] = []
-        private(set) var runLoopRepeatCounts: [Int] = []
         private(set) var runBatchCalls: [(jobCount: Int, failFast: Bool)] = []
         private(set) var runBatchOuts: [URL] = []
-        private(set) var runBatchLoopRepeatCounts: [Int] = []
         private(set) var pauseCount = 0
         private(set) var runResumableCalls = 0
         /// Records the `resumeFrom` arg of each `runResumable` call (nil = fresh).
@@ -99,7 +97,6 @@ final class ExportManagerTests: XCTestCase {
         func run(_ job: ExportJob) async -> AsyncThrowingStream<ExportProgress, Error> {
             runPartialURLs.append(job.partialURL)
             runSegmentCounts.append(job.segmentCount)
-            runLoopRepeatCounts.append(job.loopRepeatCount)
             return AsyncThrowingStream { continuation in
                 // The build closure is `@Sendable`; hop back onto this actor via a
                 // Task to read/write isolated state (mirrors the real coordinator).
@@ -144,7 +141,6 @@ final class ExportManagerTests: XCTestCase {
         func runBatch(_ jobs: [ExportJob], failFast: Bool) async -> AsyncThrowingStream<BatchProgress, Error> {
             runBatchCalls.append((jobs.count, failFast))
             runBatchOuts.append(contentsOf: jobs.map(\.out))
-            runBatchLoopRepeatCounts.append(contentsOf: jobs.map(\.loopRepeatCount))
             return AsyncThrowingStream { continuation in
                 Task { [self] in
                     await self.driveBatch(continuation)
@@ -815,65 +811,13 @@ final class ExportManagerTests: XCTestCase {
         await vm.awaitCompletion()
     }
 
-    // MARK: - Loop render-once-repeat (v0.5.0)
+    // MARK: - Pacing defaults
 
-    /// Owner's optimal pacing defaults: 15 s loop + 12 s edge, loop repeated
-    /// twice (15 s render + repeat×2 = 30 s perceived loop).
+    /// Owner's optimal pacing defaults: 15 s loop + 12 s edge.
     func testExportManagerPacingDefaultsAreOwnerOptimal() {
         let vm = ExportManager()
-        XCTAssertEqual(vm.loopDurationSeconds, 15.0, "loop default = 15 s (render once, repeat×2 = 30 s perceived)")
+        XCTAssertEqual(vm.loopDurationSeconds, 15.0, "loop default = 15 s")
         XCTAssertEqual(vm.transitionDurationSeconds, 12.0, "transition default = 12 s edge")
-        XCTAssertEqual(vm.loopRepeatCount, 2, "loop repeat default = 2 (halves loop render cost)")
-    }
-
-    /// `loopRepeatCount` flows from the manager into the `ExportJob` for the
-    /// single export path (and sequence, which shares `run`).
-    func testExportManagerLoopRepeatFlowsIntoSingleJob() async {
-        let vm = ExportManager()
-        useNoOpSleepHooks(vm)
-        vm.loopRepeatCount = 3
-        let fake = installFake(vm, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
-
-        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(), seed: 1)
-        await vm.awaitCompletion()
-
-        let repeats = await fake.runLoopRepeatCounts
-        XCTAssertEqual(repeats, [3], "loopRepeatCount must flow into the single ExportJob")
-    }
-
-    /// `loopRepeatCount` also flows into batch jobs (each carries the value).
-    func testExportManagerLoopRepeatFlowsIntoBatchJobs() async {
-        let vm = ExportManager()
-        useNoOpSleepHooks(vm)
-        vm.loopRepeatCount = 2
-        let fake = installFake(vm, script: .batchYield([
-            batchEvent(job: 0, totalJobs: 2, frame: 1, totalFrames: 1),
-            batchEvent(job: 1, totalJobs: 2, frame: 1, totalFrames: 1),
-        ]))
-        let dir = batchDir()
-        let items: [(flame: Flame, name: String)] = [
-            (renderableFlame(), "alpha"), (renderableFlame(), "beta"),
-        ]
-
-        await vm.exportBatch(items: items, baseDir: dir, seed: 1)
-        await vm.awaitCompletion()
-
-        let repeats = await fake.runBatchLoopRepeatCounts
-        XCTAssertEqual(repeats, [2, 2], "loopRepeatCount must flow into every batch ExportJob")
-    }
-
-    /// repeat=1 is the no-op (flows as 1, the CLI/byte-identity default).
-    func testExportManagerLoopRepeatOneIsNoOpValue() async {
-        let vm = ExportManager()
-        useNoOpSleepHooks(vm)
-        vm.loopRepeatCount = 1
-        let fake = installFake(vm, script: .yieldProgress([progressEvent(frame: 1, total: 1)]))
-
-        await vm.exportSingle(flame: renderableFlame(), displayName: "x", out: outURL(), seed: 1)
-        await vm.awaitCompletion()
-
-        let repeats = await fake.runLoopRepeatCounts
-        XCTAssertEqual(repeats, [1], "repeat=1 flows as 1 (no cache/replay)")
     }
 
     // MARK: - ETA / EMA (v0.5.0 — export progress banner ETA)

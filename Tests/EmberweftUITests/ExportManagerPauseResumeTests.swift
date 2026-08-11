@@ -86,7 +86,7 @@ final class ExportManagerPauseResumeTests: XCTestCase {
         let cp = ExportCheckpoint(
             settings: settings, framesPerSegment: 8, transitionFramesPerSegment: 8,
             segmentCount: 1, selector: .sequential, seed: 1, loopCycles: 1, stagger: 0,
-            out: out, loopRepeatCount: 1, checkpointIntervalFrames: interval,
+            out: out, checkpointIntervalFrames: interval,
             totalGlobalFrames: 8, completedChunkIndexes: [], sources: sources())
         let cpURL = ExportCheckpoint.checkpointURL(out: out)
         let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]

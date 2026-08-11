@@ -136,12 +136,9 @@ public final class ExportManager {
     /// it there. Default `.auto` matches the `ExportSettings.resolve` default.
     public var temporalSmoothing: TemporalSmoothing = .auto
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
-    /// Default 15 s — the owner's optimal loop render length. Combined with
-    /// `loopRepeatCount == 2`, a 15 s loop renders once (15 s of render cost)
-    /// and outputs twice = 30 s perceived, halving the per-second render cost
-    /// while staying seamless (`R(360°)=R(0°)`). Above ES "standard" (~11 s @
-    /// 30 fps) and short of the ~30 s vigilance-decrement floor. Tunable via
-    /// the export sheet stepper (0.1–120 s).
+    /// Default 15 s — the owner's optimal loop render length. Above ES "standard"
+    /// (~11 s @ 30 fps) and short of the ~30 s vigilance-decrement floor. Tunable
+    /// via the export sheet stepper (0.1–120 s).
     public var loopDurationSeconds: Double = 15.0
     /// Transition ("edge") duration in seconds ⇒
     /// `transitionFramesPerSegment = round(transitionDurationSeconds * fps)`.
@@ -152,13 +149,6 @@ public final class ExportManager {
     /// ratio is ~1.25× (gentle); longer edges trade screen time on the morph
     /// for a smoother boundary. Tunable via the export sheet stepper.
     public var transitionDurationSeconds: Double = 12.0
-    /// Loop render-once-repeat (v0.5.0). Default 2 — the owner's "15 s render +
-    /// repeat×2 = 30 s perceived loop" optimal. Each loop segment renders once
-    /// and outputs `loopRepeatCount`× (seamless); transitions never repeat. The
-    /// coordinator refuses a repeat>1 job whose per-loop cache would exceed the
-    /// safe RAM threshold (`ExportError.loopRepeatMemoryExceeded`); the sheet
-    /// surfaces the estimate. 1 = no-op (render every output frame).
-    public var loopRepeatCount: Int = 2
     public var bitrate: ExportSettings.Bitrate = .auto
 
     /// M6.1: checkpoint cadence (frames) for the resumable path. The GUI sheet
@@ -302,7 +292,7 @@ public final class ExportManager {
             settings: settings, flames: [flame], framesPerSegment: framesPerSegment,
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: 1, selector: .sequential, seed: seed,
-            loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
+            loopCycles: 1, stagger: 0.0, out: out)
         if sources.isEmpty {
             startExport(.runJob(job: job), label: displayName, backend: backend)
         } else {
@@ -340,7 +330,7 @@ public final class ExportManager {
             settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
             transitionFramesPerSegment: transitionFramesPerSegment,
             segmentCount: segmentCount, selector: .sequential, seed: seed,
-            loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
+            loopCycles: 1, stagger: 0.0, out: out)
         if sources.isEmpty {
             startExport(.runJob(job: job), label: displayName, backend: backend)
         } else {
@@ -374,7 +364,7 @@ public final class ExportManager {
                 settings: settings, flames: [item.flame], framesPerSegment: framesPerSegment,
                 transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: 1, selector: .sequential, seed: seed,
-                loopCycles: 1, stagger: 0.0, out: out, loopRepeatCount: loopRepeatCount)
+                loopCycles: 1, stagger: 0.0, out: out)
             jobs.append(job)
         }
         startExport(.runBatch(jobs: jobs, baseDir: baseDir),

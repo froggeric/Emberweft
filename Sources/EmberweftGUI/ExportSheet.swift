@@ -132,10 +132,6 @@ struct ExportSheet: View {
                     Stepper("Transition duration \(String(format: "%.1f", em.transitionDurationSeconds)) s",
                             value: $em.transitionDurationSeconds, in: 0.1...120, step: 0.5)
                         .help("Transition (edge) length in seconds. Shorter than loop keeps edges brief. Transition frames = round(duration × FPS).")
-                    Stepper("Loop repeat \(em.loopRepeatCount)×",
-                            value: $em.loopRepeatCount, in: 1...10)
-                        .disabled(loopRepeatDisabled)
-                        .help("Render each loop once, output N×. Seamless (a loop is R(360°)=R(0°)). 2× halves loop render cost (15 s render + 2× = 30 s perceived). Transitions never repeat. Disabled above the safe cache size.")
                     Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
                         .help("1 uses the genome default (≈1000 on real ES sheep, motion-blurred). Higher values are sharper but slower. Metal caps at 64.")
                     Toggle("Temporal smoothing", isOn: temporalSmoothingBinding)
@@ -167,12 +163,6 @@ struct ExportSheet: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20).padding(.bottom, 6)
             }
-            if loopRepeatCacheExceedsThreshold {
-                Text("Loop repeat is disabled at this resolution/length: caching one loop (~\(loopRepeatCacheMB) MB) would exceed the safe RAM budget (~\(loopRepeatThresholdMB) MB). Lower the resolution, shorten the loop, or keep repeat at 1×.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 20).padding(.bottom, 6)
-            }
 
             Divider()
             HStack {
@@ -191,19 +181,6 @@ struct ExportSheet: View {
         .frame(width: 500)
         .onAppear {
             syncResolutionFromManager()
-            clampLoopRepeatIfNeeded()
-        }
-        .onChange(of: em.resolution) { _, _ in clampLoopRepeatIfNeeded() }
-        .onChange(of: em.loopDurationSeconds) { _, _ in clampLoopRepeatIfNeeded() }
-        .onChange(of: em.fps) { _, _ in clampLoopRepeatIfNeeded() }
-    }
-
-    /// If the per-loop cache now exceeds the safe RAM budget, force repeat=1
-    /// (the coordinator would refuse repeat>1 anyway; this keeps the sheet's
-    /// value honest so Start doesn't reach a guaranteed-refusal export).
-    private func clampLoopRepeatIfNeeded() {
-        if loopRepeatCacheExceedsThreshold && model.exportManager.loopRepeatCount > 1 {
-            model.exportManager.loopRepeatCount = 1
         }
     }
 
@@ -254,37 +231,6 @@ struct ExportSheet: View {
             return "Disabled — genome-default quality already uses α = 1.0 (no smoothing)."
         }
         return "ON: blend each frame with the prior histogram (α ramps with quality) for smoother motion. OFF: α = 1.0, byte-identical to the unsmoothed path."
-    }
-
-    /// Estimated per-loop cache size for the loop-repeat memory guard
-    /// (`framesPerSegment × W × H × 4` bytes), as whole megabytes. The cache is
-    /// the same regardless of `loopRepeatCount` (it holds ONE loop's frames).
-    private var loopRepeatCacheMB: Int {
-        let em = model.exportManager
-        let frames = max(1, Int(em.loopDurationSeconds * Double(em.fps)))
-        let bytes = Int64(frames) * Int64(em.resolution.width) * Int64(em.resolution.height) * 4
-        return Int(bytes / 1_000_000)
-    }
-
-    /// The safe cache threshold the coordinator enforces (~50% of physical RAM,
-    /// floored 2 GB, ceiling ~12 GB). Mirrors `ExportCoordinator`'s guard so the
-    /// sheet's disable/notice agrees with the actual refusal.
-    private var loopRepeatThresholdMB: Int {
-        let phys = Int64(ProcessInfo.processInfo.physicalMemory)
-        let floor: Int64 = 2_000_000_000
-        let ceiling: Int64 = 12_000_000_000
-        return Int(min(max(phys / 2, floor), ceiling) / 1_000_000)
-    }
-
-    /// True when one loop's cache would exceed the safe threshold → the
-    /// coordinator would refuse any repeat>1, so the stepper locks at 1.
-    private var loopRepeatCacheExceedsThreshold: Bool {
-        loopRepeatCacheMB > loopRepeatThresholdMB
-    }
-
-    /// The repeat stepper is disabled above the safe cache size (forced to 1).
-    private var loopRepeatDisabled: Bool {
-        loopRepeatCacheExceedsThreshold
     }
 
     /// Metal-unavailable notice when the user explicitly picked Metal and it's

@@ -7,7 +7,7 @@ import FlameKit
 import FlameReference
 
 final class RenderFramesInterleavedTests: XCTestCase {
-    // Real fixture pattern (ExportLongFormTests.swift:36-41 / LoopRepeatTests.swift:23-28).
+    // Real fixture pattern (ExportLongFormTests.swift:36-41).
     private func genome(_ name: String) throws -> [Flame] {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -72,7 +72,7 @@ final class RenderFramesInterleavedTests: XCTestCase {
         for try await _ in stream {}
     }
 
-    private func assertInterleavedMatchesRun(loopRepeatCount: Int) async throws {
+    private func assertInterleavedMatchesRun() async throws {
         let flames = try genome("sierpinski.flam3")
         var settings = ExportSettings()
         settings.codec = .proRes422HQ; settings.container = .mov
@@ -81,7 +81,7 @@ final class RenderFramesInterleavedTests: XCTestCase {
         let mkJob = { (out: URL) in
             ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                       transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
-                      seed: 42, loopCycles: 1, stagger: 0, out: out, loopRepeatCount: loopRepeatCount)
+                      seed: 42, loopCycles: 1, stagger: 0, out: out)
         }
         let dir = tmpDir()
         let outRun = dir.appendingPathComponent("run.mov")
@@ -90,12 +90,11 @@ final class RenderFramesInterleavedTests: XCTestCase {
         try await runJob(mkJob(outRun), backend: .cpu)
         let ilv = try await renderInterleaved(mkJob(outIlv), backend: .cpu)
         let a = try await decodeFrames(outRun), b = try await decodeFrames(ilv)
-        XCTAssertEqual(a.count, b.count, "frame count mismatch at loopRepeatCount=\(loopRepeatCount)")
+        XCTAssertEqual(a.count, b.count, "frame count mismatch")
         for i in 0..<a.count {
-            XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0, "pixel diff at frame \(i) (loopRepeatCount=\(loopRepeatCount))")
+            XCTAssertLessThanOrEqual(maxAbsDiff(a[i], b[i]), 0, "pixel diff at frame \(i)")
         }
     }
 
-    func testInterleavedMatchesRunAtRepeat1() async throws { try await assertInterleavedMatchesRun(loopRepeatCount: 1) }
-    func testInterleavedMatchesRunAtRepeat2() async throws { try await assertInterleavedMatchesRun(loopRepeatCount: 2) }  // F2 headline
+    func testInterleavedMatchesRun() async throws { try await assertInterleavedMatchesRun() }
 }

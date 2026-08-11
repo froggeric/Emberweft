@@ -97,29 +97,16 @@ public struct ExportJob: Sendable {
     public let stagger: Double
     public let out: URL
     public let partialURL: URL
-    /// Loop render-once-repeat (v0.5.0). When `> 1`, each **loop** segment is
-    /// rendered ONCE into an in-memory cache, then appended `loopRepeatCount`× to
-    /// the encoder (a loop is seamless — `R(360°)=R(0°)` — so the repeats are
-    /// invisible). Transition segments are never repeated (a morph isn't
-    /// seamless). `== 1` is the no-op: the existing per-frame render+append loop
-    /// runs byte-for-byte unchanged (every animate↔export byte-identity pin
-    /// routes through it). The CLI default is `1` (preserves byte-identity with
-    /// current behavior); the GUI default is `2` (the owner's "15 s render → 30 s
-    /// perceived loop" optimization). Determinism (rule #2): each loop frame is
-    /// rendered exactly once (cached) and the identical bytes are written
-    /// `repeatCount`× — no re-render, no reseed.
-    public let loopRepeatCount: Int
     public init(settings: ExportSettings, flames: [Flame], framesPerSegment: Int,
                 transitionFramesPerSegment: Int? = nil,
                 segmentCount: Int, selector: SelectorSpec, seed: UInt64,
-                loopCycles: Int, stagger: Double, out: URL, loopRepeatCount: Int = 1) {
+                loopCycles: Int, stagger: Double, out: URL) {
         self.settings = settings; self.flames = flames
         self.framesPerSegment = framesPerSegment
         self.transitionFramesPerSegment = transitionFramesPerSegment ?? framesPerSegment
         self.segmentCount = segmentCount
         self.selector = selector; self.seed = seed; self.loopCycles = loopCycles
         self.stagger = stagger; self.out = out
-        self.loopRepeatCount = max(1, loopRepeatCount)
         // Atomic-encode target = `<dir>/<stem>.partial-<pid>.<ext>`. Built from
         // `out`'s dir + stem + ext explicitly: the chain
         // `out.deletingPathExtension().appendingPathComponent(…).appendingPathExtension(…)`

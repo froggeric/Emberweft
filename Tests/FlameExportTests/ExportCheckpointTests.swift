@@ -6,7 +6,7 @@ final class ExportCheckpointTests: XCTestCase {
         ExportCheckpoint(settings: .init(), framesPerSegment: 450,
             transitionFramesPerSegment: 360, segmentCount: 9, selector: .sequential,
             seed: 1, loopCycles: 1, stagger: 0, out: URL(fileURLWithPath: "/tmp/x.mov"),
-            loopRepeatCount: 2, checkpointIntervalFrames: interval, totalGlobalFrames: total,
+            checkpointIntervalFrames: interval, totalGlobalFrames: total,
             completedChunkIndexes: completed, sources: [])
     }
 
@@ -49,5 +49,28 @@ final class ExportCheckpointTests: XCTestCase {
         XCTAssertEqual(ExportCheckpoint.sanitizedStem(URL(fileURLWithPath: "/tmp/../etc/passwd")), "passwd")
         // Separator in a stem is flattened:
         XCTAssertEqual(ExportCheckpoint.sanitizedStem(URL(fileURLWithPath: "/tmp/a/b")), "b")
+    }
+
+    /// v0.5.7 backward-compat: loop-repeat was removed, so the `loopRepeatCount`
+    /// field is gone from `ExportCheckpoint`. A v0.5.6 checkpoint JSON (which
+    /// carries a `loopRepeatCount` key) MUST still decode — Swift's keyed
+    /// decoding ignores unknown keys. Verifies resume works across the version
+    /// boundary (a paused v0.5.6 export resumes on v0.5.7).
+    func testV056CheckpointWithLoopRepeatKeyDecodes() throws {
+        // Build a valid v0.5.7 checkpoint, encode it, inject the v0.5.6-only
+        // `loopRepeatCount` key via JSONSerialization, then decode on v0.5.7.
+        let cp = mk(completed: [], total: 8, interval: 30)
+        let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
+        var json = try JSONSerialization.jsonObject(
+            with: enc.encode(cp)) as! [String: Any]
+        json["loopRepeatCount"] = 2   // the v0.5.6 key, no longer in the v0.5.7 schema
+        let v056Data = try JSONSerialization.data(withJSONObject: json)
+
+        let decoded = try JSONDecoder().decode(ExportCheckpoint.self, from: v056Data)
+        XCTAssertEqual(decoded.schemaVersion, 1)
+        XCTAssertEqual(decoded.seed, 1)
+        XCTAssertEqual(decoded.checkpointIntervalFrames, 30)
+        XCTAssertEqual(decoded.totalGlobalFrames, 8)
+        // The unknown `loopRepeatCount` key was silently ignored — decode succeeded.
     }
 }

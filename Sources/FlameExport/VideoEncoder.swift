@@ -278,12 +278,6 @@ public enum ExportError: Error, Equatable, Sendable {
     /// unsupported by) this build. `version` is the schema we refused. A future
     /// Emberweft that bumps the schema would emit this against an older binary.
     case checkpointSchemaUnsupported(version: Int)
-    /// Loop render-once-repeat memory guard (v0.5.0). The per-loop cache
-    /// (`framesPerSegment × W × H × 4` bytes) would exceed the safe threshold
-    /// (~50% of physical RAM, floored 2 GB, ceiling ~12 GB). `neededMB` is the
-    /// estimated cache; `availableMB` is the threshold. Checked BEFORE any
-    /// rendering/encoding starts, so no partial file is left.
-    case loopRepeatMemoryExceeded(neededMB: Int, availableMB: Int)
     /// T8′ temporal smoothing (centered box window) requires every histogram fed
     /// to one `TemporalBoxWindow` to share the same accumulator-grid dimensions
     /// (`gridWidth`/`gridHeight`). The grid is a step function of each frame's

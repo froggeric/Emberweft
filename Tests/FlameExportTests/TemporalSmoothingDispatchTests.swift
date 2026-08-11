@@ -11,7 +11,7 @@ import FlameRenderer
 /// replaces the causal EMA. Drives the private dispatch via the actor's
 /// `internal` test seam (`renderSmoothedRangeForTest`) so the per-frame pins run
 /// WITHOUT a full encoder round-trip (fast), plus small end-to-end exports for
-/// the loop-repeat + cross-branch pins (which need the real frame loops).
+/// the cross-branch pins (which need the real frame loops).
 ///
 /// **The cold-start pin CHANGED (T8′):** the EMA emitted frame 0 sharp (byte-
 /// identical to OFF); the centered box window averages frame 0 over `[0, h]` —
@@ -24,9 +24,6 @@ import FlameRenderer
 ///   frame).
 /// - **Metal↔CPU smoothing-ON parity**: a multi-frame sequence Metal vs CPU,
 ///   PSNR ≥ 38 dB.
-/// - **Loop-repeat + smoothing**: under `loopRepeatCount=2` + smoothing ON each
-///   emitted frame is appended `reps×`; repeated copies are byte-identical (no
-///   inter-copy flicker).
 /// - **Cross-branch**: CLI-MainActor smoothing-ON ≈ GUI-offmain smoothing-ON
 ///   within the fused-vs-unfused band.
 @MainActor
@@ -170,54 +167,6 @@ final class TemporalSmoothingDispatchTests: XCTestCase {
         let (_, db) = psnr(imgM[imgM.count - 1], imgC[imgC.count - 1])
         print("[SmoothingParity] Metal↔CPU \(plan.totalFrames)-frame h=\(h) @1000spp: PSNR=\(db) dB")
         XCTAssertGreaterThanOrEqual(db, 38.0, "Metal↔CPU smoothing-ON PSNR ≥ 38 dB (was \(db))")
-    }
-
-    // MARK: - Loop-repeat + smoothing (end-to-end): reps×, no inter-copy flicker
-
-    /// Under `loopRepeatCount=2` + smoothing ON, each emitted loop frame is
-    /// appended `reps×` (the smoothed image is computed once at emit time, then
-    /// written twice). Drives the REAL `runJob` → `renderFrames` smoothing-ON
-    /// feed-emit path with `smoothingAlpha=0.2`; decodes the output and asserts
-    /// (a) the coordinator appended 2× the loop's frame count, and (b) the first
-    /// loop's frames equal their immediate replay (no inter-copy flicker — the
-    /// smoothed image is byte-identical across the `reps×` copies).
-    func testLoopRepeatAndSmoothing() async throws {
-        let flames = try genome("sierpinski.flam3")
-        var settings = ExportSettings()
-        settings.codec = .proRes422HQ; settings.container = .mov
-        settings.resolution = .custom(width: 96, height: 60); settings.fps = 30
-        settings.quality = .spp(20); settings.temporalSamples = 1
-        settings.smoothingAlpha = 0.2   // smoothing ON for a multi-frame run (h=5)
-
-        let dir = tmpDir()
-        let out = dir.appendingPathComponent("lr.mov")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let job = ExportJob(settings: settings, flames: flames, framesPerSegment: 4,
-                            segmentCount: 1, selector: .sequential, seed: 7,
-                            loopCycles: 1, stagger: 0, out: out, loopRepeatCount: 2)
-        let coord = ExportCoordinator(backend: .cpu)
-        let stream = await coord.run(job)
-        for try await _ in stream {}
-
-        // appendedFrameCount counts encoder appends (2× per loop frame under
-        // loopRepeatCount=2). renderCallCount counts emits (one per encoded
-        // frame; under smoothing the display runs once per emit).
-        let rendered = await coord.renderCallCount
-        let appended = await coord.appendedFrameCount
-        XCTAssertEqual(rendered, 4, "loop emitted once (4 frames) under loopRepeatCount=2")
-        XCTAssertEqual(appended, 8, "each emitted loop frame appended 2× (4 × 2)")
-
-        // Decode and assert each emitted frame equals its immediate replay. The
-        // replay order is PER-FRAME (f0,f0,f1,f1,… — the feed-emit body appends
-        // reps× per emit before moving on), so pair (2i, 2i+1) compares a frame
-        // and its replay — byte-identical bytes encoded through the same ProRes
-        // session (no inter-copy flicker).
-        let frames = try await decodeFrames(out)
-        XCTAssertEqual(frames.count, 8)
-        for i in 0..<4 {
-            XCTAssertEqual(maxAbsDiff(frames[2 * i], frames[2 * i + 1]), 0,
-                           "loop-repeat copy \(i) must be byte-identical to its replay (no inter-copy flicker)")
-        }
     }
 
     // MARK: - Cross-branch (CLI MainActor ≈ GUI offmain, both smoothing ON)
