@@ -7,6 +7,31 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.7] — remove loop-repeat (fix jerky half-speed motion)
+
+Removes the loop render-once-repeat feature (v0.5.0) entirely. The feature
+rendered each loop frame once and appended it multiple times as identical bytes
+(the default repeat count was 2), which caused the loop's motion to play at half
+speed: a 30 fps container showed 15 fps of real motion. Every frame is now
+rendered and appended exactly once.
+
+### Removed
+- **`loopRepeatCount`** field from `ExportJob`, `ExportCheckpoint`, and
+  `ExportManager`. The GUI "Loop repeat" stepper, the CLI `--loop-repeat` flag,
+  and the `loopRepeatMemoryExceeded` RAM guard are all gone.
+- The repeat-greater-than-one cache-and-replay branch in
+  `ExportCoordinator.renderFrames` is deleted. Each loop and transition frame is
+  rendered once and appended once.
+
+### Backward compatibility
+- A v0.5.6 export checkpoint (which carries a `loopRepeatCount` key) still
+  decodes on v0.5.7. Swift keyed decoding ignores unknown keys, so resume works
+  across the version boundary.
+- Determinism (rule #2), Metal-to-CPU parity, and animate-to-export
+  byte-identity are all preserved. Loop-repeat was an output-stage optimization;
+  removing it does not touch the renderer math. The mastering path
+  (`--frame N --png`, `animate`) never used loop-repeat.
+
 ## [v0.5.5] — quality tier auto-sets temporal samples
 
 Picking a quality tier in the export sheet now automatically sets temporal-samples

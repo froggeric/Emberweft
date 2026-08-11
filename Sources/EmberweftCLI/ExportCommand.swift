@@ -21,7 +21,7 @@ extension EmberweftCLI {
         var genomes: [String] = []
         var framesPerSegment = 8, segmentCount = 3, loopCycles = 1, seed: UInt64 = 0
         var transitionFramesPerSegment: Int? = nil   // --transition-frames (default = framesPerSegment → uniform)
-        var stagger = 0.0, temporalSamples = 1, loopRepeat = 1
+        var stagger = 0.0, temporalSamples = 1
         var backend = "cpu", strictBackend = false, force = false
         var segmentFrames = 0
         var out = "out.mp4", codec = "h264", container = "mp4", bitrate = "auto"
@@ -95,14 +95,6 @@ extension EmberweftCLI {
                 case "--temporal-samples":
                     guard let v = value() else { return missing("--temporal-samples") }
                     temporalSamples = max(1, Int(v) ?? 1); i += 2
-                case "--loop-repeat":
-                    // Loop render-once-repeat (v0.5.0). Default 1 = byte-identical
-                    // to current behavior (every output frame rendered). 2+ renders
-                    // each loop once and outputs N× (seamless); transitions never
-                    // repeat. The GUI carries the owner's default 2; the CLI stays
-                    // at 1 so the animate↔export byte-identity pins hold by default.
-                    guard let v = value() else { return missing("--loop-repeat") }
-                    loopRepeat = max(1, Int(v) ?? 1); anyRecipeFlagExplicit = true; i += 2
                 case "--backend":
                     guard let v = value() else { return missing("--backend") }
                     let lv = v.lowercased()
@@ -281,7 +273,7 @@ extension EmberweftCLI {
                 transitionFramesPerSegment: decoded.transitionFramesPerSegment,
                 segmentCount: decoded.segmentCount, selector: decoded.selector,
                 seed: decoded.seed, loopCycles: decoded.loopCycles, stagger: decoded.stagger,
-                out: decoded.out, loopRepeatCount: decoded.loopRepeatCount)
+                out: decoded.out)
             let coord = ExportCoordinator(backend: coordBackend)
 
             // P2: SIGINT → cooperative cancel (reuse the proven DispatchSource
@@ -345,7 +337,6 @@ extension EmberweftCLI {
                 resolution: resolution, segmentFrames: segmentFrames, framesPerSegment: framesPerSegment,
                 transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: segmentCount, seed: seed, loopCycles: loopCycles, stagger: stagger,
-                loopRepeat: loopRepeat,
                 backend: backend, strictBackend: strictBackend, force: force, failFast: failFast)
         }
 
@@ -541,8 +532,7 @@ extension EmberweftCLI {
         let job = ExportJob(settings: settings, flames: renderable, framesPerSegment: framesPerSegment,
                             transitionFramesPerSegment: transitionFramesPerSegment,
                             segmentCount: segmentCount, selector: .sequential, seed: seed,
-                            loopCycles: loopCycles, stagger: stagger, out: outURL,
-                            loopRepeatCount: loopRepeat)
+                            loopCycles: loopCycles, stagger: stagger, out: outURL)
         let coord = ExportCoordinator(backend: coordBackend)
         let longForm = settings.segmentFrameBudget > 0
         let resumable = checkpointFrames > 0
@@ -643,7 +633,6 @@ extension EmberweftCLI {
         let loopCycles: Int?
         let stagger: Double?
         let temporalSamples: Int?
-        let loopRepeat: Int?
     }
 
     /// Shared `ExportSettings` resolution for the single and batch paths (Task 7
@@ -762,7 +751,6 @@ extension EmberweftCLI {
         resolution: String, segmentFrames: Int, framesPerSegment: Int,
         transitionFramesPerSegment: Int?,
         segmentCount: Int, seed: UInt64, loopCycles: Int, stagger: Double,
-        loopRepeat: Int,
         backend: String, strictBackend: Bool, force: Bool, failFast: Bool
     ) async -> Int32 {
         // Load + decode the manifest.
@@ -866,12 +854,10 @@ extension EmberweftCLI {
             let jobSeed = e.seed ?? seed
             let jobLoop = e.loopCycles ?? loopCycles
             let jobStagger = e.stagger ?? stagger
-            let jobLoopRepeat = e.loopRepeat ?? loopRepeat
             jobs.append(ExportJob(settings: jobSettings, flames: [flame], framesPerSegment: jobFrames,
                                   transitionFramesPerSegment: transitionFramesPerSegment,
                                   segmentCount: jobSegments, selector: .sequential, seed: jobSeed,
-                                  loopCycles: jobLoop, stagger: jobStagger, out: outURL,
-                                  loopRepeatCount: jobLoopRepeat))
+                                  loopCycles: jobLoop, stagger: jobStagger, out: outURL))
         }
 
         EmberweftCLI.err("note: batch of \(jobs.count) job(s) → \(baseURL.path) (fail-fast=\(failFast))\n")

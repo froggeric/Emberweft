@@ -93,7 +93,7 @@ final class ExportCheckpointCLITests: XCTestCase {
         settings.quality = .spp(20); settings.temporalSamples = 1
         return ExportJob(settings: settings, flames: flames, framesPerSegment: 8,
                          transitionFramesPerSegment: 8, segmentCount: 2, selector: .sequential,
-                         seed: 42, loopCycles: 1, stagger: 0, out: out, loopRepeatCount: 1)
+                         seed: 42, loopCycles: 1, stagger: 0, out: out)
     }
 
     /// Seed a paused checkpoint beside `out`: run the coordinator with
@@ -210,7 +210,7 @@ final class ExportCheckpointCLITests: XCTestCase {
                        "checkpoint must be deleted after a completed resume")
 
         let frames = try await decodeFrames(out)
-        // 2 segments (8 frames each) at loopRepeat 1 = 16 global frames.
+        // 2 segments (8 frames each) = 16 global frames.
         XCTAssertEqual(frames.count, 16, "resume must produce the full 16-frame timeline")
     }
 
@@ -239,7 +239,6 @@ final class ExportCheckpointCLITests: XCTestCase {
             ["--seed", "42"],
             ["--loop-cycles", "1"],
             ["--stagger", "0"],
-            ["--loop-repeat", "1"],
         ]
         for flag in recipeFlags {
             let rc = await EmberweftCLI.export(["--resume", out.path] + flag)

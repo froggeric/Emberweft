@@ -14,7 +14,6 @@ public struct ExportCheckpoint: Codable, Sendable, Equatable {
     public let loopCycles: Int
     public let stagger: Double
     public let out: URL
-    public let loopRepeatCount: Int
     public let checkpointIntervalFrames: Int
     public let totalGlobalFrames: Int
     public var completedChunkIndexes: Set<Int>
@@ -27,14 +26,13 @@ public struct ExportCheckpoint: Codable, Sendable, Equatable {
     public init(settings: ExportSettings, framesPerSegment: Int,
                 transitionFramesPerSegment: Int, segmentCount: Int, selector: SelectorSpec,
                 seed: UInt64, loopCycles: Int, stagger: Double, out: URL,
-                loopRepeatCount: Int, checkpointIntervalFrames: Int, totalGlobalFrames: Int,
+                checkpointIntervalFrames: Int, totalGlobalFrames: Int,
                 completedChunkIndexes: Set<Int>, sources: [Source]) {
         self.schemaVersion = 1
         self.settings = settings; self.framesPerSegment = framesPerSegment
         self.transitionFramesPerSegment = transitionFramesPerSegment
         self.segmentCount = segmentCount; self.selector = selector; self.seed = seed
         self.loopCycles = loopCycles; self.stagger = stagger; self.out = out
-        self.loopRepeatCount = loopRepeatCount
         self.checkpointIntervalFrames = checkpointIntervalFrames
         self.totalGlobalFrames = totalGlobalFrames
         self.completedChunkIndexes = completedChunkIndexes
@@ -45,7 +43,7 @@ public struct ExportCheckpoint: Codable, Sendable, Equatable {
     /// across writes (rule #2 — Swift's Set ordering is per-process-randomized).
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, settings, framesPerSegment, transitionFramesPerSegment
-        case segmentCount, selector, seed, loopCycles, stagger, out, loopRepeatCount
+        case segmentCount, selector, seed, loopCycles, stagger, out
         case checkpointIntervalFrames, totalGlobalFrames, completedChunkIndexes, sources
     }
     public init(from decoder: Decoder) throws {
@@ -60,7 +58,6 @@ public struct ExportCheckpoint: Codable, Sendable, Equatable {
         loopCycles = try c.decode(Int.self, forKey: .loopCycles)
         stagger = try c.decode(Double.self, forKey: .stagger)
         out = try c.decode(URL.self, forKey: .out)
-        loopRepeatCount = try c.decode(Int.self, forKey: .loopRepeatCount)
         checkpointIntervalFrames = try c.decode(Int.self, forKey: .checkpointIntervalFrames)
         totalGlobalFrames = try c.decode(Int.self, forKey: .totalGlobalFrames)
         completedChunkIndexes = Set(try c.decode([Int].self, forKey: .completedChunkIndexes))
@@ -78,7 +75,6 @@ public struct ExportCheckpoint: Codable, Sendable, Equatable {
         try c.encode(loopCycles, forKey: .loopCycles)
         try c.encode(stagger, forKey: .stagger)
         try c.encode(out, forKey: .out)
-        try c.encode(loopRepeatCount, forKey: .loopRepeatCount)
         try c.encode(checkpointIntervalFrames, forKey: .checkpointIntervalFrames)
         try c.encode(totalGlobalFrames, forKey: .totalGlobalFrames)
         try c.encode(completedChunkIndexes.sorted(), forKey: .completedChunkIndexes)

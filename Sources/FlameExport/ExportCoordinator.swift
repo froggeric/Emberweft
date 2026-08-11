@@ -36,14 +36,11 @@ public actor ExportCoordinator: ExportCoordinating {
     private var paused = false
 
     /// Test seam: number of images produced by the render dispatch
-    /// (`renderImage`) in this coordinator's lifetime. Counts each frame ONCE —
-    /// a loop repeated `loopRepeatCount`× via the cache still increments this
-    /// once per rendered (cached) frame, not per output append. Pure side-channel
-    /// (no effect on bytes/PTS → byte-identity-safe).
+    /// (`renderImage`) in this coordinator's lifetime. Counts each frame ONCE.
+    /// Pure side-channel (no effect on bytes/PTS → byte-identity-safe).
     internal private(set) var renderCallCount: Int = 0
     /// Test seam: number of frames appended to the encoder (output frame count).
-    /// A loop repeated `loopRepeatCount`× increments this `loopRepeatCount`× per
-    /// cached frame. Pure side-channel.
+    /// Pure side-channel.
     internal private(set) var appendedFrameCount: Int = 0
 
     /// M6.1 test seams (deterministic between-chunk pause/cancel for
@@ -188,14 +185,11 @@ public actor ExportCoordinator: ExportCoordinating {
     }
 
     /// Shared params/plan/budget construction for `runJob`/`runLongFormJob`/
-    /// `runResumableBody` (P9). Performs `diskPrecheck` (accurate for all three:
-    /// the resumable path emits loop frames `loopRepeatCount×` inline, so the
-    /// frame count matches `diskPrecheck`'s formula). Does NOT perform
-    /// `checkLoopRepeatMemory` — the caller decides (resumable skips it: no
-    /// per-segment cache → O(1) memory). Pure extraction of the block that lived
-    /// inline in `runJob`/`runLongFormJob`; behavior-identical. Returns `schedule`
-    /// too because `runLongFormJob`'s chunk loop still queries
-    /// `schedule.frameOffset(ofSegment:)` (`runJob`/`runResumableBody` ignore it).
+    /// `runResumableBody` (P9). Performs `diskPrecheck` (accurate for all three).
+    /// Pure extraction of the block that lived inline in `runJob`/`runLongFormJob`;
+    /// behavior-identical. Returns `schedule` too because `runLongFormJob`'s chunk
+    /// loop still queries `schedule.frameOffset(ofSegment:)` (`runJob`/
+    /// `runResumableBody` ignore it).
     private func buildRenderContext(for job: ExportJob) throws
         -> (plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
             useMetal: Bool, schedule: Schedule) {
@@ -220,15 +214,6 @@ public actor ExportCoordinator: ExportCoordinating {
     /// (which captures the `AsyncThrowingStream.Continuation`, itself Sendable)
     /// crosses the actor boundary cleanly under Swift 6 strict concurrency.
     private func runJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
-        // Loop-repeat memory guard (v0.5.0) — checked BEFORE disk/encoder so a
-        // refused job leaves no partial file. No-op when loopRepeatCount == 1.
-        // Width/height are read directly from settings (the same values
-        // `buildRenderContext` computes internally); this call stays BEFORE
-        // `buildRenderContext` so the side-effect order is unchanged
-        // (memory guard → disk precheck → encoder).
-        try Self.checkLoopRepeatMemory(job: job,
-                                       width: max(1, job.settings.resolution.width),
-                                       height: max(1, job.settings.resolution.height))
         let ctx = try buildRenderContext(for: job)
         let plan = ctx.plan
         let params = ctx.params
@@ -242,7 +227,7 @@ public actor ExportCoordinator: ExportCoordinating {
             // `[0, totalFrames)` into one encoder = byte-identical to the prior
             // inline loop; the extraction only factors the body into a helper.
             try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
-                                   range: 0..<plan.totalFrames, loopRepeatCount: job.loopRepeatCount,
+                                   range: 0..<plan.totalFrames,
                                    smoothingAlpha: job.settings.smoothingAlpha,
                                    into: encoder, yield: yield)
             try await encoder.finish()
@@ -264,24 +249,14 @@ public actor ExportCoordinator: ExportCoordinating {
     /// can target the right URL (`job.partialURL` for single, the chunk temp for
     /// long-form). Both `runJob` (range = whole timeline) and `runLongFormJob`
     /// (range = one chunk) call this, so the per-frame code path is identical.
-    ///
-    /// `loopRepeatCount` (v0.5.0): when `> 1`, each **loop** segment in `range`
-    /// is rendered ONCE into a per-segment `[RGBA8Image]` cache, then each cached
-    /// frame is appended `loopRepeatCount`× (a loop is seamless — `R(360°)=R(0°)`
-    /// — so the repeats are invisible). Transition segments are rendered +
-    /// appended once (a morph isn't seamless). A running `outputIndex` (scoped to
-    /// the encoder session) replaces `gf - range.lowerBound` as the append PTS in
-    /// this branch. When `== 1` the EXACT pre-change per-frame loop runs
-    /// byte-for-byte (the cache/replay branch is not entered → every byte-identity
-    /// pin stays green). Determinism (rule #2): each loop frame is rendered once
-    /// and the identical bytes are written `repeatCount`× — no re-render/reseed.
+    /// Each frame is rendered once and appended once (loop-repeat was removed in
+    /// v0.5.7 — it caused half-speed jerky motion).
     private func renderFrames(
         plan: FramePlan,
         params: RenderParams,
         budget: MetalRenderer.ThreadSeedBudget?,
         useMetal: Bool,
         range: Range<Int>,
-        loopRepeatCount: Int = 1,
         smoothingAlpha: Double = 1.0,
         into encoder: VideoEncoder,
         yield: @Sendable (ExportProgress) -> Void
@@ -305,16 +280,11 @@ public actor ExportCoordinator: ExportCoordinating {
         // histogram-only + lookahead `[E,E+h)` rendered for this chunk's tail
         // emits). For each emit whose absolute frame ∈ [S,E): display the
         // smoothed histogram via the EMITTED frame's descriptor (its center flame
-        // drives DE+display), then append `reps×` (`reps = loopRepeatCount` for
-        // a loop frame, 1 for a transition). `finish()` drains the trailing `h`
-        // frames — for a non-last chunk they all fall outside `[S,E)` (discarded);
-        // for the last chunk / `runJob` (whole timeline) they encode the tail.
-        // Loop-repeat simplifies under smoothing: the smoothed image is computed
-        // once at emit time and appended `reps×`, so the OFF cache path is
-        // unnecessary here (render-once speedup preserved: each frame's
-        // histogram is rendered + fed ONCE regardless of `reps`).
+        // drives DE+display), then append ONCE. `finish()` drains the trailing
+        // `h` frames — for a non-last chunk they all fall outside `[S,E)`
+        // (discarded); for the last chunk / `runJob` (whole timeline) they
+        // encode the tail.
         if smoothingOn {
-            var outputIndex = 0
             var emitted = 0
             try await feedEmitSmoothed(
                 plan: plan, params: params, budget: budget, useMetal: useMetal,
@@ -324,12 +294,8 @@ public actor ExportCoordinator: ExportCoordinating {
                 let img = try await displayAccumulator(smoothed, descriptor: d,
                                                        plan: plan, params: params, useMetal: useMetal)
                 renderCallCount += 1
-                let reps = (d.kind == .loop) ? max(1, loopRepeatCount) : 1
-                for _ in 0..<reps {
-                    try await encoder.append(img, atFrame: outputIndex)
-                    outputIndex += 1
-                    appendedFrameCount += 1
-                }
+                try await encoder.append(img, atFrame: emitted)
+                appendedFrameCount += 1
                 emitted += 1
                 let elapsed = ProcessInfo.processInfo.systemUptime - start
                 yield(ExportProgress(phase: .rendering, currentFrame: emitted,
@@ -339,121 +305,40 @@ public actor ExportCoordinator: ExportCoordinating {
             return
         }
 
-        // --- repeat == 1: the byte-for-byte pre-change path (OFF, untouched) ---
-        // Every animate↔export byte-identity pin routes through here. The only
-        // change vs the original is the render dispatch is now a call to the
-        // extracted `renderImage` (identical operations, identical order →
-        // identical bytes). Do NOT alter the PTS math or progress values here.
-        if loopRepeatCount <= 1 {
-            for gf in range {
-                if cancelled || Task.isCancelled { throw ExportError.cancelled }
-                let d = plan.descriptor(for: gf)
-                // OFF path (smoothingOn==false here — the ON branch returned
-                // above): the VERBATIM `renderImage` call, byte-identical to the
-                // pre-smoothing path.
-                let img = try await renderImage(descriptor: d, plan: plan, params: params,
-                                                budget: budget, useMetal: useMetal)
-                renderCallCount += 1
-                // PTS is LOCAL to this encoder's session (session always starts at
-                // .zero). For `runJob` range.lowerBound == 0 so this is identical to
-                // the prior inline `atFrame: gf`. For a long-form chunk the local
-                // index resets per chunk → each chunk is an independent N-frame
-                // stream; the concat shifts each to its cumulative offset. Passing
-                // the GLOBAL index here would leave a `lowerBound`-frame black gap
-                // at the front of every chunk's stream.
-                try await encoder.append(img, atFrame: gf - range.lowerBound)
-                appendedFrameCount += 1
-                let elapsed = ProcessInfo.processInfo.systemUptime - start
-                yield(ExportProgress(phase: .rendering, currentFrame: gf + 1, totalFrames: plan.totalFrames,
-                                     elapsed: elapsed, renderFPS: elapsed > 0 ? Double(gf + 1) / elapsed : 0))
-            }
-            return
-        }
-
-        // --- repeat > 1: coordinator-level cache + replay (loops only) ---
-        // Walk `range` segment-by-segment. `range` always aligns to segment edges
-        // (`runJob` passes `0..<plan.totalFrames`; long-form chunks split on
-        // segment edges — never mid-segment), so the cursor `gf` is always at a
-        // segment start when the while-body runs. For a loop segment, render its
-        // N frames once into a local cache (cancel-check per render), append each
-        // `loopRepeatCount`× at a running `outputIndex`, then discard the cache.
-        // For a transition segment, render + append each frame once.
-        var outputIndex = 0
-        var rendered = 0
-        var gf = range.lowerBound
-        while gf < range.upperBound {
+        // --- OFF path: the byte-for-byte per-frame loop (untouched) ---
+        // Every animate↔export byte-identity pin routes through here. Each frame
+        // is rendered once and appended once. Do NOT alter the PTS math or
+        // progress values here.
+        for gf in range {
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             let d = plan.descriptor(for: gf)
-            switch d.kind {
-            case .loop:
-                // Loop segment: spans `framesPerSegment` frames from `gf` (clamped
-                // to range — a trailing partial loop can't happen given the
-                // segment-edge alignment, but the clamp is defensive).
-                let segLen = plan.framesPerSegment
-                let segEnd = min(gf + segLen, range.upperBound)
-                var cache: [RGBA8Image] = []
-                cache.reserveCapacity(segEnd - gf)
-                for f in gf..<segEnd {
-                    if cancelled || Task.isCancelled { throw ExportError.cancelled }
-                    let fd = plan.descriptor(for: f)
-                    // OFF path: render once into the cache; replay below appends
-                    // the identical cached bytes `loopRepeatCount`× (no re-render
-                    // → no inter-copy flicker).
-                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
-                                                    budget: budget, useMetal: useMetal)
-                    cache.append(img)
-                    renderCallCount += 1
-                    rendered += 1
-                    let elapsed = ProcessInfo.processInfo.systemUptime - start
-                    yield(ExportProgress(phase: .rendering, currentFrame: rendered,
-                                         totalFrames: plan.totalFrames, elapsed: elapsed,
-                                         renderFPS: elapsed > 0 ? Double(rendered) / elapsed : 0))
-                }
-                // Replay: append each cached frame `loopRepeatCount`×. The cached
-                // bytes are written verbatim (rule #2: identical bytes, no reseed).
-                for img in cache {
-                    for _ in 0..<loopRepeatCount {
-                        try await encoder.append(img, atFrame: outputIndex)
-                        outputIndex += 1
-                        appendedFrameCount += 1
-                    }
-                }
-                cache.removeAll()
-                gf = segEnd
-            case .transition:
-                // Transition segment: never repeated (a morph isn't seamless).
-                let segLen = plan.transitionFramesPerSegment
-                let segEnd = min(gf + segLen, range.upperBound)
-                for f in gf..<segEnd {
-                    if cancelled || Task.isCancelled { throw ExportError.cancelled }
-                    let fd = plan.descriptor(for: f)
-                    // OFF path: transition segments are never loop-repeated.
-                    let img = try await renderImage(descriptor: fd, plan: plan, params: params,
-                                                    budget: budget, useMetal: useMetal)
-                    renderCallCount += 1
-                    rendered += 1
-                    try await encoder.append(img, atFrame: outputIndex)
-                    outputIndex += 1
-                    appendedFrameCount += 1
-                    let elapsed = ProcessInfo.processInfo.systemUptime - start
-                    yield(ExportProgress(phase: .rendering, currentFrame: rendered,
-                                         totalFrames: plan.totalFrames, elapsed: elapsed,
-                                         renderFPS: elapsed > 0 ? Double(rendered) / elapsed : 0))
-                }
-                gf = segEnd
-            }
+            // OFF path (smoothingOn==false here — the ON branch returned above):
+            // the VERBATIM `renderImage` call, byte-identical to the pre-smoothing
+            // path.
+            let img = try await renderImage(descriptor: d, plan: plan, params: params,
+                                            budget: budget, useMetal: useMetal)
+            renderCallCount += 1
+            // PTS is LOCAL to this encoder's session (session always starts at
+            // .zero). For `runJob` range.lowerBound == 0 so this is identical to
+            // the prior inline `atFrame: gf`. For a long-form chunk the local
+            // index resets per chunk → each chunk is an independent N-frame
+            // stream; the concat shifts each to its cumulative offset. Passing
+            // the GLOBAL index here would leave a `lowerBound`-frame black gap
+            // at the front of every chunk's stream.
+            try await encoder.append(img, atFrame: gf - range.lowerBound)
+            appendedFrameCount += 1
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            yield(ExportProgress(phase: .rendering, currentFrame: gf + 1, totalFrames: plan.totalFrames,
+                                 elapsed: elapsed, renderFPS: elapsed > 0 ? Double(gf + 1) / elapsed : 0))
         }
     }
 
-    /// NEW (M6.1): per-global-frame render loop for the resumable path ONLY. Renders
-    /// each frame once, appends `reps`× inline (reps = loopRepeatCount for a loop frame,
-    /// 1 for a transition frame). Byte-identical to `renderFrames` (pinned). O(1) memory
-    /// (no per-segment cache). `reps` decided per frame ⇒ frame-count chunks can span a
-    /// loop→transition boundary (the F2 case the existing renderFrames repeat>1 path
-    /// mishandles). See spec §4.5.
+    /// NEW (M6.1): per-global-frame render loop for the resumable path ONLY.
+    /// Renders each frame once, appends once inline. Byte-identical to
+    /// `renderFrames` (pinned). O(1) memory (no per-segment cache). See spec §4.5.
     private func renderFramesInterleaved(
         plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
-        useMetal: Bool, range: Range<Int>, loopRepeatCount: Int,
+        useMetal: Bool, range: Range<Int>,
         smoothingAlpha: Double = 1.0,
         into encoder: VideoEncoder, globalRendered: inout Int, total: Int,
         yield: @Sendable (ExportProgress) -> Void
@@ -468,6 +353,7 @@ public actor ExportCoordinator: ExportCoordinating {
         // margins). `checkPause: true` — this is the resumable path's per-frame
         // loop, so `paused` is honored between histogram renders. Progress uses
         // the cross-chunk `globalRendered` counter (one increment per emit).
+        // `outputIndex` is LOCAL to this chunk's encoder session (starts at 0).
         if smoothingOn {
             var outputIndex = 0
             try await feedEmitSmoothed(
@@ -478,12 +364,9 @@ public actor ExportCoordinator: ExportCoordinating {
                 let img = try await displayAccumulator(smoothed, descriptor: d,
                                                        plan: plan, params: params, useMetal: useMetal)
                 renderCallCount += 1
-                let reps = (d.kind == .loop) ? max(1, loopRepeatCount) : 1
-                for _ in 0..<reps {
-                    try await encoder.append(img, atFrame: outputIndex)
-                    outputIndex += 1
-                    appendedFrameCount += 1
-                }
+                try await encoder.append(img, atFrame: outputIndex)
+                outputIndex += 1
+                appendedFrameCount += 1
                 globalRendered += 1
                 let elapsed = ProcessInfo.processInfo.systemUptime - start
                 yield(ExportProgress(phase: .rendering, currentFrame: globalRendered, totalFrames: total,
@@ -493,23 +376,20 @@ public actor ExportCoordinator: ExportCoordinating {
             return
         }
 
-        // --- OFF path: the byte-for-byte pre-change loop (untouched) ---
+        // --- OFF path: the byte-for-byte per-frame loop (untouched) ---
+        // `outputIndex` is LOCAL to this chunk's encoder session (starts at 0).
         var outputIndex = 0
         for gf in range {
             if cancelled || Task.isCancelled { throw ExportError.cancelled }
             if paused { throw ExportError.paused }
             let d = plan.descriptor(for: gf)
-            // OFF path: the VERBATIM `renderImage` call. `reps` inline appends
-            // replay the identical image (no inter-copy flicker).
+            // OFF path: the VERBATIM `renderImage` call.
             let img = try await renderImage(descriptor: d, plan: plan, params: params,
                                             budget: budget, useMetal: useMetal)
             renderCallCount += 1
-            let reps = (d.kind == .loop) ? max(1, loopRepeatCount) : 1
-            for _ in 0..<reps {
-                try await encoder.append(img, atFrame: outputIndex)
-                outputIndex += 1
-                appendedFrameCount += 1
-            }
+            try await encoder.append(img, atFrame: outputIndex)
+            outputIndex += 1
+            appendedFrameCount += 1
             globalRendered += 1
             let elapsed = ProcessInfo.processInfo.systemUptime - start
             yield(ExportProgress(phase: .rendering, currentFrame: globalRendered, totalFrames: total,
@@ -518,8 +398,7 @@ public actor ExportCoordinator: ExportCoordinating {
     }
 
     /// The 3-branch render dispatch (off-main Metal / MainActor Metal / CPU),
-    /// factored out of `renderFrames` so the repeat=1 and repeat>1 paths share
-    /// one identical render codepath. Field names mirror the original inline
+    /// factored out of `renderFrames`. Field names mirror the original inline
     /// block verbatim (`d.blend`/`d.blendAt`/`d.temporal`/`d.sumfilt`; single-vs-
     /// temporal via `plan.temporalSamples > 1`). The SAME `budget` is forwarded.
     /// Extraction is operation-identical (same calls, same order) → byte-identical
@@ -905,13 +784,6 @@ public actor ExportCoordinator: ExportCoordinating {
     /// the timeline on segment edges, encode each chunk to a temp `.mov`, concat
     /// via passthrough, atomic-rename to `out`.
     private func runLongFormJob(_ job: ExportJob, yield: @Sendable (ExportProgress) -> Void) async throws {
-        // Loop-repeat memory guard (v0.5.0) — same gate as single export. Kept
-        // BEFORE `buildRenderContext` so the side-effect order is unchanged
-        // (memory guard → disk precheck → encoder). Width/height are read
-        // directly from settings (same values `buildRenderContext` computes).
-        try Self.checkLoopRepeatMemory(job: job,
-                                       width: max(1, job.settings.resolution.width),
-                                       height: max(1, job.settings.resolution.height))
         let ctx = try buildRenderContext(for: job)
         let plan = ctx.plan
         let params = ctx.params
@@ -958,7 +830,7 @@ public actor ExportCoordinator: ExportCoordinating {
             try encoder.start()
             do {
                 try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
-                                       range: frameStart..<frameEnd, loopRepeatCount: job.loopRepeatCount,
+                                       range: frameStart..<frameEnd,
                                        smoothingAlpha: job.settings.smoothingAlpha,
                                        into: encoder, yield: yield)
                 try await encoder.finish()
@@ -982,10 +854,7 @@ public actor ExportCoordinator: ExportCoordinating {
     /// Chunk the timeline at frame-count edges, encode each chunk via
     /// `renderFramesInterleaved`, write the checkpoint after each chunk, concat
     /// via `concatChunks`, atomic-rename to `out`, delete checkpoint + chunks on
-    /// success. SKIPS `checkLoopRepeatMemory` (the interleaved loop builds NO
-    /// per-segment cache → O(1) memory; `diskPrecheck` runs inside
-    /// `buildRenderContext` and is accurate — it scales by `loopRepeatCount`,
-    /// and the interleaved path emits loop frames `loopRepeatCount×` inline).
+    /// success. `diskPrecheck` runs inside `buildRenderContext` and is accurate.
     ///
     /// P10: `paused` is reset to `false` at the top (a second run after a pause
     /// must not re-throw). P3 (D18): the cancel AND pause paths remove ONLY the
@@ -1041,8 +910,7 @@ public actor ExportCoordinator: ExportCoordinating {
                     transitionFramesPerSegment: decoded.transitionFramesPerSegment,
                     segmentCount: decoded.segmentCount, selector: decoded.selector,
                     seed: decoded.seed, loopCycles: decoded.loopCycles,
-                    stagger: decoded.stagger, out: decoded.out,
-                    loopRepeatCount: decoded.loopRepeatCount)
+                    stagger: decoded.stagger, out: decoded.out)
                 decodedCP = decoded
             }
         }
@@ -1070,7 +938,7 @@ public actor ExportCoordinator: ExportCoordinating {
                 transitionFramesPerSegment: decoded.transitionFramesPerSegment,
                 segmentCount: decoded.segmentCount, selector: decoded.selector,
                 seed: decoded.seed, loopCycles: decoded.loopCycles, stagger: decoded.stagger,
-                out: decoded.out, loopRepeatCount: decoded.loopRepeatCount,
+                out: decoded.out,
                 checkpointIntervalFrames: decoded.checkpointIntervalFrames,
                 totalGlobalFrames: decoded.totalGlobalFrames,
                 completedChunkIndexes: completed, sources: decoded.sources)
@@ -1080,7 +948,7 @@ public actor ExportCoordinator: ExportCoordinating {
                 transitionFramesPerSegment: job.transitionFramesPerSegment,
                 segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
                 loopCycles: job.loopCycles, stagger: job.stagger, out: job.out,
-                loopRepeatCount: job.loopRepeatCount, checkpointIntervalFrames: interval,
+                checkpointIntervalFrames: interval,
                 totalGlobalFrames: total, completedChunkIndexes: [],
                 sources: Self.finalizeFreshSources(passed: passedSources, for: job))
         }
@@ -1154,7 +1022,6 @@ public actor ExportCoordinator: ExportCoordinating {
             do {
                 try await renderFramesInterleaved(plan: plan, params: params, budget: budget,
                                                   useMetal: useMetal, range: range,
-                                                  loopRepeatCount: job.loopRepeatCount,
                                                   smoothingAlpha: job.settings.smoothingAlpha,
                                                   into: encoder, globalRendered: &globalRendered,
                                                   total: total, yield: yield)
@@ -1176,7 +1043,6 @@ public actor ExportCoordinator: ExportCoordinating {
                 transitionFramesPerSegment: cp.transitionFramesPerSegment,
                 segmentCount: cp.segmentCount, selector: cp.selector, seed: cp.seed,
                 loopCycles: cp.loopCycles, stagger: cp.stagger, out: cp.out,
-                loopRepeatCount: cp.loopRepeatCount,
                 checkpointIntervalFrames: cp.checkpointIntervalFrames,
                 totalGlobalFrames: cp.totalGlobalFrames,
                 completedChunkIndexes: completed, sources: cp.sources)
@@ -1341,8 +1207,7 @@ public actor ExportCoordinator: ExportCoordinating {
                 : ExportJob(settings: job.settings, flames: renderable, framesPerSegment: job.framesPerSegment,
                             transitionFramesPerSegment: job.transitionFramesPerSegment,
                             segmentCount: job.segmentCount, selector: job.selector, seed: job.seed,
-                            loopCycles: job.loopCycles, stagger: job.stagger, out: job.out,
-                            loopRepeatCount: job.loopRepeatCount)
+                            loopCycles: job.loopCycles, stagger: job.stagger, out: job.out)
 
             let longForm = job.settings.segmentFrameBudget > 0
             // Same-actor synchronous call: `run`/`runLongForm` return the stream
@@ -1390,30 +1255,6 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
-    /// Loop-repeat memory guard (v0.5.0). When `loopRepeatCount > 1`, the
-    /// coordinator caches one loop segment's frames in memory
-    /// (`framesPerSegment × W × H × 4` bytes) before replaying them. This refuses
-    /// the job up front if that cache would exceed the safe threshold: ~50% of
-    /// physical RAM, floored at 2 GB (tiny machines) and ceiling ~12 GB (huge
-    /// machines, so the guard is machine-independent for a given cache size).
-    /// No-op when `loopRepeatCount == 1` (no cache is built). Checked BEFORE
-    /// `diskPrecheck` and encoder creation → no partial file on refusal.
-    private static func checkLoopRepeatMemory(job: ExportJob, width: Int, height: Int) throws {
-        guard job.loopRepeatCount > 1 else { return }
-        let frames = Int64(job.framesPerSegment)
-        let cacheBytes = frames * Int64(width) * Int64(height) * 4
-        let phys = Int64(ProcessInfo.processInfo.physicalMemory)
-        // floor 2 GB, ceiling ~12 GB; target 50% of physical RAM.
-        let floor: Int64 = 2_000_000_000
-        let ceiling: Int64 = 12_000_000_000
-        let threshold = min(max(phys / 2, floor), ceiling)
-        if cacheBytes > threshold {
-            throw ExportError.loopRepeatMemoryExceeded(
-                neededMB: Int(cacheBytes / 1_000_000),
-                availableMB: Int(threshold / 1_000_000))
-        }
-    }
-
     private static func diskPrecheck(job: ExportJob) throws {
         // Estimate per spec D13: ceil(bitrate * durationSeconds / 8 * 1.25) +
         // 25% headroom. bitrate is bits/s; /8 -> bytes/s; *duration -> total
@@ -1421,12 +1262,10 @@ public actor ExportCoordinator: ExportCoordinating {
         // auto-bitrate table mirrors VideoEncoder.autoBitrate at the chosen
         // codec/res/fps so the estimate tracks the encoder's actual target.
         // Total frames sums per-kind (loops use framesPerSegment, transitions
-        // use transitionFramesPerSegment) — matches `Schedule.totalFrames`,
-        // scaled by `loopRepeatCount` for loops (v0.5.0: a repeated loop emits
-        // `loopRepeatCount`× its frames to disk).
+        // use transitionFramesPerSegment) — matches `Schedule.totalFrames`.
         let loops = (job.segmentCount + 1) / 2
         let trans = job.segmentCount / 2
-        let totalFrames = loops * job.framesPerSegment * job.loopRepeatCount
+        let totalFrames = loops * job.framesPerSegment
             + trans * job.transitionFramesPerSegment
         let fps = max(1, job.settings.fps)
         let durationSeconds = Double(totalFrames) / Double(fps)
