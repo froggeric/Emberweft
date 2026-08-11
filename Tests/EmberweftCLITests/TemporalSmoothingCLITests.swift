@@ -13,7 +13,7 @@ import FlameKit
 ///    resume). Pinned via the stderr + exit-code capture pattern.
 ///  - **quality⇒α threading:** `resolveExportSettings(...)` gains a
 ///    `temporalSmoothing:` param and threads it into `ExportSettings.resolve(...)`,
-///    so `--quality 8` + `.auto` ⇒ α=0.20 (the continuous-ramp anchor), and `.off`
+///    so `--quality 8` + `.auto` ⇒ α=0.20 (flat α for any .spp tier), and `.off`
 ///    ⇒ α=1.0 (OFF / byte-identical to the unsmoothed path).
 final class TemporalSmoothingCLITests: XCTestCase {
     private func tmpDir() -> URL {
@@ -71,7 +71,7 @@ final class TemporalSmoothingCLITests: XCTestCase {
     // MARK: - AC: `resolveExportSettings` threads temporalSmoothing into α
 
     /// `--quality 8` (default-on `.auto`) ⇒ resolved `smoothingAlpha == 0.20`
-    /// (the continuous-ramp anchor at spp=8). Pins that the flag's `.auto` value
+    /// (flat α for any .spp tier). Pins that the flag's `.auto` value
     /// is threaded through `resolveExportSettings` → `ExportSettings.resolve`.
     func testResolveExportSettingsAutoQuality8Alpha020() {
         let f = Flame()
@@ -81,7 +81,7 @@ final class TemporalSmoothingCLITests: XCTestCase {
             segmentFrames: 0, renderable: [f], fallbackFlame: f, backend: "cpu",
             temporalSmoothing: .auto)
         XCTAssertEqual(s.smoothingAlpha, 0.20, accuracy: 1e-9,
-                       "quality 8 + .auto ⇒ ramp anchor α=0.20")
+                       "quality 8 + .auto ⇒ flat α=0.20")
         XCTAssertEqual(s.temporalSmoothing, .auto)
     }
 

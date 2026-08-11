@@ -12,16 +12,16 @@ final class ExportQualityChoiceTests: XCTestCase {
         XCTAssertEqual(ExportQualityChoice.genomeDefault.exportQuality, .genome)
     }
 
-    func testMappingLowIsSpp2() {
-        XCTAssertEqual(ExportQualityChoice.low.exportQuality, .spp(2))
+    func testMappingLowIsSpp8() {
+        XCTAssertEqual(ExportQualityChoice.low.exportQuality, .spp(8))
     }
 
-    func testMappingMediumIsSpp8() {
-        XCTAssertEqual(ExportQualityChoice.medium.exportQuality, .spp(8))
+    func testMappingMediumIsSpp30() {
+        XCTAssertEqual(ExportQualityChoice.medium.exportQuality, .spp(30))
     }
 
-    func testMappingHighIsSpp30() {
-        XCTAssertEqual(ExportQualityChoice.high.exportQuality, .spp(30))
+    func testMappingHighIsSpp100() {
+        XCTAssertEqual(ExportQualityChoice.high.exportQuality, .spp(100))
     }
 
     func testAllChoicesPinOversampleToOne() {
@@ -39,13 +39,15 @@ final class ExportQualityChoiceTests: XCTestCase {
     }
 
     func testSppChoicesResolveExactSamplesPerPixel() {
-        // The named tiers' spp must match AppPreferences.QualityPreset.samplesPerPixel
-        // (low=2, medium=8, high=30) so the sheet's Quality picker and the dormant
-        // prefs field agree.
+        // The named tiers' spp are EXPORT-SPECIFIC (RETUNED 2026-08-11:
+        // low=8, medium=30, high=100; was 2/8/30), decoupled from the preview-side
+        // AppPreferences.QualityPreset.samplesPerPixel (still 2/8/30). The
+        // empirical sweep found clean output needs effective spp ~330+ (Standard),
+        // which temporal smoothing supplies as free supersampling.
         let baseFlame = Flame()
-        XCTAssertEqual(ExportQualityChoice.low.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 2)
-        XCTAssertEqual(ExportQualityChoice.medium.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 8)
-        XCTAssertEqual(ExportQualityChoice.high.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 30)
+        XCTAssertEqual(ExportQualityChoice.low.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 8)
+        XCTAssertEqual(ExportQualityChoice.medium.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 30)
+        XCTAssertEqual(ExportQualityChoice.high.exportQuality.resolvedSamplesPerPixel(for: baseFlame).spp, 100)
     }
 
     func testGenomeDefaultResolvesFromBaseFlame() {

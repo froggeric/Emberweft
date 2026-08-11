@@ -10,7 +10,7 @@ import FlameRenderer
 /// VM (EmberweftUI): the sheet binds the field two-way; `resolveSettings` is the
 /// single funnel that reads it and passes it into `ExportSettings.resolve`.
 ///
-/// `.medium` (spp 8) + `.auto` ⇒ α = 0.20 (the ramp anchor at spp=8);
+/// `.medium` (spp 30) + `.auto` ⇒ α = 0.20 (flat α for any .spp tier);
 /// `.off` ⇒ α = 1.0 (forced OFF, byte-identical to the unsmoothed path).
 @MainActor
 final class ExportManagerTemporalSmoothingTests: XCTestCase {
@@ -33,7 +33,7 @@ final class ExportManagerTemporalSmoothingTests: XCTestCase {
         em.temporalSmoothing = .auto
         let s = em.resolveSettings(baseFlame: renderableFlame(), backend: .cpu)
         XCTAssertEqual(s.temporalSmoothing, .auto)
-        // .medium ⇒ .spp(8); the ramp anchor at spp=8 is α = 0.20.
+        // .medium ⇒ .spp(30); flat α = 0.20 for any .spp tier.
         XCTAssertEqual(s.smoothingAlpha, 0.20, accuracy: 1e-9)
     }
 

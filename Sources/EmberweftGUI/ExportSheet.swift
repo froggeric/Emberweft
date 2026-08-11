@@ -135,7 +135,7 @@ struct ExportSheet: View {
                         .disabled(em.qualityChoice == .genomeDefault)
                         .help(smoothingHelp)
                     if em.qualityChoice != .genomeDefault {
-                        Text("Resolved \(em.qualityChoice.smoothingAlphaLabel)")
+                        Text("Resolved \(em.qualityChoice.smoothingLabel)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

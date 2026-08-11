@@ -182,19 +182,21 @@ final class TemporalBoxWindowTests: XCTestCase {
     // MARK: - halfWidth(for:) mapping
 
     func testHalfWidthMapping() {
-        // off / genome → 0 (OFF). ON tiers derive h = round(1/α) from the ramp.
+        // off / genome → 0 (OFF). ON (.spp) tiers use the UNIFORM centeredHalfWidth
+        // (= 5), decoupled from α/spp (RETUNED 2026-08-11; was round(1/α) from a
+        // ramp, which gave 10/5/3 for spp 2/8/30 and clamped to 0 at spp ≥ 64).
         XCTAssertEqual(TemporalSmoothing.off.halfWidth(for: .genome), 0)
         XCTAssertEqual(TemporalSmoothing.off.halfWidth(for: .spp(2)), 0)
         XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .genome), 0)
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(2)), 10)    // α=0.10
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(8)), 5)     // α=0.20
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(30)), 3)    // α=0.35 → round(2.857)=3
-        // α ≥ 1.0 is OFF (ramp clamps to 1.0 at spp≥64) ⇒ h = 0 (NOT round(1/1)=1).
-        // The AC table's "spp(64)→1" is inconsistent with "off→0" / "spp(128)→0"
-        // (all share α=1.0); the OFF clamp is authoritative — see T1′ report.
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(64)), 0)
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(128)), 0)
-        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(200)), 0)
+        XCTAssertEqual(TemporalSmoothing.centeredHalfWidth, 5)
+        // Every .spp tier → uniform h = centeredHalfWidth = 5 (no spp≥64 OFF clamp).
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(2)), 5)
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(8)), 5)
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(30)), 5)
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(64)), 5)
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(100)), 5)   // new High tier
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(128)), 5)
+        XCTAssertEqual(TemporalSmoothing.auto.halfWidth(for: .spp(200)), 5)
     }
 
     // MARK: - Empty / degenerate

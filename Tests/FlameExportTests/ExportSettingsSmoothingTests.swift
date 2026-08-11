@@ -28,8 +28,8 @@ final class ExportSettingsSmoothingTests: XCTestCase {
         XCTAssertEqual(s.smoothingAlpha, 1.0, accuracy: 1e-9)
     }
 
-    /// R3: `resolve()` computes `smoothingAlpha` for arbitrary spp via the ramp.
-    /// spp 8 is a ramp anchor ⇒ α == 0.20 exactly.
+    /// R3: `resolve()` computes `smoothingAlpha` for arbitrary spp (flat α=0.2).
+    /// spp 8 ⇒ α == 0.20 exactly.
     func testResolveComputesAlphaForSpp() {
         let f = Flame()   // genome default temporalSamples == 1
         let s = ExportSettings.resolve(
@@ -57,7 +57,7 @@ final class ExportSettingsSmoothingTests: XCTestCase {
     }
 
     /// Default param (S12): existing call sites omit `temporalSmoothing` ⇒ `.auto`.
-    /// spp 30 is a ramp anchor ⇒ α == 0.35 exactly.
+    /// spp 30 ⇒ flat α == 0.20 (RETUNED 2026-08-11; was the 0.35 ramp anchor).
     func testResolveDefaultTemporalSmoothingIsAuto() {
         let f = Flame()
         let s = ExportSettings.resolve(
@@ -65,7 +65,7 @@ final class ExportSettingsSmoothingTests: XCTestCase {
             fps: 30, bitrate: .auto, resolution: .p1080, segmentFrameBudget: 0,
             baseFlame: f, backend: .cpu)   // no temporalSmoothing arg
         XCTAssertEqual(s.temporalSmoothing, .auto)
-        XCTAssertEqual(s.smoothingAlpha, 0.35, accuracy: 1e-9)   // spp 30 ⇒ ramp anchor
+        XCTAssertEqual(s.smoothingAlpha, 0.20, accuracy: 1e-9)   // spp 30 ⇒ flat α
     }
 
     /// Round-trip: encode → decode preserves both fields (S6: don't trust
