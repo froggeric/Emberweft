@@ -116,4 +116,19 @@ final class ExportSettingsResolveTests: XCTestCase {
         XCTAssertEqual(captured, Data(),
                        "resolve must be silent (no stderr); got: \(String(data: captured, encoding: .utf8) ?? "<non-utf8>")")
     }
+
+    /// v0.5.4: a NAMED tier (.spp) + ts=1 is LITERAL single-pass. The "use genome
+    /// default" fallback is now gated on `quality == .genome`, so a high-ts genome
+    /// (here 200) does NOT inflate ts for named tiers (was +136% render time at
+    /// spp 8 for within-frame motion blur that's invisible on slow loops). The
+    /// genome-default + ts=1 path still resolves to the genome's ts (above tests).
+    func testNamedTierTemporalSamplesOneIsLiteralSinglePass() {
+        let flame200 = Flame(quality: Quality(temporalSamples: 200))
+        let r = ExportSettings.resolve(
+            quality: .spp(30), temporalSamples: 1, codec: .h264, container: .mp4,
+            fps: 30, bitrate: .auto, resolution: .p1080, segmentFrameBudget: 0,
+            baseFlame: flame200, backend: .metal)
+        XCTAssertEqual(r.temporalSamples, 1,
+                       "named tier (.spp) + ts=1 must be literal single-pass (1), NOT the genome's 200")
+    }
 }

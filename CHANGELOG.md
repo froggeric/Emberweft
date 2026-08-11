@@ -7,6 +7,31 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [v0.5.4] — temporal-samples default fix (faster low-quality exports)
+
+Fixes a temporal-samples default that made the named quality tiers slower than
+necessary. Draft/Standard/High now default to single-pass rendering instead of
+inheriting the genome's temporal-samples (up to 1000, Metal-capped 64), which was
+wasteful at low samples-per-pixel.
+
+### Changed
+- **Named tiers default to single-pass temporal samples.** The "use genome default"
+  fallback for temporal-samples=1 now applies only to genome-default quality (the
+  mastering path, byte-identical to `animate`). For the named tiers (`.spp`),
+  temporal-samples=1 is literal single-pass. This eliminates the dispatch overhead
+  of ~64 sub-passes at low spp (measured +136% at spp 8, +35% at spp 30) for
+  within-frame motion blur that's invisible on slow ambient loops. Users can still
+  raise temporal-samples explicitly for motion blur.
+- The export sheet's temporal-samples label now reflects this ("single-pass" for
+  named tiers at ts=1, "genome default" for genome-default).
+
+### Notes
+- Genome-default quality is unchanged (temporal-samples resolves to the genome's
+  value; byte-identical to `animate`). animate/export byte-identity and Metal/CPU
+  parity are preserved.
+- Temporal samples is motion blur, not grain; it doesn't affect the noise level
+  (grain scales with samples-per-pixel, not temporal-samples).
+
 ## [v0.5.3] — export quality-tier retune (cleaner low/mid/high)
 
 Retunes the export quality tiers and makes the temporal-smoothing window uniform,

@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.5.3: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, and loop render-once-repeat, plus export pause/resume + crash recovery, and temporal smoothing for low-spp exports (retuned quality tiers v0.5.3) — are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.5.4: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, and loop render-once-repeat, plus export pause/resume + crash recovery, and temporal smoothing for low-spp exports (retuned quality tiers v0.5.3) — are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -63,6 +63,7 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | **v0.3.1** | ✅ Done | **M4 polish:** configurable preview presets + live FPS readout (both playback windows); `testFiniteDeterministicRenders` crash fix (`intTrunc` guard) |
 | **v0.3.2** | ✅ Done | **M4 polish:** distinct preview/export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target |
 | **v0.4.0** | ✅ Done | **M6:** `emberweft export` to MP4/MOV (H.264 + HEVC), long-form concat, batch; `FramePlan` extraction; `ThreadSeedBudget` acceleration |
+| **v0.5.4** | ✅ Done | **Temporal-samples default fix:** named tiers (Draft/Standard/High) default to single-pass (was the genome's ~64) — eliminates +136% render overhead at spp 8 / +35% at spp 30 for invisible motion blur; genome-default unchanged |
 | **v0.5.3** | ✅ Done | **Export quality-tier retune:** Draft/Standard/High → spp 8/30/100 (was 2/8/30); uniform smoothing window h=5 (free supersampling) — Standard ≈ genome-default clean at ~33× the speed |
 | **v0.5.2** | ✅ Done | **M6.1 slice 2 temporal smoothing:** centered box window over per-frame histograms (smooth from frame 1, no lag), Metal fused-chaos + atomicBuf readback, per-chunk window + resume; early-pause checkpoint fix |
 | **v0.5.1** | ✅ Done | **M6.1 export pause/resume:** Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard` |

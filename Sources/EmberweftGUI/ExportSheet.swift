@@ -218,7 +218,15 @@ struct ExportSheet: View {
 
     private var temporalLabel: String {
         let ts = model.exportManager.temporalSamples
-        return ts == 1 ? "Temporal samples (genome default)" : "Temporal samples \(ts)"
+        if ts == 1 {
+            // v0.5.4: ts=1 is "genome default" ONLY for genome-default quality;
+            // for named tiers it's literal single-pass (sharp, fastest — the
+            // genome-default ts was wasteful at low spp for invisible motion blur).
+            return model.exportManager.qualityChoice == .genomeDefault
+                ? "Temporal samples (genome default)"
+                : "Temporal samples (single-pass)"
+        }
+        return "Temporal samples \(ts)"
     }
 
     /// M6.1 slice 2 / Task 10: bridges the `TemporalSmoothing` enum (`.auto`/
