@@ -152,12 +152,15 @@ public extension ExportSettings {
         // actual toggle is T10 (GUI) / T11 (CLI).
         settings.temporalSmoothing = temporalSmoothing
         settings.smoothingAlpha = temporalSmoothing.alpha(for: quality)
-        // Motion-blur default: mirror AnimateCommand exactly. When the requested
-        // value is the "use genome default" sentinel (1) and the genome carries a
-        // temporalSamples > 1, use the genome's value; then cap on Metal to bound
-        // dispatch overhead (ExportCommand.swift:374-382).
+        // Motion-blur default: the "use genome default" sentinel (ts=1) applies
+        // ONLY to genome-default quality (the mastering path — mirrors `animate`,
+        // byte-identical). For the NAMED tiers (.spp), ts=1 is LITERAL single-pass
+        // (v0.5.4: the genome's ~1000→Metal-capped-64 ts was wasteful at low spp —
+        // +136% at spp 8, +35% at spp 30 — for within-frame motion blur that's
+        // invisible on slow ambient loops). The user can still raise ts explicitly
+        // for motion blur. Genome-default + ts=1 still resolves to the genome's ts.
         var ts = max(1, requestedTS)
-        if ts == 1, baseFlame.quality.temporalSamples > 1 {
+        if quality == .genome, ts == 1, baseFlame.quality.temporalSamples > 1 {
             ts = baseFlame.quality.temporalSamples
         }
         if backend == .metal, ts > Self.metalTemporalCap {
