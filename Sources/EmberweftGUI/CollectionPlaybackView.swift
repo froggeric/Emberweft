@@ -31,7 +31,6 @@ struct CollectionPlaybackWindow: View {
     @State private var collectionDeleted = false
     @State private var collectionName = ""
     @State private var showPreviewQuality = false
-    @State private var showExportSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,7 +54,9 @@ struct CollectionPlaybackWindow: View {
         .overlay(alignment: .top) {
             // Non-blocking export-progress banner (spec §4.7). Same mount as the
             // single-genome PlaybackWindow: the main LibraryView is NOT always
-            // open, so each playback window carries its own banner overlay.
+            // open, so each open window carries the banner to surface in-flight
+            // export progress. Exports are now started from the library
+            // SelectionBar, not the playback windows (Task 16 decouple).
             ExportProgressSurface()
         }
         .task(id: collectionId) { await load() }
@@ -134,21 +135,10 @@ struct CollectionPlaybackWindow: View {
 
             Text(collectionName).font(.headline).lineLimit(1)
             Spacer(minLength: 0)
-            Button {
-                showExportSheet = true
-            } label: {
-                Label("Export…", systemImage: "square.and.arrow.up")
-            }
-            .buttonStyle(.borderless)
-            .disabled(vm.resolvedFlames.isEmpty)
-            .help("Export this collection's sequence as a video")
             Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)
-        .sheet(isPresented: $showExportSheet) {
-            ExportSheet(source: .sequence(flames: vm.resolvedFlames, name: collectionName, fileURLs: nil))
-        }
     }
 
     /// "genome i / n" readout — 1-indexed current sheep over the resolved count.
