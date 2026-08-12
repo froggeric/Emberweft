@@ -180,6 +180,27 @@ public actor FlockCatalog {
             addedAt: cur.int(6))
     }
 
+    /// Read-only lookup by `source_sha` (used by `IdMinter` to dedupe minted
+    /// ids, §7). If multiple rows share a sha, the lexicographically smallest
+    /// `(gen,id)` wins — `ORDER BY gen,id LIMIT 1` is a deterministic tiebreak
+    /// (rule #2: never a hash-ordered read). Returns nil if no row matches
+    /// (including an empty `sha`, which no ES row carries).
+    public func sheepBySourceSha(_ sha: String) async throws -> Sheep? {
+        let cur = try conn.query("""
+            SELECT gen,id,origin,source_ref,source_sha,display_name,added_at
+            FROM sheep WHERE source_sha=?
+            ORDER BY gen, id LIMIT 1
+            """, [sha])
+        guard cur.next() else { return nil }
+        return Sheep(
+            gen: cur.text(0), id: cur.text(1),
+            origin: Sheep.Origin(rawValue: cur.text(2)) ?? .user,
+            sourceRef: cur.isNull(3) ? nil : cur.text(3),
+            sourceSha: cur.isNull(4) ? nil : cur.text(4),
+            displayName: cur.isNull(5) ? nil : cur.text(5),
+            addedAt: cur.int(6))
+    }
+
     // MARK: - Minted-id counter (reserved flock 900000, §7)
 
     /// Mint the next id; persists the counter across close/reopen. Zero-padded
