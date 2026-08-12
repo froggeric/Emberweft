@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
 
-**Status:** pre-alpha · v0.5.7: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, plus export pause/resume + crash recovery, and temporal smoothing (centered box window, retuned quality tiers, tier-aware temporal samples; loop-repeat removed for smooth full-speed motion; v0.5.2–v0.5.7) — are working · source-available (PolyForm Noncommercial)
+**Status:** pre-alpha · v0.6.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio — a GUI export sheet (single/sequence/batch) with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, plus export pause/resume + crash recovery, and temporal smoothing (centered box window, retuned quality tiers, tier-aware temporal samples; loop-repeat removed for smooth full-speed motion; v0.5.2–v0.5.7), plus a pre-rendered flock archive with Generate (pre-bake) and Stitch (no-reencode concat) paths and the `emberweft flock` CLI (v0.6.0) — are working · source-available (PolyForm Noncommercial)
 
 <!-- hero: a striking flame frame -->
 
@@ -18,7 +18,7 @@ It reads the standard `.flam3` genome format while remaining entirely independen
 
 ## Features
 
-**Works now (M0–M4 + M6 + M6.1 complete, v0.5.2):**
+**Works now (M0–M4 + M6 + M6.1 + M6.5 complete, v0.6.0):**
 - `emberweft` CLI — `render`, `validate`, `info`, `animate`, `curate` — parses standard `.flam3` genomes into stills and animation sequences
 - CPU reference renderer, a faithful port of `flam3` (near-byte-exact parity on synthetic goldens; **49–52 dB on real ES genomes**)
 - Metal compute renderer — a faithful twin of the CPU path, **12–18× faster** at 1080p
@@ -74,6 +74,7 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | M4 | ✅ Done | Native SwiftUI generative-flame studio |
 | M5 | Current | macOS screensaver bundle |
 | M6 | ✅ Done | Export pipeline + codecs (engine + CLI v0.4.0; GUI export studio v0.5.0; pause/resume v0.5.1; temporal smoothing v0.5.2) |
+| **v0.6.0** | ✅ Done | **M6.5 flock archive + stitching:** pre-rendered loop/edge archive (HEVC `.mov`), Generate (Path A) + Stitch (Path B, no-reencode concat), `flock.sqlite` catalog, `emberweft flock` CLI, decoupled one-shot export |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
 | M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
 
@@ -166,6 +167,29 @@ swift run -c release emberweft export --jobs manifest.json --out /tmp/batch/ --f
 - `--temporal-samples N` for motion blur (defaults to the genome's value; essential for seamless transitions).
 - `--segment-frames N` enables long-form (chunked render + passthrough concat, no re-encode).
 - `--jobs manifest.json` runs a batch serially (continue-on-failure by default, or `--fail-fast`); each `out` is path-sanitized under `--out`.
+
+## The flock archive (M6.5)
+
+A one-shot long-form export re-renders the same costly material every time (a 5-genome sequence at genome-default quality took over 3 hours). M6.5 fixes that the way Electric Sheep did: pre-render **loop** and **edge** videos into a local archive, then compose long videos from those saved files. The archive lives in a configurable directory (`AppPreferences.flockDir`, default `<app-support>/Flock/`), organized into shards by resolution, frame rate, and pace. The archive codec is **HEVC (H.265) Main10** in `.mov` (about 40% smaller than H.264, 10-bit, hardware encode/decode).
+
+There are two paths. **Generate** (`emberweft flock generate`) pre-bakes loops and edges into a shard. **Stitch** (`emberweft flock stitch`) composes a long video from the archive: per segment, a hit reuses the cached file and a miss renders into the archive first, then the collected files are concatenated with a **no-reencode remux** (`AVMutableComposition` passthrough). So once a segment is rendered it is reused forever, and a fully cached sequence stitches in **seconds** instead of hours. The archive self-improves: a higher-quality render overwrites a lower one at the same path.
+
+```bash
+# Pre-bake a collection's edges into the default shard
+swift run -c release emberweft flock generate --shard 1920x1080_30fps \
+  --from my_collection --scope edges --quality standard
+
+# Stitch a long video from the archive (cached segments remux; misses self-build)
+swift run -c release emberweft flock stitch --shard 1920x1080_30fps \
+  --sequence my_collection --out long.mov
+
+# Browse, rebuild the catalog from files + tags, or export the ES list-XML
+emberweft flock browse
+emberweft flock rebuild
+emberweft flock export-list --shard 1920x1080_30fps
+```
+
+The `flock.sqlite` catalog is the source of truth and is fully rebuildable from the `mpeg/` filenames plus the tags embedded in each video. Naming is ES-inspired but not byte-identical: `<a_gen>=<a_id>=<b_gen>=<b_id>.<ext>`, where a loop is the self-edge (`a==b`), there is no `edge_id`, and cross-generation edges are first-class. ES-sourced sheep keep their real `(gen,id)`; user and curated genomes get stable ids in a reserved flock `900000`. Engine parity is unchanged (no renderer math touched) and animate-to-export byte-identity is preserved.
 
 ## Validation
 
@@ -269,4 +293,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 + M6 + M6.1 are complete (v0.5.2):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), and the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, temporal smoothing for low-spp exports) all work today. **M6.1** (export pause/resume v0.5.1 + temporal smoothing v0.5.2) is done; **M5** (the macOS screensaver bundle) is next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 + M6 + M6.1 + M6.5 are complete (v0.6.0):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, temporal smoothing for low-spp exports), and the flock archive + stitching (pre-rendered loop/edge archive, Generate + Stitch with no-reencode concat, `emberweft flock` CLI) all work today. **M5** (the macOS screensaver bundle, which will consume the archive) is next: see the [roadmap](docs/engineering/roadmap.md).

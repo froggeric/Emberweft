@@ -7,6 +7,91 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [Unreleased] — M6.5 flock archive + stitching
+
+A local "flock archive" of pre-rendered loop/edge videos plus two paths to work
+with it: **Generate** (Path A) pre-bakes loops and edges into the archive, and
+**Stitch** (Path B) composes a long video from the archive, rendering any missing
+segment into the archive first and then concatenating with a no-reencode remux.
+The win is that once a segment is rendered it is reused forever: a fully cached
+sequence stitches in seconds instead of the hours a one-shot export took. Engine
+parity is unchanged (no renderer math touched), and the animate-to-export
+byte-identity pins stay green.
+
+### Added
+- **The flock archive (new `FlameFlock` module).** A user-configurable directory
+  (default `<app-support>/Flock/`, set via `AppPreferences.flockDir`) holding
+  pre-rendered loop and edge videos, organized into shards by resolution, frame
+  rate, and pace. Naming is ES-inspired but not byte-identical:
+  `<a_gen>=<a_id>=<b_gen>=<b_id>.<ext>`, where a loop is the self-edge (`a==b`),
+  there is no `edge_id` (the ordered pair is the key), and cross-generation edges
+  are first-class. ES-sourced sheep keep their real `(gen,id)`; user and curated
+  genomes get stable ids minted in a reserved flock `900000`, deduped on the
+  source SHA-256.
+- **`flock.sqlite` catalog** (`FlockCatalog`, an actor with one serialized writer,
+  WAL, and `busy_timeout` so there is no `SQLITE_BUSY`). It is the source of truth
+  and is fully rebuildable from the `mpeg/` filenames plus the tags embedded in
+  each video. Stitch does one batched `IN(...)` catalog lookup up front (no N+1),
+  so the progress banner can show the hit-vs-will-generate count immediately. A
+  corrupt catalog is backed up to `.bak` and rebuilt.
+- **Archive codec: HEVC (H.265) Main10, `.mov`.** Decided empirically: about 40%
+  smaller than H.264 at equal visual quality, 10-bit (an HDR on-ramp), with
+  Apple-Silicon hardware encode/decode. Lossless passthrough concat
+  (`AVMutableComposition` + passthrough) was verified decode-clean on
+  independently encoded HEVC segments. H.264 remains a one-pass deliverable
+  transcode; ProRes is out at archive scale.
+- **Each segment is a fresh independent encode** (IDR keyframe at frame 0). Segments
+  must NOT be sliced from a longer render with `ffmpeg -c copy`: slicing breaks
+  HEVC picture-order-count / reference-picture-set continuity at the cut (decoder
+  errors `Duplicate POC`, `Could not find ref with POC`). Independent per-segment
+  encodes concatenate cleanly.
+- **Path A, Generate** (`emberweft flock generate`): pre-bake loops and/or edges
+  into a shard. Default scope is edges (loops are generated on demand at stitch
+  time). Per unit, by `(shard, pair)`: a hit at equal-or-higher quality skips,
+  otherwise it renders one segment through the existing deterministic render
+  primitives, writes the archive-named file plus a thumbnail and tags, then upserts
+  the catalog row (never a row without its file). A higher `quality_rank`
+  overwrites a lower one at the same path, so the archive self-improves.
+- **Path B, Stitch** (`emberweft flock stitch`): compose a long video from the
+  archive. Per segment, a hit reuses the cached file and a miss renders into the
+  archive first, then the collected files are passthrough-concatenated into the
+  output with no re-encode. A codec-mismatched shard (a leftover from a codec
+  change) is refused and points at `flock rebuild`; a cross-shard stitch is refused
+  (a uniform format is required).
+- **`emberweft flock` CLI:** `generate | stitch | browse | rebuild | export-list`.
+  `flock export-list` writes the ES `<list>` XML interchange (recovering real ES
+  `edge_id`s for ES-sourced pairs from `edges.sqlite`, taking the lowest on the
+  duplicate pairs; synthesizing ids for non-ES and cross-gen edges).
+- **Flock sidebar area in the GUI** (Generate / Stitch / Browse tabs) and a
+  Settings, Flock panel (archive location, default shard and quality, a size
+  readout, and a "Rebuild catalog" action). Browse shows per-shard counts, size,
+  and thumbnails, paged (no mass parse).
+- **Decoupled one-shot export from the playback windows.** The single-genome and
+  collection playback windows are now play-only. One-shot Export is a library-
+  selection action (the proven `SelectionBar` batch shape extended to single and
+  sequence).
+- **Per-artifact video metadata tags** (`emberweft.spp`, `.ts`, `.seed`,
+  `.quality_rank`, `.source_sha`, etc., plus title/artist/software) embedded via
+  `VideoEncoder`, so `flock rebuild` can regenerate the catalog from files alone.
+
+### Notes
+- **Parity gate untouched.** No edit under `Sources/FlameKit|FlameReference|
+  FlameRenderer`. The archive builds per-unit `FramePlan`s and reuses the existing
+  render primitives through two small additive `public` surfaces on
+  `ExportCoordinator` (`renderSegmentRange`, `concat`) and a metadata parameter on
+  `VideoEncoder`, all default-byte-identical.
+- **animate-to-export byte-identity is preserved.** The archive is a new path; the
+  existing one-shot export (`ExportSheet` to `runResumable`) still pins to
+  `animate`. The archive's smoothing-OFF path is the same `renderImage` primitive.
+- **Determinism is frame/seed-level, not `.mov`-byte-level.** Same
+  `(shard, key, RenderSpec)` produces the same SHA-256-derived seed, the same
+  `RenderParams`, and therefore the same frames. The `.mov` container is not
+  byte-stable run-to-run (an intentional `emberweft.rendered` timestamp tag plus
+  VideoToolbox encode nondeterminism). Determinism pins assert the deterministic
+  input chain, not the container shasum.
+- The M5 screensaver (still next) will consume this archive: play pre-rendered
+  loops and edges instead of live-rendering.
+
 ## [v0.5.7] — remove loop-repeat (fix jerky half-speed motion)
 
 Removes the loop render-once-repeat feature (v0.5.0) entirely. The feature
