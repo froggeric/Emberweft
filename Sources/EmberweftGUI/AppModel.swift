@@ -34,10 +34,17 @@ final class AppModel {
     /// retain cycle).
     let flockModel = FlockModel()
 
-    /// The Flock archive root (T17 default). T18 makes this a configurable
-    /// `AppPreferences.flockDir` and rewires `flockRoot` to read it; for now it
-    /// is `<app-support>/Emberweft/Flock`. Created lazily by `FlockCatalog.init`.
-    let flockRoot: URL
+    /// The Flock archive root (T18): honors a configured
+    /// `AppPreferences.flockDir`, falling back to `<app-support>/Emberweft/Flock`.
+    /// Computed so it always reflects the current pref (FlockView + the Settings
+    /// Rebuild button read it). The long-lived `flockCatalog` below is built once
+    /// at launch from the launch-time resolved root; a `flockDir` change takes
+    /// effect for the catalog on the next launch (Rebuild repopulates the
+    /// configured dir's `flock.sqlite` in the meantime). Created lazily by
+    /// `FlockCatalog.init`.
+    var flockRoot: URL {
+        prefs.flockDir ?? AppPreferences.defaultDirectory.appendingPathComponent("Flock", isDirectory: true)
+    }
 
     /// Long-lived catalog over `flock.sqlite` — ONE actor, shared by the
     /// generate/stitch coordinators (via the factory closures) and by Browse
@@ -138,16 +145,18 @@ final class AppModel {
         let (cStore, _) = CollectionsStore.loadResilient()
         self.collectionsStore = cStore
 
-        // M6.5 T17: open the long-lived Flock catalog. These two `let`s have no
-        // inline default, so they MUST be assigned before any later `self`
-        // access in this init. `flockRoot` is `<app-support>/Emberweft/Flock`
-        // (T18 makes it a configurable `AppPreferences.flockDir`). `catalog` is
-        // captured by value (an actor reference) in the factory closures below,
-        // NOT `self` → no AppModel → flockModel → closure → AppModel retain
-        // cycle. `nil` only on a genuine open-disk error.
-        let flockRoot = AppPreferences.defaultDirectory.appendingPathComponent("Flock", isDirectory: true)
+        // M6.5 T17/T18: open the long-lived Flock catalog at the launch-time
+        // resolved flock root. `flockRoot` (local) honors a configured
+        // `AppPreferences.flockDir`, falling back to `<app-support>/Emberweft/Flock`;
+        // it is resolved ONCE here to build the catalog + the factory error
+        // messages (the factories capture this local + the actor by value — NOT
+        // `self` → no AppModel → flockModel → closure → AppModel retain cycle).
+        // `self.flockRoot` is a computed property that re-reads `prefs.flockDir`,
+        // so FlockView + the Settings Rebuild button always see the current pref;
+        // the catalog itself is rebuilt on the next launch when `flockDir` changes.
+        let flockRoot = loaded.flockDir
+            ?? AppPreferences.defaultDirectory.appendingPathComponent("Flock", isDirectory: true)
         let catalog = try? FlockCatalog(root: flockRoot)
-        self.flockRoot = flockRoot
         self.flockCatalog = catalog
 
         // M6.1 Task 7 / spec §5.5: re-offer Resume/Discard after a quit/crash.

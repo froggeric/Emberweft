@@ -73,6 +73,13 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// AppModel seeds the VM from at launch.
     public var rememberedCheckpointURL: URL?
 
+    /// M6.5 T18: the Flock archive root folder (`<…>/Flock/` holding the
+    /// shard `.mov`s + `flock.sqlite`). When nil the default
+    /// `<app-support>/Emberweft/Flock` is resolved at use (see `AppModel.flockRoot`).
+    /// Additive (decodes as nil for older prefs files without the key — mirrors
+    /// `rememberedCheckpointURL`).
+    public var flockDir: URL?
+
     public init(
         qualityPreset: QualityPreset = .medium,
         targetFPS: Int = 60,
@@ -92,7 +99,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         previewPreset: PreviewPreset = .draft,
         seed: UInt64 = 1,
         density: Density = .medium,
-        rememberedCheckpointURL: URL? = nil
+        rememberedCheckpointURL: URL? = nil,
+        flockDir: URL? = nil
     ) {
         self.qualityPreset = qualityPreset
         self.targetFPS = targetFPS
@@ -113,6 +121,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.seed = seed
         self.density = density
         self.rememberedCheckpointURL = rememberedCheckpointURL
+        self.flockDir = flockDir
     }
 
     // MARK: - Codable (additive: `density` defaults when absent; legacy
@@ -129,6 +138,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         case previewSamplesPerPixel, previewWidth, previewHeight
         case previewOversample, previewPreset, seed, density
         case rememberedCheckpointURL
+        case flockDir
     }
 
     /// Legacy key kept ONLY for one-way migration from the pre-multi-folder
@@ -173,6 +183,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.density = try c.decodeIfPresent(AppPreferences.Density.self, forKey: .density) ?? .medium
         // M6.1 D4: additive — older prefs without the key decode to nil (P11).
         self.rememberedCheckpointURL = try c.decodeIfPresent(URL.self, forKey: .rememberedCheckpointURL)
+        // M6.5 T18: additive — older prefs without the key decode to nil.
+        self.flockDir = try c.decodeIfPresent(URL.self, forKey: .flockDir)
     }
 
     // MARK: - Directory sources (multi-folder)

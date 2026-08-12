@@ -353,4 +353,32 @@ final class AppPreferencesTests: XCTestCase {
         let loaded = AppPreferences.load(directory: dir)
         XCTAssertNil(loaded.rememberedCheckpointURL)
     }
+
+    // MARK: - flockDir (M6.5 T18)
+
+    /// Default is nil (⇒ the default `<app-support>/Emberweft/Flock` root is
+    /// resolved at use). Round-trips a configured folder through encode/decode.
+    func testFlockDirDefaultsNilAndRoundTrips() throws {
+        var p = AppPreferences()
+        XCTAssertNil(p.flockDir)
+        p.flockDir = URL(fileURLWithPath: "/tmp/Flock")
+        let data = try JSONEncoder().encode(p)
+        let decoded = try JSONDecoder().decode(AppPreferences.self, from: data)
+        XCTAssertEqual(decoded.flockDir?.path, "/tmp/Flock")
+    }
+
+    /// A v0.5.7 `preferences.json` written before `flockDir` existed must load
+    /// with nil rather than failing/quarantining — the field is purely additive
+    /// (custom decoder uses decodeIfPresent). The fixture is built by encoding
+    /// current prefs and stripping the `flockDir` key via JSONSerialization, so
+    /// it mirrors a real legacy blob (the M6.1 S6 lesson).
+    func testFlockDirAbsentOnOldPrefsDecodesNil() throws {
+        var blob = try JSONEncoder().encode(AppPreferences())
+        var dict = try JSONSerialization.jsonObject(with: blob) as! [String: Any]
+        dict.removeValue(forKey: "flockDir")
+        blob = try JSONSerialization.data(withJSONObject: dict)
+        let decoded = try JSONDecoder().decode(AppPreferences.self, from: blob)
+        XCTAssertNil(decoded.flockDir,
+                     "legacy file without flockDir must decode to nil (additive — T18)")
+    }
 }
