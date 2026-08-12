@@ -23,10 +23,19 @@ public final class VideoEncoder: @unchecked Sendable {
     /// duration in the container. `AVAssetWriterInput` otherwise leaves the
     /// trailing duration implicit (spec D8 / §4.4).
     private var lastEndTime: CMTime = .zero
+    /// File-level AVFoundation tags (e.g. `emberweft.spp`, `commonKeyTitle`)
+    /// written into the container header. Default `[]` ⇒ `writer.metadata` stays
+    /// empty (byte-identical to the pre-M6.5 encoder). Assigned in `start()`
+    /// before `startWriting()`. NOTE: this is `[AVMetadataItem]` (AVFoundation
+    /// file tags) — a DIFFERENT concept from `ExportSettings.metadata`
+    /// (`[MetadataItem]`, a dormant `{key,value}` String field); the two are not
+    /// converted between.
+    private let metadata: [AVMetadataItem]
 
-    public init(settings: ExportSettings, outputURL: URL) throws {
+    public init(settings: ExportSettings, outputURL: URL, metadata: [AVMetadataItem] = []) throws {
         self.settings = settings
         self.outputURL = outputURL
+        self.metadata = metadata
     }
 
     public func start() throws {
@@ -91,6 +100,11 @@ public final class VideoEncoder: @unchecked Sendable {
         self.writer = writer; self.input = input; self.adaptor = adaptor
         self.pool = PixelBufferPool(width: settings.resolution.width,
                                     height: settings.resolution.height, maxInFlight: 3)
+        // File-level tags must be set before `startWriting()`. Empty `[]` is
+        // identical to the (default-empty) pre-M6.5 state → byte-identical for
+        // every existing caller (the guard avoids touching `writer.metadata` at
+        // all on the default path).
+        if !metadata.isEmpty { writer.metadata = metadata }
         guard writer.startWriting() else {
             throw NSError(domain: "VideoEncoder", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "startWriting failed: \(String(describing: writer.error))"])
