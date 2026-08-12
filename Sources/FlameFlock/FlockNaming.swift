@@ -11,7 +11,7 @@ public enum FlockNamingError: Error, Equatable {
 /// D1/D3/D7). All members are pure string functions (no Swift `Dict`/`Set`
 /// iteration ⇒ rule-#2-safe).
 public enum FlockNaming {
-    private static let shardRegex = try! NSRegularExpression(pattern: "^[A-Za-z0-9_]+$")
+    private static let shardRegex = try! NSRegularExpression(pattern: "^[A-Za-z0-9_-]+$")
     private static let digitRegex = try! NSRegularExpression(pattern: "^[0-9]+$")
 
     /// `<aGen>=<aId>=<bGen>=<bId>.<ext>` (ext excludes the dot). Ids are emitted
@@ -57,8 +57,9 @@ public enum FlockNaming {
     }
 
     /// Path-safety-checked archive (`.mov`/`.hevc`) file URL. The shard is
-    /// validated to `^[A-Za-z0-9_]+$` and the resolved path is checked to stay
-    /// inside `flockRoot` (mirrors spec §5.2 BatchPath.resolve — rejects
+    /// validated to `^[A-Za-z0-9_-]+$` (the `-` admits non-canonical shard names
+    /// like `1920x1080_30fps_Lf495-Tf300`) and the resolved path is checked to
+    /// stay inside `flockRoot` (mirrors spec §5.2 BatchPath.resolve — rejects
     /// symlink-redirect + `..` escape). Layout: `<root>/<shard>/mpeg/<file>`.
     public static func archiveFileURL(flockRoot: URL, shardDir: String,
                                       aGen: String, aId: String, bGen: String, bId: String,
@@ -88,8 +89,9 @@ public enum FlockNaming {
     }
 
     /// Public predicate (used by `FlockCatalog.rebuild` to filter shard dirs on
-    /// disk). Accepts `^[A-Za-z0-9_]+$` only — the explicit `/` and `..` checks
-    /// run before the regex as defense-in-depth.
+    /// disk). Accepts `^[A-Za-z0-9_-]+$` (admits the `-` in non-canonical shard
+    /// names) — the explicit `/` and `..` checks run before the regex as
+    /// defense-in-depth.
     public static func isValidShardName(_ s: String) -> Bool {
         !s.contains("/") && !s.contains("..") &&
             shardRegex.firstMatch(in: s, range: NSRange(location: 0, length: s.utf16.count)) != nil

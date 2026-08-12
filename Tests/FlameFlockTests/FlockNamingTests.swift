@@ -142,11 +142,26 @@ final class FlockNamingTests: XCTestCase {
         XCTAssertFalse(FlockNaming.isValidShardName("1920x1080_30fps/.."))
         XCTAssertFalse(FlockNaming.isValidShardName("with/slash"))
         XCTAssertFalse(FlockNaming.isValidShardName("has space"))
-        // Hyphen is NOT in [A-Za-z0-9_] ⇒ rejected. (Non-canonical shard names
-        // produced by shardDir() contain `-`, e.g. `_Lf495-Tf300`; that
-        // interaction is T7's domain — here we only pin the regex contract.)
-        XCTAssertFalse(FlockNaming.isValidShardName("has-dash"))
+        // Hyphen IS admitted: non-canonical shard names produced by shardDir()
+        // contain `-` (e.g. `1920x1080_30fps_Lf495-Tf300`); rebuild must NOT
+        // skip them, so the regex class is [A-Za-z0-9_-].
+        XCTAssertTrue(FlockNaming.isValidShardName("has-dash"))
+        XCTAssertTrue(FlockNaming.isValidShardName("1920x1080_30fps_Lf495-Tf300"))
         XCTAssertFalse(FlockNaming.isValidShardName(""))
+    }
+
+    /// A non-canonical shard name (with `-`, as `shardDir` emits) must round-trip
+    /// through `archiveFileURL` — the regex admits `-` so rebuild + the URL
+    /// builders accept non-canonical shards. (Regression: the regex once rejected
+    /// `-`, which would have silently dropped every non-canonical shard on rebuild.)
+    func testArchiveURLAcceptsNonCanonicalShard() throws {
+        let root = tempRoot
+        let url = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: "1920x1080_30fps_Lf495-Tf300",
+                                                  aGen: "248", aId: "00628", bGen: "248", bId: "00628", ext: "mov")
+        XCTAssertEqual(url.lastPathComponent, "248=00628=248=00628.mov")
+        // <root>/<shard>/mpeg/<file> ⇒ shard sits two levels above the file.
+        XCTAssertEqual(url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent,
+                       "1920x1080_30fps_Lf495-Tf300")
     }
 
     // MARK: - archiveFileURL / thumbURL path safety
