@@ -825,6 +825,27 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
+    /// M6.5 public passthrough-concat surface (spec §14.1, I2). Wraps the private
+    /// `concatChunks` (which writes to `partialURL`; caller renames). Single-sourced
+    /// so `StitchCoordinator` does not re-implement `AVMutableComposition`. The
+    /// existing `runJob`/`runResumable` paths do NOT call this — they keep their
+    /// own `concatChunks` invocations.
+    public func concat(segments: [URL], container: ExportSettings.Container,
+                       to out: URL) async throws {
+        let partialURL = out.deletingLastPathComponent()
+            .appendingPathComponent("." + out.lastPathComponent + ".partial")
+        try? FileManager.default.removeItem(at: partialURL)
+        try await concatChunks(urls: segments, container: container, partialURL: partialURL)
+        // Atomic rename partial -> out (prefer replaceItemAt when out exists, same
+        // as renderSegmentRange; the stitch output is usually fresh, but a re-stitch
+        // to the same path should be overwrite-safe).
+        if FileManager.default.fileExists(atPath: out.path) {
+            _ = try FileManager.default.replaceItemAt(out, withItemAt: partialURL)
+        } else {
+            try FileManager.default.moveItem(at: partialURL, to: out)
+        }
+    }
+
     /// Long-form body. Same setup as `runJob` (params/plan/budget), then chunk
     /// the timeline on segment edges, encode each chunk to a temp `.mov`, concat
     /// via passthrough, atomic-rename to `out`.
