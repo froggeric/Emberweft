@@ -741,6 +741,51 @@ public actor ExportCoordinator: ExportCoordinating {
                                      budget: budget, useMetal: useMetal)
     }
 
+    /// M6.5 archive render-range entry (spec §14.2). PUBLIC wrapper around the
+    /// private renderFrames/renderImage primitives so FlameFlock renders a
+    /// FramePlan range through the SAME 3-branch Metal/CPU dispatch (single-
+    /// sourced parity/byte-identity). The existing runJob/runResumable paths do
+    /// NOT call this — they keep their own encoders. `smoothingAlpha >= 1.0`
+    /// (default/OFF) ⇒ byte-identical to the export OFF path.
+    public func renderSegmentRange(
+        plan: FramePlan,
+        params: RenderParams,
+        budget: MetalRenderer.ThreadSeedBudget?,
+        useMetal: Bool,
+        range: Range<Int>,
+        smoothingAlpha: Double,
+        settings: ExportSettings,
+        out: URL,
+        metadata: [AVMetadataItem] = []
+    ) async throws {
+        let tempURL = out.deletingLastPathComponent()
+            .appendingPathComponent("." + out.lastPathComponent + ".partial")
+        try? FileManager.default.removeItem(at: tempURL)
+        let encoder = try VideoEncoder(settings: settings, outputURL: tempURL, metadata: metadata)
+        try await encoder.start()
+        // renderFrames already branches on smoothingAlpha (OFF ⇒ renderImage per
+        // frame; ON ⇒ feed-emit). yield is a no-op — the ArchiveCoordinator
+        // reports its own per-unit progress.
+        try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
+                               range: range, smoothingAlpha: smoothingAlpha,
+                               into: encoder, yield: { _ in })
+        try await encoder.finish()
+        // Rename partial -> out. For a FRESH artifact (no existing file) this is a
+        // clean atomic move. For an UPGRADE-overwrite (existing file present) the
+        // remove-then-move has a narrow window where `out` is absent; prefer
+        // `FileManager.replaceItemAt(out, withItemAt: tempURL)` (uses renamex_np
+        // REPLACE — atomic overwrite) when `out` exists. The catalog upsert
+        // happens in ArchiveRenderer.renderIntoArchive AFTER this returns, so the
+        // invariant "never upsert a row for a missing file" holds regardless. A
+        // crash in the remove→move window on an upgrade leaves the OLD row
+        // pointing to a gone file; `flock rebuild` recovers (file-not-found ⇒ skip).
+        if FileManager.default.fileExists(atPath: out.path) {
+            _ = try FileManager.default.replaceItemAt(out, withItemAt: tempURL)
+        } else {
+            try FileManager.default.moveItem(at: tempURL, to: out)
+        }
+    }
+
     /// Passthrough-concatenate already-encoded chunk files (in array order) into
     /// `partialURL` (no re-encode → keyframes preserved). Caller does the atomic
     /// rename to `out`. Shared by `runLongFormJob` and `runResumableBody`
