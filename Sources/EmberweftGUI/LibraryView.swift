@@ -123,6 +123,19 @@ struct LibraryView: View {
                     }
                 }
             }
+            // The dedicated Flock archive area (M6.5 / D9, §13). Routes to
+            // `FlockView`, which owns its own chrome (it is NOT a library grid).
+            // `flockModel` is AppModel-owned, so dismissing the area mid-generate
+            // cannot orphan the coordinator actors (M4 §13.2).
+            Section("Archive") {
+                Label {
+                    Text("Flock")
+                } icon: {
+                    Image(systemName: "bird.fill")
+                }
+                .tag(SidebarDestination.flock)
+                .accessibilityLabel("Flock archive")
+            }
             Section {
                 Button {
                     openImporter = true
@@ -245,6 +258,7 @@ struct LibraryView: View {
         case .library:   return readyCount(model.bundleLoadState)
         case .liked:     return model.likedEntries().count
         case .imported:  return readyCount(model.importedLoadState)
+        case .flock:     return 0
         case .folder(let url): return readyCount(model.directoryLoadStates[url] ?? .empty)
         case .collection(let id): return model.collectionsStore.collection(id: id).map { resolvedCount(of: $0) } ?? 0
         }
@@ -280,18 +294,30 @@ struct LibraryView: View {
     @ViewBuilder
     private var detailGrid: some View {
         let state = currentLoadState
-        detailChrome {
-            // Collections render in the SAME `LazyVGrid` of `ThumbnailCell` as
-            // every other destination, with a custom in-app `DragGesture` for
-            // reorder (no system pasteboard DnD, no `List`). The prior two
-            // attempts both failed: `.draggable`+`.dropDestination` (Transferable)
-            // never fired the drop action on this bundle-less app, and
-            // `List`+`.onMove` replaced the grid with a list (regression).
-            if case .collection(let id) = destination,
-               let c = model.collectionsStore.collection(id: id) {
-                collectionGridBody(c)
-            } else {
-                gridScrollBody(for: state)
+        // The Flock archive area (M6.5 / D9) gets its OWN chrome — it is a
+        // Generate/Stitch/Browse surface over `FlockModel`, not a library grid,
+        // so it bypasses `detailChrome` (search / drop / selection bar / title).
+        // `flockModel` is AppModel-owned, so dismissing the area mid-run cannot
+        // orphan the coordinator actors (M4 §13.2 — the strong-self cancel path
+        // in `FlockModel.cancelGenerate`/`cancelStitch` keeps them alive until
+        // they acknowledge stop).
+        if case .flock = destination {
+            FlockView()
+                .environment(model.flockModel)
+        } else {
+            detailChrome {
+                // Collections render in the SAME `LazyVGrid` of `ThumbnailCell` as
+                // every other destination, with a custom in-app `DragGesture` for
+                // reorder (no system pasteboard DnD, no `List`). The prior two
+                // attempts both failed: `.draggable`+`.dropDestination` (Transferable)
+                // never fired the drop action on this bundle-less app, and
+                // `List`+`.onMove` replaced the grid with a list (regression).
+                if case .collection(let id) = destination,
+                   let c = model.collectionsStore.collection(id: id) {
+                    collectionGridBody(c)
+                } else {
+                    gridScrollBody(for: state)
+                }
             }
         }
     }
@@ -386,6 +412,11 @@ struct LibraryView: View {
             return liked.isEmpty ? .empty : .ready(liked)
         case .imported:
             return model.importedLoadState
+        case .flock:
+            // The Flock area renders `FlockView` (its own chrome, not a library
+            // grid); it never consults `currentLoadState`. `.empty` is the inert
+            // fallback so any incidental read is safe.
+            return .empty
         case .folder(let url):
             return model.directoryLoadStates[url] ?? .empty
         // Collections are not backed by a `LoadState`; the resolved entries are
@@ -1102,6 +1133,7 @@ struct LibraryView: View {
 /// future Collections group can add a `.collection(...)` case the same way.
 private enum SidebarDestination: Hashable, Identifiable {
     case all, library, liked, imported
+    case flock
     case folder(URL)
     case collection(UUID)
 
@@ -1114,6 +1146,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .library:  return "library"
         case .liked:    return "liked"
         case .imported: return "imported"
+        case .flock:    return "flock"
         case .folder(let url): return "folder:\(url.path)"
         case .collection(let id): return "collection:\(id.uuidString)"
         }
@@ -1125,6 +1158,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .library:  return "Library"
         case .liked:    return "Liked"
         case .imported: return "Imported"
+        case .flock:    return "Flock"
         case .folder(let url): return url.lastPathComponent
         case .collection: return "Collection"
         }
@@ -1136,6 +1170,7 @@ private enum SidebarDestination: Hashable, Identifiable {
         case .library:  return "books.vertical"
         case .liked:    return "star"
         case .imported: return "tray.and.arrow.down"
+        case .flock:    return "bird.fill"
         case .folder:   return "folder"
         case .collection: return "list.bullet.rectangle"
         }

@@ -336,6 +336,56 @@ public actor FlockCatalog {
         return FlockSnapshot(shardCount: shards, artifactCount: artifacts)
     }
 
+    /// All shard rows, ordered by name (deterministic — rule #2: a key-ordered
+    /// `ORDER BY` scan, never a hash-ordered read). Drives the FlockView shard
+    /// picker (T17). Additive read; no parity impact.
+    public func listShards() throws -> [ShardSpec] {
+        let cur = try conn.query("""
+            SELECT name,width,height,fps,loop_seconds,trans_seconds,
+                   loop_frames,trans_frames,is_canonical,codec
+            FROM shards ORDER BY name
+            """)
+        var out: [ShardSpec] = []
+        while cur.next() {
+            out.append(ShardSpec(
+                name: cur.text(0), width: cur.int(1), height: cur.int(2), fps: cur.int(3),
+                loopSeconds: cur.double(4), transSeconds: cur.double(5),
+                loopFrames: cur.int(6), transFrames: cur.int(7),
+                isCanonical: cur.int(8) != 0,
+                codec: ExportSettings.Codec(rawValue: cur.text(9)) ?? .hevc))
+        }
+        return out
+    }
+
+    /// Per-shard (count, total bytes) for the Browse size readout. One
+    /// parameterized round trip over a key (`WHERE shard=?`). Integer arithmetic
+    /// only (rule-#2-safe). Additive read; no parity impact.
+    public func shardStats(_ shard: String) throws -> (count: Int, bytes: Int) {
+        let cur = try conn.query(
+            "SELECT COUNT(*), COALESCE(SUM(bytes),0) FROM artifacts WHERE shard=?",
+            [shard])
+        if cur.next() { return (cur.int(0), cur.int(1)) }
+        return (0, 0)
+    }
+
+    /// A page of artifact rows for the Browse grid (T17). Indexed `LIMIT/OFFSET`
+    /// over a key-ordered `WHERE shard=? ORDER BY a_gen,a_id,b_gen,b_id` scan —
+    /// never mass-parses the archive (rule #2). Thumbnails are loaded lazily by
+    /// the GUI from each row's `thumb` path. Additive read; no parity impact.
+    public func artifactPage(shard: String, offset: Int, limit: Int) throws -> [ArtifactRow] {
+        let cur = try conn.query("""
+            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,thumb,width,height,fps,
+                   loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
+                   quality_rank,bytes,rendered_at,source_sha,seed,codec
+            FROM artifacts WHERE shard=?
+            ORDER BY a_gen, a_id, b_gen, b_id
+            LIMIT ? OFFSET ?
+            """, [shard, limit, offset])
+        var rows: [ArtifactRow] = []
+        while cur.next() { rows.append(Self.rowFrom(cur)) }
+        return rows
+    }
+
     // MARK: - Rebuild (resilience: delete + recreate from mpeg/ + tags)
 
     /// Rebuild `flock.sqlite` from `mpeg/` filenames + embedded video tags

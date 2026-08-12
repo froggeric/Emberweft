@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import EmberweftUI
 import FlameKit
+import FlameFlock
 
 /// App-wide, MainActor-owned state: preferences, the shared library index +
 /// thumbnail service, metadata store, palette facets, and the per-section grid
@@ -23,6 +24,29 @@ final class AppModel {
     /// window teardown mid-export (spec §4.4 / G9 — avoids the M4 sheet-teardown
     /// leak). Wired into source windows in M6-G.8.
     let exportManager = ExportManager()
+
+    /// The Flock archive view-model (T15/T17). Same ownership pattern as
+    /// `exportManager`: held on AppModel so it survives the Flock area being
+    /// dismissed mid-generate/stitch (the M4 §13.2 invariant — the coordinator
+    /// actors stay alive via `cancelGenerate`/`cancelStitch` strong-self until
+    /// they acknowledge stop). The production factory closures are installed in
+    /// `init` (they capture the long-lived `FlockCatalog` below, NOT `self` — no
+    /// retain cycle).
+    let flockModel = FlockModel()
+
+    /// The Flock archive root (T17 default). T18 makes this a configurable
+    /// `AppPreferences.flockDir` and rewires `flockRoot` to read it; for now it
+    /// is `<app-support>/Emberweft/Flock`. Created lazily by `FlockCatalog.init`.
+    let flockRoot: URL
+
+    /// Long-lived catalog over `flock.sqlite` — ONE actor, shared by the
+    /// generate/stitch coordinators (via the factory closures) and by Browse
+    /// reads (snapshot/pagination). `nil` only if the catalog failed to open at
+    /// launch (a genuine disk error; the factories surface it). Held as a
+    /// non-optional `let` would require a throwing init; instead it is built once
+    /// in `init` via `try?` and the factories/SwiftUI read it through
+    /// `flockCatalog` (unwrapped with a clear guard).
+    let flockCatalog: FlockCatalog?
 
     /// The bundled curated library resource root (`CuratedLibrary/`).
     private let bundleRoot: URL?
@@ -114,6 +138,18 @@ final class AppModel {
         let (cStore, _) = CollectionsStore.loadResilient()
         self.collectionsStore = cStore
 
+        // M6.5 T17: open the long-lived Flock catalog. These two `let`s have no
+        // inline default, so they MUST be assigned before any later `self`
+        // access in this init. `flockRoot` is `<app-support>/Emberweft/Flock`
+        // (T18 makes it a configurable `AppPreferences.flockDir`). `catalog` is
+        // captured by value (an actor reference) in the factory closures below,
+        // NOT `self` → no AppModel → flockModel → closure → AppModel retain
+        // cycle. `nil` only on a genuine open-disk error.
+        let flockRoot = AppPreferences.defaultDirectory.appendingPathComponent("Flock", isDirectory: true)
+        let catalog = try? FlockCatalog(root: flockRoot)
+        self.flockRoot = flockRoot
+        self.flockCatalog = catalog
+
         // M6.1 Task 7 / spec §5.5: re-offer Resume/Discard after a quit/crash.
         // Seed the VM's remembered URL from prefs, wire the write-back hook so
         // subsequent pause/clear mutations persist, then synthesize `.paused`
@@ -127,6 +163,36 @@ final class AppModel {
             try? self.prefs.save()
         }
         exportManager.synthesizePausedStateIfNeeded()
+
+        // M6.5 T17: install the Flock production factory seams on `flockModel`.
+        // The closures capture the long-lived `catalog` actor (a `let` local →
+        // captured by value — the actor reference itself), NOT `self`, so there
+        // is no AppModel → flockModel → closure → AppModel retain cycle. The
+        // coordinators are constructed fresh per run (cheap; `ArchiveRenderer`
+        // is a value type and the per-run `ExportCoordinator` is built inside
+        // `FlockModel.generate/stitch`). A `nil` catalog (open failure at
+        // launch) is surfaced by `FlockView` (Browse shows `.failed`); the
+        // factories guard-`fatalError` only because a coordinator cannot be
+        // constructed without a catalog — a genuinely unreachable path once the
+        // dir is creatable (app-support always is).
+        flockModel.generateFactory = { backend, offMain in
+            guard let catalog else {
+                fatalError("Flock catalog unavailable at \(flockRoot.path). Check \(flockRoot.path).")
+            }
+            return GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                       backend: backend, useOffMainMetal: offMain)
+        }
+        flockModel.stitchFactory = { backend, offMain in
+            guard let catalog else {
+                fatalError("Flock catalog unavailable at \(flockRoot.path). Check \(flockRoot.path).")
+            }
+            return StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                     backend: backend, useOffMainMetal: offMain)
+        }
+        flockModel.snapshotProvider = {
+            guard let catalog else { return FlockSnapshot(shardCount: 0, artifactCount: 0) }
+            return await catalog.snapshot()
+        }
     }
 
     /// Liked genomes (sentiment == +1) across all loaded sections. Folder order
