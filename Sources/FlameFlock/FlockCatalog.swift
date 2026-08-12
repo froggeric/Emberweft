@@ -309,6 +309,23 @@ public actor FlockCatalog {
             codec: ExportSettings.Codec(rawValue: c.text(22)) ?? .hevc)
     }
 
+    /// All artifacts in one shard, in deterministic `(a_gen,a_id,b_gen,b_id)`
+    /// order (rule #2 — a parameterized `WHERE shard=?` over a key, never a
+    /// hash-ordered scan). Used by `ListXmlExporter` to emit one `<sheep>` per
+    /// artifact in the shard (spec §9).
+    public func artifactsIn(shard: String) async throws -> [ArtifactRow] {
+        let cur = try conn.query("""
+            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,thumb,width,height,fps,
+                   loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
+                   quality_rank,bytes,rendered_at,source_sha,seed,codec
+            FROM artifacts WHERE shard=?
+            ORDER BY a_gen, a_id, b_gen, b_id
+            """, [shard])
+        var rows: [ArtifactRow] = []
+        while cur.next() { rows.append(Self.rowFrom(cur)) }
+        return rows
+    }
+
     // MARK: - Snapshot (value-type, for GUI reads)
 
     public func snapshot() -> FlockSnapshot {
