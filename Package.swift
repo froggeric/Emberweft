@@ -52,12 +52,21 @@ let package = Package(
             dependencies: ["FlameRenderer", "FlameReference", "FlameKit"],
             path: "Sources/FlameExport"
         ),
+        // Deterministic flock archive: catalog/generate/stitch orchestrators
+        // (M6.5). Depends on FlameExport (which pulls FlameRenderer +
+        // FlameReference + FlameKit); links the system libsqlite3.
+        .target(
+            name: "FlameFlock",
+            dependencies: ["FlameExport", "FlameKit"],
+            path: "Sources/FlameFlock",
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
         // SwiftUI/AppKit GUI support library: the FlameUI↔SwiftUI bridge,
         // production playback conformers, thumbnail service, library/settings
         // models. Reused by the GUI app (M4) and the screensaver (M5).
         .target(
             name: "EmberweftUI",
-            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer", "FlameExport"],
+            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlamePlayer", "FlameExport", "FlameFlock"],
             path: "Sources/EmberweftUI"
         ),
         // `emberweft-gui` executable — thin SwiftUI shell over EmberweftUI.
@@ -70,7 +79,7 @@ let package = Package(
         // Testable `emberweft` CLI engine library (render / validate / info).
         .target(
             name: "EmberweftCLI",
-            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlameExport"],
+            dependencies: ["FlameKit", "FlameReference", "FlameRenderer", "FlameExport", "FlameFlock"],
             path: "Sources/EmberweftCLI"
         ),
         // `emberweft` executable — thin wrapper over the EmberweftCLI library.
@@ -105,8 +114,13 @@ let package = Package(
             path: "Tests/FlameExportTests"
         ),
         .testTarget(
+            name: "FlameFlockTests",
+            dependencies: ["FlameFlock", "FlameExport", "FlameKit", "FlameRenderer", "FlameReference"],
+            path: "Tests/FlameFlockTests"
+        ),
+        .testTarget(
             name: "EmberweftCLITests",
-            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference", "FlameRenderer", "FlameExport"],
+            dependencies: ["EmberweftCLI", "FlameKit", "FlameReference", "FlameRenderer", "FlameExport", "FlameFlock"],
             path: "Tests/EmberweftCLITests"
         ),
         .testTarget(
