@@ -147,8 +147,14 @@ private func loadLibrarySources(_ entries: [LibraryEntry], catalog: FlockCatalog
     for entry in entries {
         guard let flame = try? await libraryIndex.loadGenome(for: entry) else { continue }
         let data = try? Data(contentsOf: entry.fileURL)
+        // D7: ES-sourced genomes keep their real `(gen,id)` (parsed from the
+        // ES-archive filename) via IdMinter's ES passthrough; user imports and
+        // bundled/curated genomes with arbitrary names get minted into 900000.
+        let es = esIdentity(for: entry)
         let (gen, id) = (try? await minter.resolve(
-            catalog: catalog, esGen: nil, esId: nil, origin: .user,
+            catalog: catalog,
+            esGen: es?.gen, esId: es?.id,
+            origin: es == nil ? .user : .es,
             sourceRef: entry.fileURL, sourceBytes: data)) ?? ("900000", "000000")
         out.append(LoadedFlame(gen: gen, id: id, flame: flame,
                                displayName: entry.displayName))
