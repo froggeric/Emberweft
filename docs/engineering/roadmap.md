@@ -6,9 +6,9 @@
 
 ## Current Status
 
-**Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete; M6 complete (v0.5.0); M6.1 pause/resume (v0.5.1); M6.1 slice 2 temporal smoothing (v0.5.2–v0.5.7)** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries), **v0.3.1** (M4 polish: configurable preview presets + live FPS readout in both playback windows; `testFiniteDeterministicRenders` crash fix via a nontrapping `intTrunc` guard on `Int(Double)`), **v0.3.2** (M4 polish: distinct preview vs. export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target), **v0.4.0** (M6 engine + CLI: `emberweft export` to MP4/MOV, `FramePlan`, `ThreadSeedBudget`). **v0.5.0** (M6 GUI export: export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing). **v0.5.1** (M6.1 pause/resume: Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard`). M6.1 slice 2 (temporal smoothing — centered box window + retuned quality tiers + tier-aware temporal samples; export-only; animate/export byte-identity preserved) shipped v0.5.2–v0.5.7 (v0.5.7 removed loop-repeat, whose render-once-repeat caused half-speed motion) (see [CHANGELOG.md](../../CHANGELOG.md)). M5 next.
+**Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete; M6 complete (v0.5.0); M6.1 pause/resume (v0.5.1); M6.1 slice 2 temporal smoothing (v0.5.2–v0.5.7); M6.5 flock archive + stitching (Unreleased/v0.6.0)** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries), **v0.3.1** (M4 polish: configurable preview presets + live FPS readout in both playback windows; `testFiniteDeterministicRenders` crash fix via a nontrapping `intTrunc` guard on `Int(Double)`), **v0.3.2** (M4 polish: distinct preview vs. export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target), **v0.4.0** (M6 engine + CLI: `emberweft export` to MP4/MOV, `FramePlan`, `ThreadSeedBudget`). **v0.5.0** (M6 GUI export: export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing). **v0.5.1** (M6.1 pause/resume: Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard`). M6.1 slice 2 (temporal smoothing — centered box window + retuned quality tiers + tier-aware temporal samples; export-only; animate/export byte-identity preserved) shipped v0.5.2–v0.5.7 (v0.5.7 removed loop-repeat, whose render-once-repeat caused half-speed motion) (see [CHANGELOG.md](../../CHANGELOG.md)). **M6.5 — flock archive + stitching** (standalone milestone between M6 and M7, Unreleased/v0.6.0): a local archive of pre-rendered loop/edge videos (HEVC Main10 `.mov`, ES-inspired 4-field naming) plus Path A (Generate) to pre-bake material and Path B (Stitch) to compose a long video from the archive (cached segments stitch in seconds via passthrough concat; misses render into the archive first), a `flock.sqlite` catalog (rebuildable from files + tags), the `emberweft flock generate|stitch|browse|rebuild|export-list` CLI, a Flock GUI area, a decoupled one-shot export (moved off the playback windows to a library-selection action), and a new `FlameFlock` module. Engine parity is unchanged (no edit under `Sources/FlameKit|FlameReference|FlameRenderer`) and animate-to-export byte-identity is preserved (see [CHANGELOG.md](../../CHANGELOG.md)). M5 next.
 
-> **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M7→S11, M8→S12.**
+> **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M6.5→S10.5, M7→S11, M8→S12.**
 
 ## Milestones
 
@@ -227,6 +227,79 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 - Exported video matches realtime rendering quality (determinism)
 - At least 3 export presets (720p/1080p/4K)
 
+### M6.5 — Flock Archive + Stitching
+
+> **Complete (Unreleased / v0.6.0).** A local archive of pre-rendered loop/edge
+> videos plus Path A (Generate) and Path B (Stitch), so a long video composes in
+> seconds once material is cached instead of the hours a one-shot export took.
+> Engine parity is unchanged (no renderer math touched); animate-to-export
+> byte-identity is preserved. Spec:
+> [`docs/superpowers/specs/2026-08-12-m6.5-flock-archive-design.md`](../superpowers/specs/2026-08-12-m6.5-flock-archive-design.md);
+> plan:
+> [`docs/superpowers/plans/2026-08-12-m6.5-flock-archive.md`](../superpowers/plans/2026-08-12-m6.5-flock-archive.md).
+> See [CHANGELOG.md](../../CHANGELOG.md) for the `[Unreleased]` entry. M5 (the
+> screensaver) consumes this archive later (play pre-rendered loops/edges instead
+> of live-rendering).
+
+**Goal:** A local "flock archive" of pre-rendered loop and edge videos, with two
+paths: **Generate** pre-bakes material into the archive, and **Stitch** composes a
+long video from the archive (per-segment HIT uses the cached file; MISS renders
+into the archive first), then a no-reencode `AVMutableComposition` passthrough
+concat. Once a segment is rendered it is reused forever, so the "5-genome export
+took 3 hours" problem collapses to seconds for cached material. (Slice S10.5,
+standalone between M6 and M7.)
+
+**Key deliverables:**
+- The flock archive: ES-inspired 4-field naming
+  (`<a_gen>=<a_id>=<b_gen>=<b_id>.<ext>`, loop = self-edge, no `edge_id`, cross-gen
+  native), shard layout by resolution/fps/pace, per-artifact thumbnails, video
+  metadata tags, and a user-configurable location (`AppPreferences.flockDir`).
+- `flock.sqlite` catalog (`FlockCatalog`, a serialized-writer actor; source of
+  truth, rebuildable from `mpeg/` filenames + embedded tags; one round-trip
+  batched `IN(...)` lookup, no N+1).
+- Id model: ES-sourced sheep keep their real `(gen,id)`; user/curated genomes get
+  stable ids minted in reserved flock `900000`, deduped on source SHA-256.
+- **Archive codec = HEVC (H.265) Main10, `.mov`** (~40% smaller than H.264, 10-bit,
+  hardware encode/decode; decided empirically). Each segment is a fresh independent
+  encode (IDR at frame 0); segments are never sliced from a longer render (slicing
+  breaks HEVC POC/RPS at the cut).
+- **Path A, Generate** (GUI + `emberweft flock generate`): pre-bake loops/edges
+  into a shard, with the upgrade-overwrite rule (higher `quality_rank` overwrites;
+  equal-or-lower is a hit/skip).
+- **Path B, Stitch** (GUI + `emberweft flock stitch`): batch-lookup, miss-render-
+  into-archive, passthrough concat; codec-uniformity and single-shard gates.
+- `emberweft flock generate | stitch | browse | rebuild | export-list` CLI (the
+  last writes the ES `<list>` XML interchange, recovering real `edge_id`s from
+  `edges.sqlite`).
+- Flock sidebar area (Generate / Stitch / Browse tabs) + a Settings, Flock panel.
+- **Decouple one-shot export from the playback windows** (they become play-only;
+  export becomes a library-selection action).
+- New `FlameFlock` module (system `sqlite3`-linked; Apple SDKs only).
+
+**Dependencies:** M4 complete (GUI) and M6 complete (the export render/encode
+primitives, reused additively). Can proceed in parallel with M5; M5 consumes the
+archive.
+
+**Definition of done:**
+- The Flock area (Generate / Stitch / Browse) is present and usable; Path A
+  pre-bakes a collection's edges and Path B stitches a long video (fully cached
+  stitches in seconds; uncached self-builds and is fast next time).
+- Browse shows per-shard counts/size/thumbnails (paged), with delete and "Rebuild
+  catalog".
+- One-shot export is reachable from a library selection; the two playback windows
+  have no Export button.
+- `flockDir` is configurable and the archive survives relaunch.
+- `emberweft flock generate | stitch | browse | rebuild | export-list` all work.
+- Determinism + byte-identity pins green: per-artifact determinism (same
+  `(shard,key,RenderSpec)` re-renders identical frames, SHA-256 seed via
+  `Int(truncatingIfNeeded:)`); stitch byte-stability (same sequence + shard
+  re-stitches identical output); a pair rendered twice yields one file.
+- **Parity gate untouched:** no edit under `Sources/FlameKit|FlameReference|
+  FlameRenderer` (`git diff --name-only main` empty for those dirs). The
+  animate-to-export byte-identity pin stays green. The archive's smoothing-OFF
+  path matches the export smoothing-OFF path frame-for-frame at the same
+  `RenderSpec`.
+
 ### M7 — Music Video and Audio-Reactive Features
 
 **Goal:** Add audio analysis and audio-reactive parameter modulation for music-video generation. (Slice S11.)
@@ -289,6 +362,8 @@ M4 (SwiftUI app) ←───→ M5 (Screensaver)
   ↓
 M6 (Export)
   ↓
+M6.5 (Flock archive + stitching)
+  ↓
 M7 (Audio-reactive)
   ↓
 M8 (Advanced features)
@@ -297,6 +372,7 @@ M8 (Advanced features)
 **Parallel development:**
 - M4 (app) and M5 (screensaver) can be developed in parallel after M3
 - M6 (export) can proceed in parallel with M5
+- M6.5 (flock archive) builds on M6 and can proceed in parallel with M5; M5 later consumes the archive
 - M7 and M8 are sequential and depend on all previous milestones
 
 ## Timeline and Prioritization

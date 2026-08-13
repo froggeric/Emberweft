@@ -40,6 +40,7 @@ public enum EmberweftCLI {
         case "render": return render(Array(args.dropFirst()))
         case "animate": return animate(Array(args.dropFirst()))
         case "export": return await export(Array(args.dropFirst()))   // async dispatch
+        case "flock":  return await flock(Array(args.dropFirst()))    // async (drives coordinators)
         case "curate": return curate(Array(args.dropFirst()))
         case "_feature-score": return featureScore(Array(args.dropFirst()))
         default:
@@ -62,6 +63,16 @@ public enum EmberweftCLI {
               [{"genome":"a.flam3","out":"a.mp4","frames":16,"segments":1,"seed":7,"loopCycles":1,"stagger":0.0,"temporalSamples":1}, …]
             each `out` is sanitized to a bare filename (allowlist [A-Za-z0-9._-]) and resolved under --out (or CWD); `..`, absolute, and hidden names are rejected
           emberweft validate <genome.flam3>
+          emberweft flock generate --shard <name> --from <dir|flam3> [--scope edges|loops|both] [--quality genome|N] [--codec h264|hevc] [--temporal-samples N] [--backend cpu|metal] [--flock <dir>]
+            (renders loop+edge artifacts into the flock archive; hit-skip + upgrade-overwrite; prints skip/render progress. --from enumerates .flam3 (ES-named pass through their gen/id, others are minted into flock 900000). --shard is WxH_fps[_Lf<loop>-Tf<trans>])
+          emberweft flock stitch --shard <name> --sequence <dir|flam3> [--out file.mov] [--quality genome|N] [--codec h264|hevc] [--backend cpu|metal] [--flock <dir>]
+            (assembles a long-form video from the archive; prints HIT/will-gen plan, then progress; same-codec passthrough concat, no re-encode)
+          emberweft flock browse [--shard <name>] [--flock <dir>]
+            (prints shard + artifact counts; with --shard, per-shard detail)
+          emberweft flock rebuild [--flock <dir>]
+            (rebuilds flock.sqlite from <shard>/mpeg/ filenames + embedded tags)
+          emberweft flock export-list --shard <name> [--flock <dir>]
+            (writes the ES <list> XML beside the shard dir)
           emberweft curate   [--library DIR] [--out DIR] [--size WxH] [--spp N] [--seed N] [--backend cpu|metal] [--sample N] [--top N] [--no-render]
           emberweft info     <genome.flam3>
           emberweft --list-backends

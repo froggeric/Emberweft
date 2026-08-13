@@ -69,12 +69,16 @@ struct SelectionBar: View {
     @State private var showCreateSheet = false
     @State private var newName = ""
 
-    /// Batch-export state (spec §4.8). The selection is async-loaded into
-    /// `exportItems` deterministically (sorted by `GenomeCollectionAppOrder.key` —
-    /// rule #2: never persist `Set` iteration order), dropping unparseable /
+    /// Export state (spec §4.8, extended Task 16). The selection is async-loaded
+    /// into `exportItems` deterministically (sorted by `GenomeCollectionAppOrder.key`
+    /// — rule #2: never persist `Set` iteration order), dropping unparseable /
     /// non-renderable genomes; skips are surfaced via an alert before the sheet.
+    /// `singleFileURL` is the first loaded entry's URL, used ONLY when exactly one
+    /// genome is loaded — it routes the sheet to `.single` (file-URL-backed ⇒
+    /// SHA-256-gated resume); a multi-selection stays on the `.batch` path.
     @State private var isLoadingExport = false
     @State private var exportItems: [(flame: Flame, name: String)] = []
+    @State private var singleFileURL: URL?
     @State private var exportSkipCount = 0
     @State private var showExportSheet = false
     @State private var showExportSkipAlert = false
@@ -108,7 +112,7 @@ struct SelectionBar: View {
                 }
             }
             .disabled(model.selection.isEmpty)
-            .help("Export the selected genomes as videos (skips unrenderable ones)")
+            .help("Export the selection as video (one selection → one video; multiple → one video each). Skips unrenderable genomes.")
             // The Export sheet is attached to THIS button (not the root HStack)
             // so it coexists with the root's "Save as Collection…" sheet — SwiftUI
             // does not reliably present two `.sheet(isPresented:)` on one view, but
@@ -116,7 +120,18 @@ struct SelectionBar: View {
             // hierarchy while the sheet could present (`disabled`, not hidden,
             // while loading), so presentation is reliable.
             .sheet(isPresented: $showExportSheet) {
-                ExportSheet(source: .batch(items: exportItems))
+                // Count-routed (Task 16 decouple): a single selected genome exports
+                // via `.single` (one video, file-URL-backed for SHA-256 resume — the
+                // P8 strong path); a multi-selection stays on `.batch` (one video per
+                // genome, the proven SelectionBar path). `singleFileURL` is captured
+                // in `loadSelectionForExport` for the first loaded entry.
+                if exportItems.count == 1 {
+                    ExportSheet(source: .single(flame: exportItems[0].flame,
+                                                name: exportItems[0].name,
+                                                fileURL: singleFileURL))
+                } else {
+                    ExportSheet(source: .batch(items: exportItems))
+                }
             }
             Divider().frame(height: 18)
             Button { model.clearSelection() } label: {
@@ -152,12 +167,14 @@ struct SelectionBar: View {
         }
     }
 
-    /// Async-load the selection into `exportItems` for the batch Export sheet
+    /// Async-load the selection into `exportItems` for the Export sheet
     /// (spec §4.8). Mirrors `saveFromSelection()`'s deterministic sort
     /// (`GenomeCollectionAppOrder.key` — rule #2: never persist `Set` order): loads
     /// each genome via `libraryIndex.loadGenome(for:)`, drops unparseable /
     /// non-renderable ones, and surfaces the skip count via an alert (confirm-to-
     /// proceed when partial; an "all skipped" notice when nothing is exportable).
+    /// `singleFileURL` captures the first loaded entry's URL so a one-genome
+    /// selection routes to `.single` (file-URL-backed resume).
     private func loadSelectionForExport() async {
         isLoadingExport = true
         defer { isLoadingExport = false }
@@ -165,14 +182,17 @@ struct SelectionBar: View {
             .sorted { GenomeCollectionAppOrder.key($0) < GenomeCollectionAppOrder.key($1) }
         var items: [(flame: Flame, name: String)] = []
         var skips = 0
+        var firstURL: URL?
         for entry in sorted {
             if let flame = try? await model.libraryIndex.loadGenome(for: entry), flame.isRenderable {
+                if items.isEmpty { firstURL = entry.fileURL }
                 items.append((flame: flame, name: entry.displayName))
             } else {
                 skips += 1
             }
         }
         exportItems = items
+        singleFileURL = firstURL
         exportSkipCount = skips
         if items.isEmpty || skips > 0 {
             showExportSkipAlert = true

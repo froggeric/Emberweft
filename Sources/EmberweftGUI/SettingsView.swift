@@ -1,5 +1,7 @@
 import SwiftUI
+import AppKit
 import EmberweftUI
+import FlameFlock
 
 /// The macOS Settings (⌘,) window. Two distinct quality settings, by purpose:
 ///   - **Preview quality** (`previewPreset`) — the *realtime* preview in the
@@ -12,6 +14,14 @@ import EmberweftUI
 /// same `previewPreset` (and exposes per-parameter Custom tuning).
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+
+    /// Staged (T18): default shard resolution for Flock generation driven from
+    /// this panel. Local state — no consumer yet (generate/stitch are launched
+    /// from FlockView); it will persist as an `AppPreferences` field when the
+    /// generate-from-Settings path lands. Kept local to avoid schema bloat now.
+    @State private var defaultShardResolution: AppPreferences.PreviewResolution = .p1080
+    /// Last Rebuild error (nil unless `FlockCatalog.rebuild(from:)` threw).
+    @State private var rebuildError: String?
 
     var body: some View {
         @Bindable var model = model
@@ -69,12 +79,98 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section("Flock archive") {
+                // Archive folder (flockDir). "Choose…" opens a folder picker
+                // (NSOpenPanel); the path field is also hand-editable. Empty ⇒
+                // the default <app-support>/Emberweft/Flock. Persisted via the
+                // Form's `.onChange(of: model.prefs)` save (same path as the
+                // other pickers).
+                HStack {
+                    TextField(
+                        "Archive folder",
+                        text: Binding(
+                            get: { model.prefs.flockDir?.path ?? "" },
+                            set: { newValue in
+                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                model.prefs.flockDir = trimmed.isEmpty
+                                    ? nil
+                                    : URL(fileURLWithPath: trimmed)
+                            }))
+                        .font(.caption)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.prompt = "Choose"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            model.prefs.flockDir = url
+                        }
+                    }
+                }
+                .help("Where the Flock archive lives (shard .mov files + flock.sqlite). Leave empty for the default (Application Support/Emberweft/Flock). A change takes effect for the catalog on the next launch; Rebuild repopulates the chosen folder immediately.")
+
+                // Default shard resolution for new shards (staged — see @State).
+                Picker("Default shard", selection: $defaultShardResolution) {
+                    ForEach(
+                        [AppPreferences.PreviewResolution.p720, .p1080, .p4k], id: \.self
+                    ) { Text($0.label).tag($0) }
+                }
+                .help("Resolution tier for shards generated into the archive (staged — not yet wired to generation).")
+
+                // Size readout from the latest Browse snapshot (FlockSnapshot
+                // carries shard/artifact counts — the catalog's content view).
+                flockSizeReadout
+
+                Button("Rebuild catalog") {
+                    Task { @MainActor in
+                        rebuildError = nil
+                        let root = model.flockRoot
+                        do {
+                            try await FlockCatalog.rebuild(from: root)
+                            await model.flockModel.refreshBrowse()
+                        } catch {
+                            rebuildError = String(describing: error)
+                        }
+                    }
+                }
+                .help("Re-scan the archive folder and rebuild flock.sqlite (the on-disk catalog Browse reads). Use after manually copying or moving .mov files into the folder, or if the catalog is corrupt.")
+            }
         }
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 460)
         .onChange(of: model.prefs) { _, _ in
             try? model.prefs.save()
+        }
+        .task {
+            // Seed the size readout from the long-lived catalog (T18).
+            await model.flockModel.refreshBrowse()
+        }
+    }
+
+    /// Browse snapshot readout for the Flock section. Shows shard/artifact
+    /// counts from `FlockModel.browseState`, or a Rebuild error / loading /
+    /// empty / failed line. `FlockSnapshot` carries counts (not bytes), so the
+    /// readout reflects catalog content rather than on-disk size.
+    @ViewBuilder private var flockSizeReadout: some View {
+        if let err = rebuildError {
+            Text("Rebuild failed: \(err)")
+                .font(.caption).foregroundStyle(.red).lineLimit(2)
+        } else {
+            switch model.flockModel.browseState {
+            case .loading:
+                Text("Loading catalog…").font(.caption).foregroundStyle(.secondary)
+            case .empty:
+                Text("Archive empty — 0 shards · 0 artifacts.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .failed(let msg):
+                Text("Catalog error: \(msg)").font(.caption).foregroundStyle(.red).lineLimit(2)
+            case .loaded(let snap):
+                Text("\(snap.shardCount) shards · \(snap.artifactCount) artifacts")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }
