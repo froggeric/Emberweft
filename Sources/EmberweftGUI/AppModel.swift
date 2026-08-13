@@ -309,23 +309,16 @@ final class AppModel {
     }
 
     /// Deterministic ordering rank for a source (bundle < directory < imported).
-    /// Pure; never reads hash order (rule #2).
+    /// Delegates to the shared `LibrarySourceOrder` (single source of truth used
+    /// by both `unifiedEntries` and `flockSortedSources`). Pure; rule #2.
     private static func sourceRank(_ s: LibrarySource) -> Int {
-        switch s {
-        case .bundle: return 0
-        case .directory: return 1
-        case .imported: return 2
-        }
+        LibrarySourceOrder.rank(s)
     }
 
     /// Stable disambiguator string for a source (the directory's path, or "" for
-    /// single-namespace sources). Pure.
+    /// single-namespace sources). Delegates to `LibrarySourceOrder`. Pure.
     private static func sourcePath(_ s: LibrarySource) -> String {
-        switch s {
-        case .bundle: return ""
-        case .directory(let url): return url.path
-        case .imported: return ""
-        }
+        LibrarySourceOrder.path(s)
     }
 
     // MARK: - Selection (multi-select)
