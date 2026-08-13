@@ -72,4 +72,66 @@ final class FlockSourcesTests: XCTestCase {
         let url = URL(fileURLWithPath: "/var/lib")
         XCTAssertEqual(LibrarySourceOrder.path(.directory(url)), "/var/lib")
     }
+
+    // MARK: - esIdentity (D7: ES genomes keep their real (gen,id))
+
+    private func esEntry(_ filename: String) -> LibraryEntry {
+        LibraryEntry(id: filename, source: .imported,
+                     fileURL: URL(fileURLWithPath: "/lib/\(filename)"),
+                     displayName: filename, rank: nil)
+    }
+
+    /// A canonical ES-archive filename parses to its real `(gen,id)`.
+    func testEsIdentityParsesGenAndId() {
+        let e = esEntry("electricsheep.248.08200.flam3")
+        let es = esIdentity(for: e)
+        XCTAssertEqual(es?.gen, "248")
+        XCTAssertEqual(es?.id, "08200")
+    }
+
+    /// The 5-digit zero-padded id is preserved verbatim (not coerced to int).
+    func testEsIdentityPreservesZeroPaddedId() {
+        let e = esEntry("electricsheep.248.00037.flam3")
+        XCTAssertEqual(esIdentity(for: e)?.id, "00037")
+    }
+
+    /// A different gen still parses (gen is captured, not hardcoded).
+    func testEsIdentityParsesDifferentGen() {
+        let e = esEntry("electricsheep.165.00100.flam3")
+        XCTAssertEqual(esIdentity(for: e)?.gen, "165")
+        XCTAssertEqual(esIdentity(for: e)?.id, "00100")
+    }
+
+    /// A non-ES filename (user import with an arbitrary name) ⇒ nil ⇒ minted.
+    func testEsIdentityNilForNonEsFilename() {
+        XCTAssertNil(esIdentity(for: esEntry("my_design.flam3")))
+        XCTAssertNil(esIdentity(for: esEntry("sierpinski.flam3")))
+    }
+
+    /// A directory entry whose filename lacks the ES prefix ⇒ nil.
+    func testEsIdentityNilForNonEsPrefix() {
+        let dir = esEntry("electricsheep_248_08200.flam3")  // underscores, not dots
+        XCTAssertNil(esIdentity(for: dir))
+    }
+
+    /// A malformed ES-shaped name with a non-numeric gen ⇒ nil.
+    func testEsIdentityNilForNonNumericGen() {
+        XCTAssertNil(esIdentity(for: esEntry("electricsheep.abc.08200.flam3")))
+    }
+
+    /// A non-numeric id ⇒ nil.
+    func testEsIdentityNilForNonNumericId() {
+        XCTAssertNil(esIdentity(for: esEntry("electricsheep.248.gen9.flam3")))
+    }
+
+    /// Wrong extension ⇒ nil.
+    func testEsIdentityNilForWrongExtension() {
+        XCTAssertNil(esIdentity(for: esEntry("electricsheep.248.08200.xml")))
+    }
+
+    /// Too few / too many dots ⇒ nil.
+    func testEsIdentityNilForWrongPartCount() {
+        XCTAssertNil(esIdentity(for: esEntry("electricsheep.248.flam3")))           // 3 parts
+        XCTAssertNil(esIdentity(for: esEntry("electricsheep.248.08200.extra.flam3"))) // 5 parts
+    }
 }

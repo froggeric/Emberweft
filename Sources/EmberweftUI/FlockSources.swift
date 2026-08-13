@@ -50,3 +50,25 @@ public func flockSortedSources(_ entries: [LibraryEntry]) -> [LibraryEntry] {
         return a < b
     }
 }
+
+/// The ES `(gen,id)` parsed from an ES-archive filename
+/// `electricsheep.<gen>.<id>.flam3`, or nil if this entry is NOT ES-sourced
+/// (user import with an arbitrary name). Used so ES genomes keep their real
+/// identity (D7) instead of being minted into flock 900000.
+///
+/// Strict: the full filename must be exactly 4 dot-separated parts
+/// `["electricsheep", <numeric gen>, <numeric id>, "flam3"]`. A wrong prefix,
+/// non-numeric gen/id, wrong extension, or extra/fewer dots ⇒ nil ⇒ mint.
+/// Preserves zero-padding verbatim (e.g. id `"08200"`). Pure; rule-#2-safe
+/// (the parse never touches hash order).
+public func esIdentity(for entry: LibraryEntry) -> (gen: String, id: String)? {
+    let parts = entry.fileURL.lastPathComponent
+        .split(separator: ".").map(String.init)
+    guard parts.count == 4,
+          parts[0] == "electricsheep",
+          parts[3] == "flam3",
+          parts[1].allSatisfy(\.isNumber),
+          parts[2].allSatisfy(\.isNumber)
+    else { return nil }
+    return (gen: parts[1], id: parts[2])
+}
