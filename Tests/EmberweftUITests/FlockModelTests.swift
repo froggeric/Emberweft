@@ -230,7 +230,60 @@ final class FlockModelTests: XCTestCase {
         ]))
         await vm.generate(generateRequest())
         await vm.awaitGenerateCompletion()
-        XCTAssertEqual(vm.generateState, .running(skip: 1, render: 3, total: 5))
+        // etaSeconds is nil: this script has no `.rendering` events, so no unit
+        // wall-clock is ever sampled (cold start).
+        XCTAssertEqual(vm.generateState, .running(skip: 1, render: 3, total: 5, etaSeconds: nil))
+    }
+
+    // MARK: - Generate: within-unit frame progress (v0.5.8)
+
+    func testGenerateRenderingProgressMapsToRenderingState() async {
+        // Per-frame `.rendering` events must surface as the `.rendering` UI state
+        // carrying the cumulative unit counters + the within-unit frame fraction.
+        // etaSeconds is nil (cold start: < floor samples).
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([
+            .resolving,
+            .running(skip: 0, render: 0, total: 3),
+            .rendering(skip: 0, render: 0, total: 3, frame: 1, frameTotal: 360),
+            .rendering(skip: 0, render: 0, total: 3, frame: 180, frameTotal: 360),
+            .running(skip: 0, render: 1, total: 3),
+        ]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        // The last applied state is the post-unit .running (render advanced).
+        XCTAssertEqual(vm.generateState, .running(skip: 0, render: 1, total: 3, etaSeconds: nil))
+    }
+
+    // MARK: - Generate: ETA estimator (v0.5.8, pure math)
+
+    func testETAEstimatorColdStartReturnsNilUntilFloor() {
+        var eta = GenerateETAEstimator(alpha: 0.5, coldStartFloor: 3)
+        // Below the floor (3 samples): always nil.
+        eta.record(unitSeconds: 10)
+        XCTAssertNil(eta.etaSeconds(remainingUnits: 5), "< floor ⇒ nil")
+        eta.record(unitSeconds: 10)
+        XCTAssertNil(eta.etaSeconds(remainingUnits: 5), "< floor ⇒ nil")
+        // At/above the floor: returns remaining × EMA.
+        eta.record(unitSeconds: 10)
+        let got = eta.etaSeconds(remainingUnits: 5)
+        XCTAssertNotNil(got, ">= floor ⇒ non-nil")
+        // Three uniform 10 s samples ⇒ EMA ≈ 10 s ⇒ 5 units ≈ 50 s (within the
+        // EMA's smoothing tolerance).
+        XCTAssertEqual(got!, 50.0, accuracy: 5.0, "uniform 10 s/unit × 5 units ≈ 50 s")
+    }
+
+    func testETAEstimatorClampsOutlierAndIsNonNegative() {
+        var eta = GenerateETAEstimator(alpha: 0.5, coldStartFloor: 2)
+        eta.record(unitSeconds: 10)   // warm-up (EMA still 0 → effective = 10)
+        eta.record(unitSeconds: 10)   // EMA = 10, past floor
+        // Now a huge outlier (1000 s) is clamped to 3×EMA = 30 before blending.
+        eta.record(unitSeconds: 1000)
+        let ema = eta.unitSecondsEMA
+        // α=0.5: effective = min(1000, 30) = 30 ⇒ EMA = 0.5*30 + 0.5*10 = 20.
+        XCTAssertEqual(ema, 20.0, accuracy: 0.01, "outlier clamped to 3×EMA before blending")
+        // Remaining ≤ 0 ⇒ 0 (never negative).
+        XCTAssertEqual(eta.etaSeconds(remainingUnits: 0)!, 0.0, "zero remaining ⇒ 0 s")
     }
 
     // MARK: - Generate: error cases

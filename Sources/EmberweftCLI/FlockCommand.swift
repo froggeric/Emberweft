@@ -156,6 +156,11 @@ extension EmberweftCLI {
                 case .resolving: out("flock generate: resolving…\n")
                 case .running(let skip, let render, let total):
                     out("flock generate: skip=\(skip) render=\(render) / \(total)\n")
+                case .rendering(let skip, let render, let total, let frame, let frameTotal):
+                    // Per-frame within-unit progress (v0.5.8). The CLI prints one
+                    // line per frame like the export path; `running` lines bracket
+                    // each unit. Suppressible noise on a TTY but useful in logs.
+                    out("flock generate: unit \(skip + render + 1)/\(total) frame \(frame)/\(frameTotal)\n")
                 case .completed(let rendered, let skipped):
                     out("flock generate: complete (rendered=\(rendered), skipped=\(skipped))\n")
                 case .failed(let msg):

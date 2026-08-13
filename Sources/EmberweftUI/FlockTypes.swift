@@ -15,15 +15,78 @@ import FlameFlock
 
 /// Generate state machine: `idle → resolving → running → completed | failed | cancelled`.
 /// The `running` tuple carries the live `(skip, render, total)` counters from
-/// `GenerateUIProgress.running`; `completed` carries the final tally. `failed`
-/// carries a user-facing message; `cancelled` is terminal.
+/// `GenerateUIProgress.running` plus a smoothed `etaSeconds` (nil ⇒ cold-start
+/// "estimating…"); `rendering` carries the same counters AND the current unit's
+/// within-range frame progress (`frame`/`frameTotal`) emitted per-frame by
+/// `GenerateCoordinator` (v0.5.8 — the per-video-file progress the owner wants).
+/// `completed` carries the final tally. `failed` carries a user-facing message;
+/// `cancelled` is terminal.
 public enum GenerateUIState: Sendable, Equatable {
     case idle
     case resolving
-    case running(skip: Int, render: Int, total: Int)
+    case running(skip: Int, render: Int, total: Int, etaSeconds: Double?)
+    case rendering(skip: Int, render: Int, total: Int, frame: Int, frameTotal: Int, etaSeconds: Double?)
     case completed(rendered: Int, skipped: Int)
     case failed(String)
     case cancelled
+}
+
+// MARK: - ETA estimator (v0.5.8)
+
+/// Pure per-unit EMA ETA estimator for Flock Generate (mirrors `ExportManager`'s
+/// per-frame `frameSecondsEMA` at unit granularity — units are the natural ETA
+/// grain here since each is a self-contained render). A value type with NO
+/// wall-clock state: the VM (`FlockModel`) feeds it real/scripted per-unit
+/// durations and the remaining-unit count. Determinism (rule #2): the estimate
+/// is a pure function of the fed durations; no hashed-collection float sums.
+///
+/// Cold start: returns `nil` (⇒ "estimating…") until `completedUnits >=
+/// coldStartFloor` real samples have been recorded. A single outlier unit is
+/// clamped to 3× the running EMA so one slow/stalled unit can't blow up the ETA
+/// (mirrors `ExportManager.applyETA`'s clamp).
+public struct GenerateETAEstimator: Equatable, Sendable {
+    public private(set) var unitSecondsEMA: Double = 0
+    public private(set) var completedUnits: Int = 0
+    public let alpha: Double
+    public let coldStartFloor: Int
+
+    /// `alpha` = EMA weight on the newest sample (0.4 ⇒ ~last 3–4 units
+    /// dominant, `1/alpha ≈ 2.5`); `coldStartFloor` = min samples before an ETA
+    /// is shown (3 — at unit granularity each sample is already a substantial
+    /// average, unlike export's per-frame floor of 8).
+    public init(alpha: Double = 0.4, coldStartFloor: Int = 3) {
+        self.alpha = alpha
+        self.coldStartFloor = coldStartFloor
+    }
+
+    /// Record one completed unit's wall-clock duration (seconds). Seeds the EMA
+    /// with the FIRST sample (unlike `ExportManager`'s ramp-from-zero, which at
+    /// unit granularity would systematically under-estimate the ETA for the first
+    /// few minutes-long units). After seeding, clamps each new sample to 3× the
+    /// running EMA so a single slow unit (or a brief stall) can't dominate.
+    public mutating func record(unitSeconds: Double) {
+        if completedUnits == 0 {
+            unitSecondsEMA = unitSeconds
+        } else {
+            let effective = min(unitSeconds, 3 * unitSecondsEMA)
+            unitSecondsEMA = alpha * effective + (1 - alpha) * unitSecondsEMA
+        }
+        completedUnits += 1
+    }
+
+    /// Estimated seconds remaining for `remainingUnits` (may be fractional — the
+    /// VM passes a partial count mid-unit so the ETA decreases smoothly within a
+    /// unit), or nil during cold start. Pure: a function of the EMA + remaining.
+    public func etaSeconds(remainingUnits: Double) -> Double? {
+        guard completedUnits >= coldStartFloor else { return nil }
+        return max(0, remainingUnits) * unitSecondsEMA
+    }
+
+    /// Reset for a fresh run.
+    public mutating func reset() {
+        unitSecondsEMA = 0
+        completedUnits = 0
+    }
 }
 
 /// Stitch state machine: `idle → resolving → plan → running → completed | failed | cancelled`.

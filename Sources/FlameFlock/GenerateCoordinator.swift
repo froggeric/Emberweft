@@ -23,6 +23,14 @@ public enum GenerateScope: String, Sendable { case edges, loops, both }
 public enum GenerateUIProgress: Sendable, Equatable {
     case resolving
     case running(skip: Int, render: Int, total: Int)
+    /// Within-unit frame progress (v0.5.8): emitted per-frame during a unit's
+    /// render, so the UI is not stuck at the previous unit-boundary `.running`
+    /// yield for the whole duration of a long unit (the "0 rendered for hours"
+    /// symptom). `skip`/`render`/`total` are the cumulative unit counters (the
+    /// unit currently being rendered is `skip + render + 1`); `frame` is
+    /// 1-indexed within the unit's encode range, `frameTotal` = range.count
+    /// (loops ⇒ `loopFrames`, edges ⇒ `transFrames`).
+    case rendering(skip: Int, render: Int, total: Int, frame: Int, frameTotal: Int)
     case completed(rendered: Int, skipped: Int)
     case failed(String)
     case cancelled
@@ -166,12 +174,26 @@ public actor GenerateCoordinator {
                 }
                 // Render (upgrade-overwrite at the same archive path:
                 // ArchiveRenderer atomic-writes the file THEN upserts the row).
+                // v0.5.8: install a per-frame callback that yields `.rendering`
+                // so the UI shows within-unit progress ("frame 180/360") instead
+                // of freezing at the previous unit-boundary yield for the whole
+                // render (the "0 rendered for hours" symptom). The counters are
+                // captured by value (immutable locals) — they are stable for the
+                // duration of THIS unit's render (incremented after it returns).
+                // `renderSegmentRange` delivers a path-independent 1-indexed
+                // within-range frame (it counts yields, NOT ExportProgress's
+                // global-vs-relative currentFrame), so no offset math is needed.
+                let curSkip = skip, curRender = render
+                let perFrame: @Sendable (_ frame: Int, _ frameTotal: Int) -> Void = { frame, frameTotal in
+                    continuation.yield(.rendering(skip: curSkip, render: curRender,
+                                                  total: total, frame: frame, frameTotal: frameTotal))
+                }
                 if unit.isLoop {
                     try await renderer.renderLoop(
                         A: unit.A, aGen: unit.aGen, aId: unit.aId, shard: request.shard,
                         settings: request.settings, coordinator: coordinator, catalog: catalog,
                         backend: backend, useOffMainMetal: useOffMainMetal,
-                        flockRoot: request.flockRoot, sourceSha: nil)
+                        flockRoot: request.flockRoot, sourceSha: nil, perFrame: perFrame)
                 } else {
                     let B = unit.B ?? unit.A
                     try await renderer.renderEdge(
@@ -179,7 +201,7 @@ public actor GenerateCoordinator {
                         bGen: unit.bGen, bId: unit.bId, shard: request.shard,
                         settings: request.settings, coordinator: coordinator, catalog: catalog,
                         backend: backend, useOffMainMetal: useOffMainMetal,
-                        flockRoot: request.flockRoot, sourceSha: nil)
+                        flockRoot: request.flockRoot, sourceSha: nil, perFrame: perFrame)
                 }
                 render += 1
                 done.insert(key)

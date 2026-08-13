@@ -63,7 +63,8 @@ public struct ArchiveRenderer: Sendable {
         A: Flame, aGen: String, aId: String, shard: ShardSpec,
         settings: ExportSettings, coordinator: ExportCoordinator,
         catalog: FlockCatalog, backend: ExportCoordinator.Backend, useOffMainMetal: Bool,
-        flockRoot: URL, sourceSha: String?
+        flockRoot: URL, sourceSha: String?,
+        perFrame: (@Sendable (_ frame: Int, _ frameTotal: Int) -> Void)? = nil
     ) async throws {
         let seed = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId, bGen: aGen, bId: aId)
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
@@ -76,7 +77,7 @@ public struct ArchiveRenderer: Sendable {
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: aGen, bId: aId,
             kind: .loop, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A)
+            seed: seed, A: A, perFrame: perFrame)
     }
 
     /// Render an edge artifact (A→B). Same shape; 2-segment plan, transition range only.
@@ -84,7 +85,8 @@ public struct ArchiveRenderer: Sendable {
         A: Flame, B: Flame, aGen: String, aId: String, bGen: String, bId: String, shard: ShardSpec,
         settings: ExportSettings, coordinator: ExportCoordinator,
         catalog: FlockCatalog, backend: ExportCoordinator.Backend, useOffMainMetal: Bool,
-        flockRoot: URL, sourceSha: String?
+        flockRoot: URL, sourceSha: String?,
+        perFrame: (@Sendable (_ frame: Int, _ frameTotal: Int) -> Void)? = nil
     ) async throws {
         let seed = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId, bGen: bGen, bId: bId)
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
@@ -97,7 +99,7 @@ public struct ArchiveRenderer: Sendable {
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: bGen, bId: bId,
             kind: .edge, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A)
+            seed: seed, A: A, perFrame: perFrame)
     }
 
     /// Shared body: drive `renderSegmentRange` (temp→atomic-rename handled inside
@@ -109,7 +111,8 @@ public struct ArchiveRenderer: Sendable {
         out: URL, shard: ShardSpec, aGen: String, aId: String, bGen: String, bId: String,
         kind: ArtifactRow.Kind, backend: ExportCoordinator.Backend, useOffMainMetal: Bool,
         coordinator: ExportCoordinator, catalog: FlockCatalog, sourceSha: String?, flockRoot: URL,
-        seed: UInt64, A: Flame
+        seed: UInt64, A: Flame,
+        perFrame: (@Sendable (_ frame: Int, _ frameTotal: Int) -> Void)? = nil
     ) async throws {
         try? FileManager.default.createDirectory(at: out.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
@@ -125,7 +128,7 @@ public struct ArchiveRenderer: Sendable {
         try await coordinator.renderSegmentRange(
             plan: plan, params: params, budget: nil, useMetal: backend == .metal,
             range: range, smoothingAlpha: settings.smoothingAlpha, settings: settings,
-            out: out, metadata: metadata)
+            out: out, metadata: metadata, perFrame: perFrame)
         // Thumb (representative frame: frame 0 of the asset).
         try await Self.writeThumbnail(from: out,
                                       to: try FlockNaming.thumbURL(flockRoot: flockRoot, shardDir: shard.name,
