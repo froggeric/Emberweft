@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import EmberweftUI
 import FlameKit
 import FlameFlock
@@ -42,6 +41,7 @@ struct FlockView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 150)
+                .padding(.trailing, 8)
                 .help("Render backend. Auto falls back to CPU if Metal is unavailable.")
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -129,39 +129,97 @@ private struct LoadedFlame: Identifiable {
     var flameID: String { "\(gen)/\(id)" }
 }
 
-/// Present an `NSOpenPanel` for one or more `.flam3` files (ordered selection).
-/// Returns `[]` on cancel. Works on the bundle-less SwiftPM executable because
-/// `EmberweftApp` sets the `.regular` activation policy (see `SavePanel.swift`).
-@MainActor
-private func pickFlam3Sources(allowsMultiple: Bool, title: String) -> [URL] {
-    let panel = NSOpenPanel()
-    panel.title = title
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.allowsMultipleSelection = allowsMultiple
-    panel.allowedContentTypes = [UTType(tag: "flam3", tagClass: .filenameExtension,
-                                        conformingTo: .xml) ?? .xml]
-    guard panel.runModal() == .OK else { return [] }
-    return panel.urls.sorted(by: { $0.path < $1.path })   // deterministic order
-}
-
-/// Parse + resolve identity for each picked `.flam3` via `IdMinter` (writes the
-/// dedup `sheep` row for new sources). Skips unparseable / multi-flame files.
-private func loadSources(_ urls: [URL], catalog: FlockCatalog?) async -> [LoadedFlame] {
+/// Resolve library entries → `[LoadedFlame]`, preserving the INPUT order.
+/// Reuses the library's cached parse (`LibraryIndex.loadGenome`) rather than
+/// re-reading + re-parsing disk; reads the file bytes once only for the
+/// `IdMinter` SHA (dedup so the same genome picked twice mints one flock id).
+/// Skips entries whose genome can't be parsed.
+///
+/// Order is the caller's responsibility: Favorites / the multi-selection are
+/// pre-sorted via `flockSortedSources` (rule #2 — unordered inputs); a
+/// collection's stored order is preserved verbatim (it IS the sequence).
+/// Nonisolated: the file reads + actor hops run off the MainActor.
+private func loadLibrarySources(_ entries: [LibraryEntry], catalog: FlockCatalog?,
+                                libraryIndex: LibraryIndex) async -> [LoadedFlame] {
     guard let catalog else { return [] }
     let minter = IdMinter()
     var out: [LoadedFlame] = []
-    for url in urls {
-        guard let data = try? Data(contentsOf: url),
-              let flame = try? Flam3Parser.parse(data).first else { continue }
+    for entry in entries {
+        guard let flame = try? await libraryIndex.loadGenome(for: entry) else { continue }
+        let data = try? Data(contentsOf: entry.fileURL)
         let (gen, id) = (try? await minter.resolve(
             catalog: catalog, esGen: nil, esId: nil, origin: .user,
-            sourceRef: url, sourceBytes: data)) ?? ("900000", "000000")
+            sourceRef: entry.fileURL, sourceBytes: data)) ?? ("900000", "000000")
         out.append(LoadedFlame(gen: gen, id: id, flame: flame,
-                               displayName: url.deletingPathExtension().lastPathComponent))
+                               displayName: entry.displayName))
     }
     return out
 }
+
+// MARK: - Library source menu (shared by Generate + Stitch)
+
+/// A `Menu` that sources Flock genomes from the in-app library — Favorites
+/// (Liked), each collection (playlist, in stored order), or the genomes
+/// currently selected in the library grid — instead of an `NSOpenPanel` file
+/// pick. Selecting an option resolves the entries to `[LoadedFlame]`
+/// (`LibraryIndex.loadGenome` + `IdMinter`) and invokes `onLoaded` on the
+/// MainActor. Mirrors the `ShardMenu` pattern (a `Menu`, not a `Picker`, so no
+/// `Hashable` requirement is imposed on the source set).
+///
+/// - Favorites: `AppModel.likedEntries()` (sentiment == +1), sorted via
+///   `flockSortedSources` for a rule-#2-stable order.
+/// - Each collection: its `resolvedPairs` entries in STORED order (the order IS
+///   the sequence — never re-sorted).
+/// - Selection: `AppModel.selection` (the active multi-select), sorted via
+///   `flockSortedSources`; shown only when non-empty.
+private struct FlockSourceMenu: View {
+    @Environment(AppModel.self) private var appModel
+    let label: String
+    let catalog: FlockCatalog?
+    /// Invoked on the MainActor with the resolved, ordered sources after a pick.
+    let onLoaded: @MainActor ([LoadedFlame]) -> Void
+
+    private var favorites: [LibraryEntry] { flockSortedSources(appModel.likedEntries()) }
+    private var selection: [LibraryEntry] { flockSortedSources(Array(appModel.selection)) }
+
+    var body: some View {
+        Menu(label) {
+            Button("Favorites — \(favorites.count)") { load(favorites) }
+                .disabled(favorites.isEmpty)
+
+            let collections = appModel.collectionsStore.collections
+            if !collections.isEmpty {
+                Divider()
+                ForEach(collections) { c in
+                    let entries = appModel.resolvedPairs(for: c).map(\.entry)
+                    Button("Collection: \(c.name) — \(entries.count)") { load(entries) }
+                        .disabled(entries.isEmpty)
+                }
+            }
+
+            if !selection.isEmpty {
+                Divider()
+                Button("Selected in Library — \(selection.count)") { load(selection) }
+            }
+        }
+        .disabled(catalog == nil)
+        .help("Source genomes from the library: Favorites, a collection, or the current selection.")
+    }
+
+    /// Kick off the async resolution off the MainActor, then deliver the loaded
+    /// sources on the MainActor. No-op for an empty pick (Favorites/selection
+    /// surface their counts but the buttons stay disabled when empty).
+    private func load(_ entries: [LibraryEntry]) {
+        guard !entries.isEmpty, let catalog else { return }
+        let libraryIndex = appModel.libraryIndex
+        Task {
+            let loaded = await loadLibrarySources(entries, catalog: catalog,
+                                                  libraryIndex: libraryIndex)
+            await MainActor.run { onLoaded(loaded) }
+        }
+    }
+}
+
 
 /// `ExportSettings` matched to a shard (codec/fps/container; genome-default
 /// quality, sharp single-pass, smoothing OFF — the byte-identical mastering
@@ -188,7 +246,6 @@ private struct GenerateTab: View {
     @State private var shard = defaultShard
     @State private var sources: [LoadedFlame] = []
     @State private var includeLoops = false
-    @State private var picking = false
     @State private var loadError: String?
 
     private var catalog: FlockCatalog? { appModel.flockCatalog }
@@ -202,8 +259,11 @@ private struct GenerateTab: View {
             }
             Section("Source genomes") {
                 HStack {
-                    Button("Choose Source…") { pickSources() }
-                        .disabled(catalog == nil)
+                    FlockSourceMenu(label: "Choose Source…", catalog: catalog) { loaded in
+                        sources = loaded
+                        loadError = loaded.isEmpty
+                            ? "No readable genomes in that selection." : nil
+                    }
                     Text("\(sources.count) genome\(sources.count == 1 ? "" : "s")")
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -273,20 +333,6 @@ private struct GenerateTab: View {
     }
     private var canRun: Bool { !running }
 
-    private func pickSources() {
-        picking = true
-        let urls = pickFlam3Sources(allowsMultiple: true, title: "Choose Source Genomes")
-        picking = false
-        guard !urls.isEmpty else { return }
-        Task {
-            let loaded = await loadSources(urls, catalog: catalog)
-            await MainActor.run {
-                sources = loaded
-                loadError = loaded.isEmpty ? "No readable .flam3 files selected." : nil
-            }
-        }
-    }
-
     /// Build loop + edge units from the ordered source list, upsert the shard
     /// (the `artifacts.shard` FK requires the row to pre-exist), then drive the
     /// coordinator through `FlockModel.generate` (fire-and-forget).
@@ -347,8 +393,11 @@ private struct StitchTab: View {
             }
             Section("Sequence") {
                 HStack {
-                    Button("Choose Sequence…") { pickSequence() }
-                        .disabled(catalog == nil)
+                    FlockSourceMenu(label: "Choose Sequence…", catalog: catalog) { loaded in
+                        sequence = loaded
+                        loadError = loaded.count < 2
+                            ? "Pick at least 2 genomes for a transition." : nil
+                    }
                     Text("\(sequence.count) genome\(sequence.count == 1 ? "" : "s")  ·  \(segmentCount) segments")
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -429,18 +478,6 @@ private struct StitchTab: View {
         shard.name = shard.isCanonical
             ? "\(shard.width)x\(shard.height)_\(shard.fps)fps"
             : "\(shard.width)x\(shard.height)_\(shard.fps)fps_Lf\(lf)-Tf\(tf)"
-    }
-
-    private func pickSequence() {
-        let urls = pickFlam3Sources(allowsMultiple: true, title: "Choose Sequence Genomes")
-        guard !urls.isEmpty else { return }
-        Task {
-            let loaded = await loadSources(urls, catalog: catalog)
-            await MainActor.run {
-                sequence = loaded
-                loadError = loaded.count < 2 ? "Pick at least 2 genomes for a transition." : nil
-            }
-        }
     }
 
     private func stitch() {
