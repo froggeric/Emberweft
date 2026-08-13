@@ -413,19 +413,15 @@ private struct GenerateTab: View {
         }
     }
 
-    /// Loops = one self-edge per source; edges = each adjacent pair (mirrors
-    /// `StitchCoordinator.buildSegmentKeys`).
+    /// Build loop + edge units from the ordered source list. Delegates to
+    /// `GenerateUnit.enumerate` so the EDGES-FIRST render order (D10) is shared
+    /// with the CLI's `enumerateUnits`: a `.both` (Edges + Loops) run renders the
+    /// stitch-critical edges BEFORE the opt-in loops, so the owner sees edges
+    /// appear rather than hours of loops first (the "only loops, no edges"
+    /// symptom on a real collection). The default `.edges` scope is order-
+    /// independent (loops filtered out).
     private func buildUnits() -> [GenerateUnit] {
-        var units: [GenerateUnit] = []
-        for f in sources {
-            units.append(GenerateUnit(aGen: f.gen, aId: f.id, bGen: f.gen, bId: f.id, A: f.flame))
-        }
-        for i in 0..<(sources.count - 1) {
-            let a = sources[i], b = sources[i + 1]
-            units.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: b.gen, bId: b.id,
-                                      A: a.flame, B: b.flame))
-        }
-        return units
+        GenerateUnit.enumerate(sources.map { (gen: $0.gen, id: $0.id, flame: $0.flame) })
     }
 }
 
