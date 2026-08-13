@@ -747,6 +747,21 @@ public actor ExportCoordinator: ExportCoordinating {
     /// sourced parity/byte-identity). The existing runJob/runResumable paths do
     /// NOT call this — they keep their own encoders. `smoothingAlpha >= 1.0`
     /// (default/OFF) ⇒ byte-identical to the export OFF path.
+    ///
+    /// `perFrame` (v0.5.8): an OPTIONAL per-frame progress callback the caller can
+    /// install to observe within-unit frame progress. ADDITIVE + default nil ⇒ a
+    /// no-op, so every existing caller (and the byte-identity pin) is unchanged.
+    /// `GenerateCoordinator` passes a closure that enriches `GenerateUIProgress`
+    /// with the current unit's sub-progress ("rendering edge 3/12 · frame 180/360").
+    ///
+    /// The callback receives a NORMALIZED `(frame, frameTotal)`: `frame` is
+    /// 1-indexed within THIS call's `range`, `frameTotal == range.count`. It is
+    /// computed by counting yields (both `renderFrames` paths yield exactly once
+    /// per encoded frame), NOT by reading `ExportProgress.currentFrame` (whose
+    /// global-vs-range-relative semantics differ between the OFF and smoothing-ON
+    /// paths — relying on it would mis-report edge frames on the default Standard
+    /// tier). `@Sendable` so it can cross the actor boundary to the
+    /// GenerateCoordinator's stream.
     public func renderSegmentRange(
         plan: FramePlan,
         params: RenderParams,
@@ -756,7 +771,8 @@ public actor ExportCoordinator: ExportCoordinating {
         smoothingAlpha: Double,
         settings: ExportSettings,
         out: URL,
-        metadata: [AVMetadataItem] = []
+        metadata: [AVMetadataItem] = [],
+        perFrame: (@Sendable (_ frame: Int, _ frameTotal: Int) -> Void)? = nil
     ) async throws {
         let tempURL = out.deletingLastPathComponent()
             .appendingPathComponent("." + out.lastPathComponent + ".partial")
@@ -764,11 +780,19 @@ public actor ExportCoordinator: ExportCoordinating {
         let encoder = try VideoEncoder(settings: settings, outputURL: tempURL, metadata: metadata)
         try await encoder.start()
         // renderFrames already branches on smoothingAlpha (OFF ⇒ renderImage per
-        // frame; ON ⇒ feed-emit). yield is a no-op — the ArchiveCoordinator
-        // reports its own per-unit progress.
+        // frame; ON ⇒ feed-emit). Count its per-frame yields (exactly range.count
+        // in both paths) to produce a path-independent 1-indexed within-range
+        // frame for `perFrame`. The counter is `@unchecked Sendable` and safe:
+        // `renderFrames` runs on THIS actor, so every yield (and thus every
+        // counter mutation) is serialized on the actor — no cross-thread access.
+        let counter = SegmentFrameCounter()
+        let frameTotal = range.count
         try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
                                range: range, smoothingAlpha: smoothingAlpha,
-                               into: encoder, yield: { _ in })
+                               into: encoder, yield: { _ in
+            counter.n &+= 1
+            perFrame?(counter.n, frameTotal)
+        })
         try await encoder.finish()
         // Rename partial -> out. For a FRESH artifact (no existing file) this is a
         // clean atomic move. For an UPGRADE-overwrite (existing file present) the
@@ -1377,4 +1401,14 @@ public actor ExportCoordinator: ExportCoordinating {
         let fpsMult = fps >= 60 ? 1.5 : 1.0
         return Int(Double(base) * fpsMult)
     }
+}
+
+/// Per-frame counter for `renderSegmentRange`'s `perFrame` callback (v0.5.8).
+/// `@unchecked Sendable`: the only mutation site is the `yield` closure passed
+/// to `renderFrames`, which runs serialized on the `ExportCoordinator` actor —
+/// so access is single-threaded despite the `@Sendable` requirement on the
+/// closure. `&+=` wraps on overflow (defensively; a real run never overflows
+/// `Int` frame counts).
+final class SegmentFrameCounter: @unchecked Sendable {
+    var n: Int = 0
 }

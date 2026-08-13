@@ -82,6 +82,16 @@ public final class FlockModel {
     private var cancelGenerateTask: Task<Void, Never>?
     private var cancelStitchTask: Task<Void, Never>?
 
+    // MARK: - Generate ETA (v0.5.8)
+    // Per-unit wall-clock EMA → ETA, mirroring `ExportManager`'s per-frame EMA at
+    // unit granularity. The VM observes wall-clock cadence between the first
+    // frame of a unit (`.rendering(frame: 1)`) and the unit-boundary `.running`
+    // that completes it; only RENDER completions are sampled (skips emit
+    // `.running` with `render` unchanged ⇒ not sampled). Reset on each run.
+    private var eta = GenerateETAEstimator()
+    private var unitStartAt: ContinuousClock.Instant?
+    private var lastRenderCount = 0
+
     public init() {}
 
     // MARK: - Backend resolution
@@ -109,6 +119,8 @@ public final class FlockModel {
             return
         }
         generateState = .resolving
+        // Reset ETA state for the fresh run (mirrors ExportManager.resetETAState).
+        eta.reset(); unitStartAt = nil; lastRenderCount = 0
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let gen = generateFactory(backend, true)
         generateCoord = gen
@@ -239,7 +251,31 @@ public final class FlockModel {
         case .resolving:
             generateState = .resolving
         case .running(let skip, let render, let total):
-            generateState = .running(skip: skip, render: render, total: total)
+            // A render unit completed iff `render` increased and we timed its
+            // render (skips/resume-skip emit `.running` with `render` unchanged ⇒
+            // `unitStartAt` is nil or stale; not sampled). Record the wall-clock
+            // duration into the EMA.
+            if render > lastRenderCount, let start = unitStartAt {
+                eta.record(unitSeconds: Self.seconds(from: ContinuousClock.now - start))
+            }
+            lastRenderCount = render
+            unitStartAt = nil
+            let etaSec = eta.etaSeconds(remainingUnits: Double(max(0, total - skip - render)))
+            generateState = .running(skip: skip, render: render, total: total, etaSeconds: etaSec)
+        case .rendering(let skip, let render, let total, let frame, let frameTotal):
+            // First frame of a unit marks the render start (the catalog lookup
+            // ran between the prior `.running` and this; measuring here captures
+            // render time only, not lookup). Overwrite is correct: a new unit's
+            // first frame always follows its preceding `.running` completion.
+            if frame == 1 { unitStartAt = ContinuousClock.now }
+            // Smooth within-unit ETA: the in-flight unit is partially done, so
+            // subtract its completed fraction from the remaining count.
+            let remainingWhole = Double(max(0, total - skip - render - 1))
+            let fracDone = Double(max(0, frame - 1)) / Double(max(1, frameTotal))
+            let remaining = remainingWhole + (1.0 - fracDone)
+            let etaSec = eta.etaSeconds(remainingUnits: remaining)
+            generateState = .rendering(skip: skip, render: render, total: total,
+                                       frame: frame, frameTotal: frameTotal, etaSeconds: etaSec)
         case .completed(let rendered, let skipped):
             generateState = .completed(rendered: rendered, skipped: skipped)
         case .failed(let message):
@@ -247,6 +283,13 @@ public final class FlockModel {
         case .cancelled:
             generateState = .cancelled
         }
+    }
+
+    /// Duration → seconds (Double), mirroring `ExportManager.seconds(from:)`.
+    /// `Duration.components` splits into (seconds, attoseconds); recombine.
+    private static func seconds(from duration: Duration) -> Double {
+        let (s, attos) = duration.components
+        return Double(s) + Double(attos) / 1e18
     }
 
     private func applyStitch(_ p: StitchUIProgress) {

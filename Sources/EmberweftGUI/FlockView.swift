@@ -221,19 +221,27 @@ private struct FlockSourceMenu: View {
 }
 
 
-/// `ExportSettings` matched to a shard (codec/fps/container; genome-default
-/// quality, sharp single-pass, smoothing OFF — the byte-identical mastering
-/// baseline). The archive path renders at the SHARD's width/height (not
-/// `settings.resolution`), so resolution is left at default.
-private func archiveSettings(for shard: ShardSpec) -> ExportSettings {
+/// `ExportSettings` matched to a shard + a quality choice. The archive path
+/// renders at the SHARD's width/height (not `settings.resolution`), so resolution
+/// is left at default. v0.5.8: the Generate default is now **Standard**
+/// (`.medium`, spp 30, the tier's recommended ts, smoothing ON as the tier
+/// resolves) — genome-default was impractically slow (~1000 spp ⇒ hours per 1080p
+/// edge, which with the old per-unit-only progress read as "0 rendered for
+/// hours"). The Flock Generate quality picker lets the owner choose mastering
+/// (genome) vs fast (standard/low); Stitch stays genome-default (its current
+/// setting) by passing `.genomeDefault` here. spp is resolved per-unit against
+/// each unit's flame in `ArchiveRenderer` (so a tier like genome uses each
+/// genome's own spp), which is why `ExportSettings.resolve` (single-baseFlame)
+/// is NOT used here.
+private func archiveSettings(for shard: ShardSpec, quality: ExportQualityChoice) -> ExportSettings {
     var s = ExportSettings()
     s.codec = shard.codec
     s.fps = shard.fps
     s.container = shard.codec.requiresMOVContainer ? .mov : .mp4
-    s.quality = .genome
-    s.temporalSamples = 1
-    s.smoothingAlpha = 1.0      // OFF (byte-identical); the GUI export tier
-                                // smoothing is a separate, deferred surface.
+    s.quality = quality.exportQuality
+    s.temporalSamples = quality.recommendedTemporalSamples
+    s.temporalSmoothing = .auto
+    s.smoothingAlpha = TemporalSmoothing.auto.alpha(for: quality.exportQuality)
     return s
 }
 
@@ -247,6 +255,10 @@ private struct GenerateTab: View {
     @State private var sources: [LoadedFlame] = []
     @State private var includeLoops = false
     @State private var loadError: String?
+    /// v0.5.8: archive render quality. Default **Standard** (spp 30 + the tier's
+    /// ts + smoothing ON) — genome-default was hours per 1080p edge. Genome =
+    /// mastering (byte-identical to `animate`); Low/High are faster/slower.
+    @State private var qualityChoice: ExportQualityChoice = .medium
 
     private var catalog: FlockCatalog? { appModel.flockCatalog }
     private var flockRoot: URL { appModel.flockRoot }
@@ -288,6 +300,19 @@ private struct GenerateTab: View {
                 .pickerStyle(.radioGroup)
                 .help("Edges = transitions between adjacent source genomes. Loops = each genome self-spun (opt-in).")
             }
+            Section("Quality") {
+                Picker("Quality", selection: $qualityChoice) {
+                    Text("Genome (mastering)").tag(ExportQualityChoice.genomeDefault)
+                    Text("Standard").tag(ExportQualityChoice.medium)
+                    Text("High").tag(ExportQualityChoice.high)
+                    Text("Low (draft)").tag(ExportQualityChoice.low)
+                }
+                .disabled(running)
+                .help(qualityHelp)
+                if qualityChoice != .genomeDefault {
+                    Text(qualityChoice.smoothingLabel).font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section {
                 Button("Generate material") { generate() }
                     .buttonStyle(.borderedProminent)
@@ -310,10 +335,19 @@ private struct GenerateTab: View {
             EmptyView()
         case .resolving:
             Text("Resolving…").font(.caption).foregroundStyle(.secondary)
-        case .running(let skip, let render, let total):
+        case .running(let skip, let render, let total, let eta):
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: Double(skip + render), total: Double(max(total, 1)))
-                Text("\(render) rendered · \(skip) skipped · \(total) total")
+                Text("\(render) rendered · \(skip) skipped · \(total) total\(etaText(eta))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case .rendering(let skip, let render, let total, let frame, let frameTotal, let eta):
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: Double(skip + render), total: Double(max(total, 1)))
+                // Per-unit sub-bar: the within-edge/loop frame fraction (the
+                // per-video-file progress the owner asked for).
+                ProgressView(value: Double(frame), total: Double(max(frameTotal, 1)))
+                Text("rendering \(skip + render + 1)/\(total) · frame \(frame)/\(frameTotal)\(etaText(eta))")
                     .font(.caption).foregroundStyle(.secondary)
             }
         case .completed(let rendered, let skipped):
@@ -326,8 +360,31 @@ private struct GenerateTab: View {
         }
     }
 
+    /// ETA token appended to the status line. nil ⇒ cold-start "estimating…".
+    private func etaText(_ eta: Double?) -> String {
+        guard let eta else { return " · estimating…" }
+        return " · \(etaLabel(eta))"
+    }
+
+    /// ETA as whole seconds / minutes / hours (mirrors ExportProgressSurface's
+    /// `etaLabel` style; the `~` prefix signals an estimate).
+    private func etaLabel(_ eta: TimeInterval) -> String {
+        let total = max(0, Int(eta.rounded()))
+        if total < 60 { return "~\(total) s remaining" }
+        let m = total / 60, r = total % 60
+        if m < 60 { return "~\(m) m \(r) s remaining" }
+        let h = m / 60, mr = m % 60
+        return "~\(h) h \(mr) m remaining"
+    }
+
+    private var qualityHelp: String {
+        "Standard (spp 30 + smoothing) is ~genome-clean at ~33× the speed — the practical default. " +
+        "Genome is mastering (byte-identical to animate, very slow). High/Low trade quality for time."
+    }
+
     private var running: Bool {
         if case .running = flockModel.generateState { return true }
+        if case .rendering = flockModel.generateState { return true }
         if case .resolving = flockModel.generateState { return true }
         return false
     }
@@ -341,7 +398,8 @@ private struct GenerateTab: View {
         guard !units.isEmpty else { return }
         let scope: GenerateScope = includeLoops ? .both : .edges
         let request = GenerateRequest(shard: shard, units: units, scope: scope,
-                                      settings: archiveSettings(for: shard), flockRoot: flockRoot)
+                                      settings: archiveSettings(for: shard, quality: qualityChoice),
+                                      flockRoot: flockRoot)
         Task {
             // FK gate: the shard row must exist before any artifact is inserted.
             if let catalog { try? await catalog.upsertShard(shard) }
@@ -487,7 +545,7 @@ private struct StitchTab: View {
         let out = chooseSaveURL(defaultName: "flock-stitch.\(ext)", suggestedDir: flockRoot)
             ?? flockRoot.appendingPathComponent("flock-stitch.\(ext)")
         let request = StitchRequest(shard: shard, orderedFlames: ordered,
-                                    settings: archiveSettings(for: shard),
+                                    settings: archiveSettings(for: shard, quality: .genomeDefault),
                                     flockRoot: flockRoot, out: out)
         Task {
             if let catalog { try? await catalog.upsertShard(shard) }
