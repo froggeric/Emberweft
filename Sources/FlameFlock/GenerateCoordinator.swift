@@ -61,6 +61,42 @@ public struct GenerateUnit: Sendable {            // loop OR edge; a==b ⇒ loop
         self.aGen = aGen; self.aId = aId; self.bGen = bGen; self.bId = bId
         self.A = A; self.B = B
     }
+
+    /// Enumerate the generate units for an ordered source list, **edges first,
+    /// then loops** (decision D10: edges — transitions between adjacent genomes —
+    /// are the stitch-critical default; loops — each genome self-spun — are the
+    /// opt-in extra).
+    ///
+    /// Rendering edges before loops means a `.both` run produces the archive's
+    /// edges (the material `stitch` needs) first. A loops-first order would fill
+    /// the output with `N × loopFrames` of loops before the FIRST edge appears —
+    /// on a real collection (canonical 15 s loops = 450 frames each) that is hours
+    /// of loops with zero edges, the "only loops, no edges" owner symptom. The
+    /// default scope `.edges` is unaffected (loops are filtered out regardless of
+    /// order); only `.both` reorders.
+    ///
+    /// For `flames` of count N: emits `N−1` edges (adjacent pairs) followed by `N`
+    /// loops (self-edges) = `2N−1` units. Pure + deterministic (rule #2 — array
+    /// iteration only, no Dict/Set). Mirrors the stitch timeline's pair structure
+    /// (§4.2); the unit SET is unchanged, only the render order.
+    public static func enumerate(_ flames: [(gen: String, id: String, flame: Flame)]) -> [GenerateUnit] {
+        guard !flames.isEmpty else { return [] }
+        var edges: [GenerateUnit] = []
+        var loops: [GenerateUnit] = []
+        loops.reserveCapacity(flames.count)
+        if flames.count > 1 { edges.reserveCapacity(flames.count - 1) }
+        for i in 0..<flames.count {
+            let a = flames[i]
+            loops.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: a.gen, bId: a.id, A: a.flame))
+            if i + 1 < flames.count {
+                let b = flames[i + 1]
+                edges.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: b.gen, bId: b.id,
+                                          A: a.flame, B: b.flame))
+            }
+        }
+        // Edges first (D10 priority); loops last (opt-in extras).
+        return edges + loops
+    }
 }
 
 /// A completed-key record in the generate-plan file. Persisted as a JSON array

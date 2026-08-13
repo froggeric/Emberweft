@@ -513,22 +513,14 @@ extension EmberweftCLI {
     }
 
     /// Enumerate loop + edge `GenerateUnit`s from `--from` (one loop per flame,
-    /// one edge per consecutive pair — the stitch timeline model, §4.2).
+    /// one edge per consecutive pair — the stitch timeline model, §4.2). Delegates
+    /// to `GenerateUnit.enumerate` so the EDGES-FIRST render order (D10) is shared
+    /// with the GUI's `buildUnits` — a `.both` run produces edges before loops.
     private static func enumerateUnits(
         from path: String, catalog: FlockCatalog
     ) async throws -> [GenerateUnit] {
         let flames = try await enumerateFlames(from: path, catalog: catalog)
-        var units: [GenerateUnit] = []
-        units.reserveCapacity(max(0, 2 * flames.count - 1))
-        for i in 0..<flames.count {
-            let a = flames[i]
-            units.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: a.gen, bId: a.id, A: a.flame, B: a.flame))
-            if i + 1 < flames.count {
-                let b = flames[i + 1]
-                units.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: b.gen, bId: b.id, A: a.flame, B: b.flame))
-            }
-        }
-        return units
+        return GenerateUnit.enumerate(flames)
     }
 
     /// Resolve a `.flam3` file to its stable `(gen, id)`. ES filename ⇒ ES

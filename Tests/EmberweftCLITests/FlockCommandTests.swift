@@ -170,6 +170,49 @@ final class FlockCommandTests: XCTestCase {
         let loopFile = mpeg.appendingPathComponent("248=00001=248=00001.mov")
         XCTAssertTrue(FileManager.default.fileExists(atPath: edgeFile.path), "edge must render under .edges")
         XCTAssertFalse(FileManager.default.fileExists(atPath: loopFile.path), "loop must NOT render under .edges")
+        // EXACTLY one artifact (the single edge); no loops leak under .edges.
+        let movs = (try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? []
+        XCTAssertEqual(movs.filter { $0.hasSuffix(".mov") }.sorted(),
+                       ["248=00001=248=00002.mov"],
+                       "--scope edges must produce exactly the one edge file")
+    }
+
+    /// D10 order + count pin. A 2-genome `--scope both` generate produces EXACTLY
+    /// 2 loops + 1 edge (3 files), and — because `GenerateUnit.enumerate` emits
+    /// edges first — the EDGE is the FIRST unit rendered. The CLI prints
+    /// `unit 1/N frame 1/<frameTotal>` per frame; the first such line's
+    /// `<frameTotal>` is the edge's `transFrames` (2), NOT a loop's `loopFrames`
+    /// (3). A loops-first regression would make this 3.
+    func testGenerateBothScopeProducesTwoLoopsOneEdge_EdgeFirst() async throws {
+        let root = makeFlockRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let from = try makeFromDir(genomeCount: 2)
+        defer { try? FileManager.default.removeItem(at: from) }
+        let progress = await captureOut {
+            let rc = await EmberweftCLI.flock([
+                "generate", "--from", from.path, "--shard", shardName,
+                "--scope", "both", "--quality", "4", "--codec", "h264",
+                "--backend", "cpu", "--flock", root.path,
+            ])
+            XCTAssertEqual(rc, 0, "generate should succeed")
+        }
+        // EXACTLY 3 files: 2 loops + 1 edge.
+        let mpeg = root.appendingPathComponent(shardName).appendingPathComponent("mpeg")
+        let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
+            .filter { $0.hasSuffix(".mov") }.sorted()
+        XCTAssertEqual(movs,
+                       ["248=00001=248=00001.mov", "248=00001=248=00002.mov", "248=00002=248=00002.mov"],
+                       "--scope both must produce exactly 2 loops + 1 edge")
+
+        // Edges-first: the first per-frame line is the EDGE (frameTotal == transFrames == 2).
+        let firstFrameTotal = progress.split(separator: "\n").lazy.compactMap { line -> Int? in
+            let s = String(line)
+            guard let range = s.range(of: " frame 1/") else { return nil }
+            return Int(s[range.upperBound...].prefix { $0.isNumber })
+        }.first
+        XCTAssertNotNil(firstFrameTotal, "progress should emit per-frame lines: \(progress)")
+        XCTAssertEqual(firstFrameTotal, 2,
+                       "first rendered unit must be the edge (transFrames=2), not a loop (loopFrames=3): \(progress)")
     }
 
     // MARK: - stitch smoke (AC: HIT/will-gen plan + single-file copy)
