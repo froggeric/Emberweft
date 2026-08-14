@@ -28,6 +28,12 @@ struct LibraryView: View {
     /// Pending collection for the rename sheet. `nil` ⇒ sheet hidden.
     @State private var renamingCollection: GenomeCollection?
     @State private var renameText: String = ""
+    /// Pending entries for the create-collection sheet. `nil` ⇒ sheet hidden.
+    /// Non-empty ⇒ create AND add those entries (the "New Collection…" item of
+    /// `addToCollectionMenu`); empty ⇒ create an empty collection (the sidebar
+    /// "New Collection…" row). Mirrors the rename-sheet pattern above.
+    @State private var creatingCollectionEntries: [CollectionEntry]?
+    @State private var createText: String = ""
 
     /// Collection drag-reorder state. A custom in-app `DragGesture` (NOT system
     /// pasteboard DnD) — `.draggable`/`.dropDestination` never fired the drop and
@@ -47,6 +53,25 @@ struct LibraryView: View {
             sidebar
         } detail: {
             detailGrid
+                // Create-collection sheet (same `NameCollectionSheet` as the
+                // rename one). Attached HERE, not as another `.sheet` on the
+                // NavigationSplitView chain above — two `.sheet(isPresented:)`
+                // on one view is unreliable (see SelectionBar's export-sheet
+                // note) — and on the detail column (always mounted, unlike the
+                // flock / non-flock branches inside `detailGrid`) so it presents
+                // from BOTH triggers: the sidebar row and the grid context menu.
+                .sheet(isPresented: Binding(
+                    get: { creatingCollectionEntries != nil },
+                    set: { if !$0 { creatingCollectionEntries = nil; createText = "" } }
+                )) {
+                    NameCollectionSheet(title: "New Collection",
+                                        confirmLabel: "Create",
+                                        name: $createText) {
+                        commitCreateCollection()
+                    } onCancel: {
+                        creatingCollectionEntries = nil; createText = ""
+                    }
+                }
         }
         // Persist prefs (density, opened folders, etc.) on any change — spec §5.7
         // ("no extra plumbing": the onChange save is the persistence hook).
@@ -113,14 +138,19 @@ struct LibraryView: View {
                 }
             }
             Section("Collections") {
-                if model.collectionsStore.collections.isEmpty {
-                    Text("No collections")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                } else {
-                    ForEach(model.collectionsStore.collections) { c in
-                        collectionRow(c)
-                    }
+                // Always-present create affordance (a selection used to be the
+                // ONLY way in). Same row idiom as "Open Directory…" below; the
+                // sheet creates an EMPTY collection (add to it afterwards via
+                // Add to Collection), then navigates into it.
+                Button {
+                    creatingCollectionEntries = []
+                    createText = defaultCollectionName()
+                } label: {
+                    Label("New Collection…", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                ForEach(model.collectionsStore.collections) { c in
+                    collectionRow(c)
                 }
             }
             // The dedicated Flock archive area (M6.5 / D9, §13). Routes to
@@ -245,6 +275,35 @@ struct LibraryView: View {
         model.collectionsStore.rename(c.id, to: renameText)
         renamingCollection = nil
         renameText = ""
+    }
+
+    /// Commit a pending collection creation (sheet Create/Enter). Creates the
+    /// collection seeded with the pending entries (empty for the sidebar path —
+    /// `create(name:from:)` takes `[CollectionEntry]`), toasts like the
+    /// add-to-collection buttons, and on the empty/sidebar path navigates into
+    /// the new collection (the store returns it for exactly that).
+    private func commitCreateCollection() {
+        guard let pending = creatingCollectionEntries else { return }
+        let c = model.collectionsStore.create(name: createText, from: pending)
+        creatingCollectionEntries = nil
+        createText = ""
+        if pending.isEmpty {
+            destination = .collection(c.id)
+            importToast = "Created \(c.name)"
+        } else {
+            importToast = "Added \(pending.count) to \(c.name)"
+        }
+    }
+
+    /// Default name for the create sheet: "Collection N", N = count + 1 bumped
+    /// until unused. Deterministic count-based scheme (rule #2); duplicate names
+    /// remain ALLOWED (collections are id-keyed, same semantics as rename) — the
+    /// default merely avoids the obvious collision.
+    private func defaultCollectionName() -> String {
+        let used = Set(model.collectionsStore.collections.map(\.name))
+        var n = model.collectionsStore.collections.count + 1
+        while used.contains("Collection \(n)") { n += 1 }
+        return "Collection \(n)"
     }
 
     /// Live count badge per destination (P6 — visible payoff of sentiment etc.).
@@ -1112,21 +1171,25 @@ struct LibraryView: View {
     }
 
     /// "Add to Collection ▾" submenu — adds the given entries (deduped by
-    /// identity) to whichever collection the user picks. Shared by the per-cell
-    /// context menu (one entry) and the selection bar (the whole selection).
-    /// Reads `model.collectionsStore.collections` (`@Observable`) so the menu
+    /// identity) to whichever collection the user picks, or creates a brand-new
+    /// collection seeded with them ("New Collection…" → the create sheet, so the
+    /// menu never dead-ends when there are no collections yet). Shared by the
+    /// grid-cell and collection-cell context menus (one entry each). Reads
+    /// `model.collectionsStore.collections` (`@Observable`) so the menu
     /// refreshes as collections are created/deleted.
     @ViewBuilder
     private func addToCollectionMenu(for entries: [CollectionEntry]) -> some View {
         Menu("Add to Collection") {
-            if model.collectionsStore.collections.isEmpty {
-                Button("No collections yet") {}.disabled(true)
-            } else {
-                ForEach(model.collectionsStore.collections) { c in
-                    Button(c.name) {
-                        let added = model.collectionsStore.addEntries(entries, to: c.id)
-                        importToast = added == 0 ? "Already in \(c.name)" : "Added \(added) to \(c.name)"
-                    }
+            Button {
+                creatingCollectionEntries = entries
+                createText = defaultCollectionName()
+            } label: {
+                Label("New Collection…", systemImage: "plus")
+            }
+            ForEach(model.collectionsStore.collections) { c in
+                Button(c.name) {
+                    let added = model.collectionsStore.addEntries(entries, to: c.id)
+                    importToast = added == 0 ? "Already in \(c.name)" : "Added \(added) to \(c.name)"
                 }
             }
         }
