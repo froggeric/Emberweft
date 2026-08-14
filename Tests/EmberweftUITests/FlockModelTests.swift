@@ -429,6 +429,201 @@ final class FlockModelTests: XCTestCase {
         XCTAssertEqual(cancels, 1)
     }
 
+    // MARK: - Stitch: per-frame progress, plan total, concat phase (v0.5.9)
+
+    func testStitchRunningCarriesPlanTotalAndColdStartETA() async {
+        let vm = FlockModel()
+        // No terminal ⇒ the last applied state is observable (.running).
+        installStitchSpy(vm, script: .yieldProgress([
+            .resolving,
+            .plan(hitCount: 2, missCount: 1),
+            .running(hit: 2, generated: 1),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        // The state-driven total is the plan tally (2 + 1), NOT the view's own
+        // sequence count. ETA nil: no completed-MISS sample yet (cold start).
+        XCTAssertEqual(vm.stitchState, .running(hit: 2, generated: 1, total: 3, etaSeconds: nil))
+    }
+
+    func testStitchRenderingMapsToStateWithColdStartETA() async {
+        let vm = FlockModel()
+        installStitchSpy(vm, script: .yieldProgress([
+            .resolving,
+            .plan(hitCount: 0, missCount: 3),
+            .running(hit: 0, generated: 0),
+            .rendering(segment: 1, total: 3, isLoop: true, frame: 0, frameTotal: 450),
+            .rendering(segment: 1, total: 3, isLoop: true, frame: 180, frameTotal: 450),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        XCTAssertEqual(vm.stitchState,
+                       .rendering(segment: 1, total: 3, isLoop: true,
+                                  frame: 180, frameTotal: 450, etaSeconds: nil))
+    }
+
+    func testStitchConcatenatingMapsToState() async {
+        let vm = FlockModel()
+        installStitchSpy(vm, script: .yieldProgress([
+            .resolving,
+            .plan(hitCount: 0, missCount: 1),
+            .running(hit: 0, generated: 1),
+            .concatenating(segments: 2),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        XCTAssertEqual(vm.stitchState, .concatenating(segments: 2))
+    }
+
+    // MARK: - Elapsed on completion (v0.5.9)
+
+    func testStitchElapsedRecordedOnCompletionAndResetOnNewRun() async {
+        let vm = FlockModel()
+        let out = outURL()
+        installStitchSpy(vm, script: .yieldProgress([
+            .resolving, .plan(hitCount: 0, missCount: 0), .completed(out: out),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        XCTAssertNotNil(vm.stitchElapsedSeconds, "completion must publish the run elapsed")
+        // A fresh run clears it until it completes again.
+        installStitchSpy(vm, script: .yieldProgress([.resolving]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        XCTAssertNil(vm.stitchElapsedSeconds, "a new in-flight run clears the stale elapsed")
+    }
+
+    func testGenerateElapsedRecordedOnCompletion() async {
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([
+            .resolving, .completed(rendered: 2, skipped: 0),
+        ]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        XCTAssertNotNil(vm.generateElapsedSeconds)
+    }
+
+    // MARK: - Global activity summary (sidebar presence, v0.5.9)
+
+    func testFlockActivityNilWhenIdle() {
+        let vm = FlockModel()
+        XCTAssertNil(vm.flockActivity, "no run in flight ⇒ no sidebar indicator")
+    }
+
+    func testFlockActivityFromGenerateRunning() async {
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([
+            .running(skip: 1, render: 3, total: 5),
+        ]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        XCTAssertEqual(vm.flockActivity,
+                       FlockActivitySummary(kind: .generate, fraction: 4.0 / 5.0,
+                                            completed: 4, total: 5, etaSeconds: nil))
+    }
+
+    func testFlockActivityFromGenerateRenderingIncludesFrameFraction() async {
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([
+            .rendering(skip: 0, render: 2, total: 5, frame: 90, frameTotal: 360),
+        ]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        // (2 + 90/360) / 5 = 2.25 / 5 = 0.45 exactly.
+        XCTAssertEqual(vm.flockActivity,
+                       FlockActivitySummary(kind: .generate, fraction: 0.45,
+                                            completed: 2, total: 5, etaSeconds: nil))
+    }
+
+    func testFlockActivityFromStitchRendering() async {
+        let vm = FlockModel()
+        installStitchSpy(vm, script: .yieldProgress([
+            .plan(hitCount: 1, missCount: 2),
+            .rendering(segment: 2, total: 3, isLoop: true, frame: 3, frameTotal: 6),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        // (1 + 3/6) / 3 = 0.5 exactly; completed counts whole segments.
+        XCTAssertEqual(vm.flockActivity,
+                       FlockActivitySummary(kind: .stitch, fraction: 0.5,
+                                            completed: 1, total: 3, etaSeconds: nil))
+    }
+
+    func testFlockActivityIndeterminatePhasesAreSpinnerOnly() async {
+        // resolving / plan / concatenating ⇒ fraction nil (the sidebar shows a
+        // spinner, no bar).
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([.resolving]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        XCTAssertEqual(vm.flockActivity?.fraction, nil)
+        XCTAssertEqual(vm.flockActivity?.kind, .generate)
+
+        let vm2 = FlockModel()
+        installStitchSpy(vm2, script: .yieldProgress([.plan(hitCount: 2, missCount: 1)]))
+        await vm2.stitch(stitchRequest())
+        await vm2.awaitStitchCompletion()
+        XCTAssertEqual(vm2.flockActivity?.fraction, nil)
+        XCTAssertEqual(vm2.flockActivity?.kind, .stitch)
+
+        let vm3 = FlockModel()
+        installStitchSpy(vm3, script: .yieldProgress([.concatenating(segments: 3)]))
+        await vm3.stitch(stitchRequest())
+        await vm3.awaitStitchCompletion()
+        XCTAssertEqual(vm3.flockActivity?.fraction, nil)
+    }
+
+    func testFlockActivityPrefersMostRecentlyStartedRun() async {
+        // Both machines in flight ⇒ the later-started run (the user's current
+        // focus) drives the sidebar indicator. Deterministic: the start instants
+        // are set synchronously at run start, and stitch() runs after generate().
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldProgress([.running(skip: 0, render: 1, total: 4)]))
+        await vm.generate(generateRequest())
+        await vm.awaitGenerateCompletion()
+        XCTAssertEqual(vm.flockActivity?.kind, .generate)
+
+        installStitchSpy(vm, script: .yieldProgress([
+            .plan(hitCount: 0, missCount: 2), .running(hit: 0, generated: 1),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        XCTAssertEqual(vm.flockActivity?.kind, .stitch,
+                       "the most recently started run wins the sidebar indicator")
+        XCTAssertEqual(vm.flockActivity?.fraction, 0.5)
+    }
+
+    // MARK: - Shared formatter + compact token (v0.5.9)
+
+    func testProgressFormattingLabels() {
+        XCTAssertEqual(ProgressFormatting.etaLabel(3), "~3 s remaining")
+        XCTAssertEqual(ProgressFormatting.etaLabel(59.4), "~59 s remaining")
+        XCTAssertEqual(ProgressFormatting.etaLabel(72), "~1 m 12 s remaining")
+        XCTAssertEqual(ProgressFormatting.etaLabel(3725), "~1 h 2 m remaining")
+        XCTAssertEqual(ProgressFormatting.etaToken(nil), "estimating…")
+        XCTAssertEqual(ProgressFormatting.etaToken(90), "~1 m 30 s remaining")
+        XCTAssertEqual(ProgressFormatting.elapsedLabel(42), "42 s")
+        XCTAssertEqual(ProgressFormatting.elapsedLabel(252), "4 m 12 s")
+        XCTAssertEqual(ProgressFormatting.elapsedLabel(3785), "1 h 3 m")
+        XCTAssertEqual(ProgressFormatting.elapsedLabel(-5), "0 s", "never negative")
+    }
+
+    func testFlockActivitySummaryCompactStatus() {
+        XCTAssertEqual(FlockActivitySummary(kind: .generate, fraction: nil, completed: nil,
+                                            total: nil, etaSeconds: 756).compactStatus, "~12:36")
+        XCTAssertEqual(FlockActivitySummary(kind: .stitch, fraction: nil, completed: nil,
+                                            total: nil, etaSeconds: 3807).compactStatus, "~1:03:27")
+        XCTAssertEqual(FlockActivitySummary(kind: .stitch, fraction: 0.25, completed: 3,
+                                            total: 12, etaSeconds: nil).compactStatus, "3/12")
+        XCTAssertEqual(FlockActivitySummary(kind: .generate, fraction: nil, completed: nil,
+                                            total: nil, etaSeconds: nil).compactStatus, "")
+        XCTAssertEqual(FlockActivitySummary(kind: .generate, fraction: nil, completed: nil,
+                                            total: nil, etaSeconds: nil).kindLabel, "Generating")
+        XCTAssertEqual(FlockActivitySummary(kind: .stitch, fraction: nil, completed: nil,
+                                            total: nil, etaSeconds: nil).kindLabel, "Stitching")
+    }
+
+
     // MARK: - Browse: loaded / empty / failed
 
     func testBrowseLoaded() async {

@@ -221,33 +221,20 @@ struct ExportProgressSurface: View {
 
     /// Whole-second elapsed time ("42 s"); avoids a twitching sub-second digit
     /// (mirrors the FPS-meter publish-throttle philosophy, CLAUDE.md v0.3.1).
+    /// Delegates to the shared `ProgressFormatting` (v0.5.9 — one formatter
+    /// app-wide, not a private fork).
     private func elapsedLabel(_ elapsed: TimeInterval) -> String {
-        let s = Int(elapsed.rounded())
-        if s < 60 { return "\(s) s" }
-        let m = s / 60, r = s % 60
-        return "\(m) m \(r) s"
+        ProgressFormatting.elapsedLabel(elapsed)
     }
 
     /// The ETA token appended after elapsed on the status line (v0.5.0). On
     /// non-rendering phases the render ETA is frozen and the token reads
     /// "Finalizing…" (catch-all for encoding/concatenating/finalizing). During
     /// rendering: "estimating…" until the EMA warms past `coldStartFloor`, then a
-    /// smoothed "~Xh Ym remaining" derived from the per-frame EMA.
+    /// smoothed "~Xh Ym remaining" derived from the per-frame EMA (the shared
+    /// `ProgressFormatting` formatter).
     private func etaToken(_ snap: ExportProgressSnapshot) -> String {
         if snap.phase != .rendering { return "Finalizing…" }
-        guard let eta = snap.etaSeconds else { return "estimating…" }
-        return etaLabel(eta)
-    }
-
-    /// ETA as whole seconds / minutes / hours (mirrors `elapsedLabel`'s whole-
-    /// second style, extended to hours for long exports). The `~` prefix signals
-    /// it's an estimate, not an exact countdown.
-    private func etaLabel(_ eta: TimeInterval) -> String {
-        let total = max(0, Int(eta.rounded()))
-        if total < 60 { return "~\(total) s remaining" }
-        let m = total / 60, r = total % 60
-        if m < 60 { return "~\(m) m \(r) s remaining" }
-        let h = m / 60, mr = m % 60
-        return "~\(h) h \(mr) m remaining"
+        return ProgressFormatting.etaToken(snap.etaSeconds)
     }
 }

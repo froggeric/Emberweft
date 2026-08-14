@@ -40,6 +40,20 @@ public enum StitchUIProgress: Sendable, Equatable {
     case resolving
     case plan(hitCount: Int, missCount: Int)
     case running(hit: Int, generated: Int)
+    /// Per-frame progress DURING a MISS render (the v0.5.9 blackout fix — mirrors
+    /// `GenerateUIProgress.rendering`). `segment` is the 1-indexed position of
+    /// the segment among ALL segments (HIT + MISS), `total` the full segment
+    /// count, `isLoop` labels loop vs edge, `frame`/`frameTotal` the within-unit
+    /// encode progress (`frame` 1-indexed; `frame == 0` is a pre-render yield so
+    /// the UI moves the instant the render starts instead of one frame-time
+    /// later). Without this, a MISS render emitted ZERO events for its whole
+    /// duration (the "4 HIT, 1 will-gen, then nothing while the GPU churns"
+    /// owner symptom).
+    case rendering(segment: Int, total: Int, isLoop: Bool, frame: Int, frameTotal: Int)
+    /// The remux/copy tail phase (passthrough concat takes seconds; the UI used
+    /// to show nothing between the last segment and `.completed`).
+    /// `segments` is the file count being joined (1 ⇒ single-file copy).
+    case concatenating(segments: Int)
     case completed(out: URL)
     case failed(String)
     case cancelled
@@ -137,17 +151,22 @@ public actor StitchCoordinator {
 
         // 6. Per segment: HIT ⇒ collect file URL; MISS ⇒ render into the archive
         //    first (ArchiveRenderer atomic-writes the file THEN upserts the row),
-        //    then collect.
+        //    then collect. `position` is the 1-indexed segment index over ALL
+        //    segments (HIT + MISS) so the per-frame `.rendering` events read
+        //    "segment 3/5" the way the plan ("4 HIT, 1 will-gen") counted them.
         var urls: [URL] = []
         var generated = 0, hit = 0
-        for key in keys {
+        let segmentTotal = keys.count
+        for (idx, key) in keys.enumerated() {
             if cancelled { continuation.yield(.cancelled); break }
             if let row = byPK[pkStringTuple(key)] {
                 hit += 1
                 urls.append(request.flockRoot.appendingPathComponent(row.file))
             } else {
                 do {
-                    try await renderSegment(forKey: key, request: request, coordinator: coordinator)
+                    try await renderSegment(forKey: key, request: request, coordinator: coordinator,
+                                            position: idx + 1, total: segmentTotal,
+                                            yield: { continuation.yield($0) })
                     generated += 1
                     // Re-read the freshly-upserted row to resolve its archive path.
                     let row = try await catalog.lookup(aGen: key.aGen, aId: key.aId,
@@ -168,7 +187,10 @@ public actor StitchCoordinator {
 
         // 7. Single-genome (loop-only, one file): copy — `try` (not `try?`) so a
         //    copy failure surfaces instead of being swallowed. No concat.
+        //    `.concatenating` is yielded first so the (possibly multi-second)
+        //    copy/remux tail phase is never a silent gap.
         if urls.count == 1 {
+            continuation.yield(.concatenating(segments: 1))
             do {
                 try FileManager.default.copyItem(at: urls[0], to: request.out)
                 continuation.yield(.completed(out: request.out))
@@ -181,8 +203,11 @@ public actor StitchCoordinator {
         }
 
         // 8. Passthrough concat (same-codec ⇒ no re-encode) — the load-bearing
-        //    call, single-sourced in `ExportCoordinator.concat`.
+        //    call, single-sourced in `ExportCoordinator.concat`. Yields
+        //    `.concatenating` FIRST: the remux takes seconds and previously
+        //    showed nothing between the last `.running` and `.completed`.
         do {
+            continuation.yield(.concatenating(segments: urls.count))
             try await coordinator.concat(segments: urls, container: .mov, to: request.out)
             continuation.yield(.completed(out: request.out))
             continuation.finish()
@@ -226,9 +251,17 @@ public actor StitchCoordinator {
     /// performed inside `ArchiveRenderer.renderLoop`/`renderEdge`). Resolves the
     /// Flame pair from `request.orderedFlames` by `(gen, id)` (small array ⇒ a
     /// linear `first(where:)` is fine and rule-#2-safe — ordered collection).
+    ///
+    /// `position`/`total` (1-indexed position among ALL segments) + `yield`
+    /// (the stream continuation's yield) build the per-frame callback handed to
+    /// `ArchiveRenderer` (its `perFrame` param — the same hook
+    /// `GenerateCoordinator` uses), so a MISS render streams `.rendering` events
+    /// instead of going dark for its whole duration.
     private func renderSegment(
         forKey key: (aGen: String, aId: String, bGen: String, bId: String, shard: String),
-        request: StitchRequest, coordinator: ExportCoordinator
+        request: StitchRequest, coordinator: ExportCoordinator,
+        position: Int, total: Int,
+        yield: @escaping @Sendable (StitchUIProgress) -> Void
     ) async throws {
         guard let A = request.orderedFlames.first(where: { $0.gen == key.aGen && $0.id == key.aId })?.flame else {
             throw StitchError.flameNotFound("\(key.aGen)/\(key.aId)")
@@ -242,12 +275,24 @@ public actor StitchCoordinator {
             throw StitchError.concreteCatalogRequiredForRender
         }
         let isLoop = key.aGen == key.bGen && key.aId == key.bId
+        // The unit's frame total is the shard pace for its kind (loops encode
+        // loopFrames; edges encode only the transFrames range — see
+        // `ArchiveRenderer.loopRenderRange`/`edgeRenderRange`), so a frame-0
+        // yield can go out BEFORE the render starts (kills the one-frame-time
+        // blackout between `.plan`/`.running` and the first encoded frame).
+        let frameTotal = isLoop ? request.shard.loopFrames : request.shard.transFrames
+        let perFrame: @Sendable (_ frame: Int, _ frameTotal: Int) -> Void = { frame, frameTotal in
+            yield(.rendering(segment: position, total: total, isLoop: isLoop,
+                             frame: frame, frameTotal: frameTotal))
+        }
+        yield(.rendering(segment: position, total: total, isLoop: isLoop,
+                         frame: 0, frameTotal: frameTotal))
         if isLoop {
             try await renderer.renderLoop(
                 A: A, aGen: key.aGen, aId: key.aId, shard: request.shard,
                 settings: request.settings, coordinator: coordinator, catalog: archiveCatalog,
                 backend: backend, useOffMainMetal: useOffMainMetal,
-                flockRoot: request.flockRoot, sourceSha: nil)
+                flockRoot: request.flockRoot, sourceSha: nil, perFrame: perFrame)
         } else {
             guard let B = request.orderedFlames.first(where: { $0.gen == key.bGen && $0.id == key.bId })?.flame else {
                 throw StitchError.flameNotFound("\(key.bGen)/\(key.bId)")
@@ -256,7 +301,7 @@ public actor StitchCoordinator {
                 A: A, B: B, aGen: key.aGen, aId: key.aId, bGen: key.bGen, bId: key.bId,
                 shard: request.shard, settings: request.settings, coordinator: coordinator,
                 catalog: archiveCatalog, backend: backend, useOffMainMetal: useOffMainMetal,
-                flockRoot: request.flockRoot, sourceSha: nil)
+                flockRoot: request.flockRoot, sourceSha: nil, perFrame: perFrame)
         }
     }
 }

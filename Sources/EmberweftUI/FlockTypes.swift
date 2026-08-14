@@ -89,18 +89,102 @@ public struct GenerateETAEstimator: Equatable, Sendable {
     }
 }
 
-/// Stitch state machine: `idle → resolving → plan → running → completed | failed | cancelled`.
+/// Stitch state machine: `idle → resolving → plan → running → rendering → concatenating → completed | failed | cancelled`.
 /// `plan` carries the HIT/MISS tally from the single batched catalog lookup;
-/// `running` carries the per-segment `(hit, generated)` counters; `completed`
-/// carries the assembled output URL.
+/// `running` carries the per-segment `(hit, generated)` counters plus the
+/// plan-derived `total` segment count (state-driven — NOT the view's own
+/// sequence count, which can go stale mid-run) and a smoothed `etaSeconds`
+/// (nil ⇒ cold-start "estimating…"); `rendering` is the per-frame within-MISS
+/// progress (v0.5.9 — the blackout fix; `frame == 0` is the pre-render yield);
+/// `concatenating` is the remux/copy tail phase (indeterminate).
+/// `completed` carries the assembled output URL.
 public enum StitchUIState: Sendable, Equatable {
     case idle
     case resolving
     case plan(hit: Int, miss: Int)
-    case running(hit: Int, generated: Int)
+    case running(hit: Int, generated: Int, total: Int, etaSeconds: Double?)
+    case rendering(segment: Int, total: Int, isLoop: Bool, frame: Int, frameTotal: Int, etaSeconds: Double?)
+    case concatenating(segments: Int)
     case completed(URL)
     case failed(String)
     case cancelled
+}
+
+/// Compact, view-model-derived "what is the flock doing right now" summary for
+/// GLOBAL surfaces (the sidebar Flock row — v0.5.9). Built by `FlockModel.flockActivity`
+/// from the generate/stitch states: pure value mapping of scalars (rule #2 — no
+/// FP sums over hashed collections). `fraction == nil` ⇒ indeterminate (spinner);
+/// `completed`/`total` feed the "3/12" token; `etaSeconds` the "~12:36" token.
+public struct FlockActivitySummary: Sendable, Equatable {
+    public enum Kind: String, Sendable, Equatable { case generate, stitch }
+
+    public let kind: Kind
+    /// Overall 0…1 progress when known; nil ⇒ indeterminate (show a spinner).
+    public let fraction: Double?
+    /// Completed unit count (units rendered-or-reused) when known.
+    public let completed: Int?
+    /// Total unit count when known.
+    public let total: Int?
+    /// ETA seconds once the estimator warms past its cold-start floor; nil ⇒ estimating.
+    public let etaSeconds: Double?
+
+    public init(kind: Kind, fraction: Double?, completed: Int?, total: Int?, etaSeconds: Double?) {
+        self.kind = kind; self.fraction = fraction
+        self.completed = completed; self.total = total; self.etaSeconds = etaSeconds
+    }
+
+    /// "Generating" / "Stitching" (the verb, for a sentence like "Flock: Stitching").
+    public var kindLabel: String { kind == .generate ? "Generating" : "Stitching" }
+
+    /// The compact sidebar token: "~12:36" (or "~1:03:27") when an ETA exists,
+    /// else "3/12" when counts exist, else "" (spinner alone). Whole seconds,
+    /// monospace-friendly digits.
+    public var compactStatus: String {
+        if let etaSeconds {
+            let t = max(0, Int(etaSeconds.rounded()))
+            if t >= 3600 { return String(format: "~%d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60) }
+            return String(format: "~%d:%02d", t / 60, t % 60)
+        }
+        if let completed, let total { return "\(completed)/\(total)" }
+        return ""
+    }
+}
+
+// MARK: - Shared duration/ETA formatting (single formatter — do not fork)
+
+/// The ONE user-facing duration/ETA formatter (v0.5.9). Previously
+/// `FlockView.etaLabel` and `ExportProgressSurface.etaLabel` were two private
+/// copies of the same format; both now call these. Whole-second granularity
+/// (avoids a twitching sub-second digit — the FPS-meter throttle philosophy);
+/// the `~` prefix signals an estimate, not a countdown.
+public enum ProgressFormatting {
+
+    /// ETA as whole seconds / minutes / hours: "~42 s remaining",
+    /// "~4 m 12 s remaining", "~1 h 3 m remaining".
+    public static func etaLabel(_ eta: TimeInterval) -> String {
+        let total = max(0, Int(eta.rounded()))
+        if total < 60 { return "~\(total) s remaining" }
+        let m = total / 60, r = total % 60
+        if m < 60 { return "~\(m) m \(r) s remaining" }
+        let h = m / 60, mr = m % 60
+        return "~\(h) h \(mr) m remaining"
+    }
+
+    /// ETA token for a nullable ETA: nil ⇒ "estimating…" (cold start).
+    public static func etaToken(_ eta: Double?) -> String {
+        guard let eta else { return "estimating…" }
+        return etaLabel(eta)
+    }
+
+    /// Elapsed as whole seconds / minutes / hours: "42 s", "4 m 12 s", "1 h 3 m".
+    public static func elapsedLabel(_ elapsed: TimeInterval) -> String {
+        let s = max(0, Int(elapsed.rounded()))
+        if s < 60 { return "\(s) s" }
+        let m = s / 60, r = s % 60
+        if m < 60 { return "\(m) m \(r) s" }
+        let h = m / 60, mr = m % 60
+        return "\(h) h \(mr) m"
+    }
 }
 
 /// Browse state machine: `loading → loaded | empty | failed`. `loaded` carries
