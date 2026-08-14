@@ -381,4 +381,33 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertNil(decoded.flockDir,
                      "legacy file without flockDir must decode to nil (additive — T18)")
     }
+
+    // MARK: - flockDefaultShard (M6.5 — the Flock tabs' initial shard)
+
+    /// Default is nil (⇒ the canonical 1080p30 default is resolved by the Flock
+    /// tabs). Round-trips a configured shard name through encode/decode.
+    func testFlockDefaultShardDefaultsNilAndRoundTrips() throws {
+        var p = AppPreferences()
+        XCTAssertNil(p.flockDefaultShard)
+        p.flockDefaultShard = "2560x1440_30fps"
+        let data = try JSONEncoder().encode(p)
+        let decoded = try JSONDecoder().decode(AppPreferences.self, from: data)
+        XCTAssertEqual(decoded.flockDefaultShard, "2560x1440_30fps")
+    }
+
+    /// A `preferences.json` written before `flockDefaultShard` existed must load
+    /// with nil rather than failing/quarantining — purely additive
+    /// (`decodeIfPresent`). Built by stripping the key from a current blob, so
+    /// it mirrors a real legacy file (same approach as `flockDir` above).
+    func testFlockDefaultShardAbsentOnOldPrefsDecodesNil() throws {
+        var blob = try JSONEncoder().encode(AppPreferences())
+        var dict = try JSONSerialization.jsonObject(with: blob) as! [String: Any]
+        dict.removeValue(forKey: "flockDefaultShard")
+        blob = try JSONSerialization.data(withJSONObject: dict)
+        let decoded = try JSONDecoder().decode(AppPreferences.self, from: blob)
+        XCTAssertNil(decoded.flockDefaultShard,
+                     "legacy file without flockDefaultShard must decode to nil (additive)")
+        // The rest of the prefs still decode.
+        XCTAssertEqual(decoded.previewPreset, AppPreferences().previewPreset)
+    }
 }

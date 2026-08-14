@@ -64,21 +64,25 @@ struct FlockView: View {
 
 private enum FlockTab { case generate, stitch, browse }
 
-/// The canonical default shard (1080p30, 15 s loops / 12 s edges, HEVC). Used as
-/// the fallback when the archive has no shards yet (so Generate/Stitch can always
-/// proceed), and offered alongside `FlockCatalog.listShards()` in the pickers.
-private let defaultShard = ShardSpec(
-    name: "1920x1080_30fps", width: 1920, height: 1080, fps: 30,
-    loopSeconds: 15, transSeconds: 12,
-    loopFrames: 450, transFrames: 360,        // round(15·30), round(12·30)
-    isCanonical: true, codec: .hevc)
+/// The canonical default shard (1080p30, 15 s loops / 12 s edges, HEVC) —
+/// `ShardPresets.canonicalDefault` (FlameFlock). Used as the fallback when the
+/// archive has no shards yet (so Generate/Stitch can always proceed) and as the
+/// resolution of an unset/unknown `AppPreferences.flockDefaultShard`.
+private let defaultShard = ShardPresets.canonicalDefault
 
 // MARK: - Shared shard menu
 
-/// A shard picker listing the archive's shards (plus the canonical default),
-/// loaded lazily from the catalog. A `Menu` (not a `Picker`) so the selection
-/// does not require `ShardSpec: Hashable` (FlameFlock keeps its value type as-is;
-/// only additive readers are added there).
+/// A shard picker in two sections: **Standard** (the `ShardPresets.sensible`
+/// canonical profiles — always offered, even on a fresh archive with no shard
+/// rows) and **In your archive** (the catalog's shards, minus duplicates of the
+/// presets matched by name). A `Menu` (not a `Picker`) so the selection does not
+/// require `ShardSpec: Hashable` (FlameFlock keeps its value type as-is; only
+/// additive readers are added there).
+///
+/// Selecting a Standard preset that has no catalog row yet just works: the tab
+/// upserts the selected `ShardSpec` at the start of generate/stitch (the
+/// `artifacts.shard` FK requires the row to pre-exist), so presets create their
+/// shard row on demand rather than needing pre-seeding.
 private struct ShardMenu: View {
     let catalog: FlockCatalog?
     @Binding var shard: ShardSpec
@@ -87,8 +91,18 @@ private struct ShardMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(allShards, id: \.name) { s in
-                Button(shardLabel(s)) { shard = s }
+            Section("Standard") {
+                ForEach(ShardPresets.sensible, id: \.name) { s in
+                    Button(shardLabel(s)) { shard = s }
+                }
+            }
+            let archive = archiveShards
+            if !archive.isEmpty {
+                Section("In your archive") {
+                    ForEach(archive, id: \.name) { s in
+                        Button(shardLabel(s)) { shard = s }
+                    }
+                }
             }
         } label: {
             HStack(spacing: 6) {
@@ -103,17 +117,64 @@ private struct ShardMenu: View {
         }
     }
 
-    /// Default first, then existing shards (minus a duplicate of the default),
-    /// ordered by name (rule #2 — key-ordered SQL read).
-    private var allShards: [ShardSpec] {
-        var out = [defaultShard]
-        for s in available where s.name != defaultShard.name { out.append(s) }
-        return out
+    /// Catalog shards that are not one of the Standard presets (matched by NAME
+    /// — the preset and a catalog row with the same name are the same shard).
+    /// Name-ordered from the key-ordered SQL read (rule #2); the `Set` is
+    /// membership-only, never iterated.
+    private var archiveShards: [ShardSpec] {
+        let presetNames = Set(ShardPresets.sensible.map(\.name))
+        return available.filter { !presetNames.contains($0.name) }
     }
 
     private func shardLabel(_ s: ShardSpec) -> String {
         "\(s.name)  ·  \(s.width)×\(s.height)  ·  \(s.fps) fps"
     }
+}
+
+// MARK: - Shared pace steppers (Generate + Stitch)
+
+/// Loop/edge pace steppers, shared by BOTH tabs so their ranges/step (1…120 s,
+/// 0.5 s) and the recompute stay identical. Editing either value re-derives
+/// `loopFrames`/`transFrames`/`isCanonical`/`name` via `ShardSpec.withPace`
+/// (which names the shard through `FlockNaming.shardDir`): the canonical
+/// 15 s / 12 s pace keeps the bare `WxH_fps` name, any other pace appends
+/// `_Lf<loop>-Tf<trans>` — a NEW shard directory, so a custom pace never
+/// overwrites canonical-pace material.
+private struct ShardPaceSteppers: View {
+    @Binding var shard: ShardSpec
+
+    var body: some View {
+        HStack {
+            Stepper("Loop: \(String(format: "%.1f", shard.loopSeconds)) s",
+                    value: $shard.loopSeconds, in: 1...120, step: 0.5)
+                .onChange(of: shard.loopSeconds) { _, _ in applyPace() }
+            Stepper("Edge: \(String(format: "%.1f", shard.transSeconds)) s",
+                    value: $shard.transSeconds, in: 1...120, step: 0.5)
+                .onChange(of: shard.transSeconds) { _, _ in applyPace() }
+        }
+        .help("Pace for this shard's material. 15 s loops / 12 s edges is the canonical pace; any other pace creates a new shard directory (name gets an _Lf…-Tf… suffix) so existing material is never overwritten.")
+    }
+
+    /// The steppers write the seconds into the binding first; this then folds
+    /// the derived fields (frames / canonical flag / name) back in.
+    private func applyPace() {
+        shard = shard.withPace(loopSeconds: shard.loopSeconds,
+                               transSeconds: shard.transSeconds)
+    }
+}
+
+// MARK: - Initial shard resolution (AppPreferences.flockDefaultShard)
+
+/// Resolve a tab's initial shard from `AppPreferences.flockDefaultShard`: the
+/// named CATALOG row if one exists (the archive is truth — it may carry a
+/// re-upserted profile), else the named Standard preset, else the canonical
+/// default. One async catalog hop; pure otherwise.
+private func resolveInitialShard(pref: String?, catalog: FlockCatalog?) async -> ShardSpec {
+    guard let name = pref else { return defaultShard }
+    if let catalog, let row = (try? await catalog.shard(named: name)) ?? nil {
+        return row
+    }
+    return ShardPresets.preset(named: name) ?? defaultShard
 }
 
 // MARK: - Source loading (shared by Generate + Stitch)
@@ -260,7 +321,11 @@ private struct GenerateTab: View {
 
     @State private var shard = defaultShard
     @State private var sources: [LoadedFlame] = []
-    @State private var includeLoops = false
+    /// 3-way scope (the 2-state bool made "Loops only" unreachable): `.edges`
+    /// is the default (D10 — transitions are the stitch-critical material),
+    /// `.loops` renders each genome self-spun with no transitions, `.both` is
+    /// the full timeline.
+    @State private var scope: GenerateScope = .edges
     @State private var loadError: String?
     /// v0.5.8: archive render quality. Default **Standard** (spp 30 + the tier's
     /// ts + smoothing ON) — genome-default was hours per 1080p edge. Genome =
@@ -275,6 +340,7 @@ private struct GenerateTab: View {
             Section("Render shard") {
                 ShardMenu(catalog: catalog, shard: $shard)
                     .help("Resolution + frame rate + pace for the generated material.")
+                ShardPaceSteppers(shard: $shard)
             }
             Section("Source genomes") {
                 HStack {
@@ -300,12 +366,15 @@ private struct GenerateTab: View {
                 if let loadError { Text(loadError).font(.caption).foregroundStyle(.red) }
             }
             Section("Scope") {
-                Picker("Scope", selection: $includeLoops) {
-                    Text("Edges only").tag(false)
-                    Text("Edges + Loops").tag(true)
+                Picker("Scope", selection: $scope) {
+                    Text("Edges only").tag(GenerateScope.edges)
+                    Text("Loops only").tag(GenerateScope.loops)
+                    Text("Edges and loops").tag(GenerateScope.both)
                 }
                 .pickerStyle(.radioGroup)
-                .help("Edges = transitions between adjacent source genomes. Loops = each genome self-spun (opt-in).")
+                .disabled(running)
+                .help(scopeHelp)
+                Text(scopeSummary).font(.caption).foregroundStyle(.secondary)
             }
             Section("Quality") {
                 Picker("Quality", selection: $qualityChoice) {
@@ -323,7 +392,9 @@ private struct GenerateTab: View {
             Section {
                 Button("Generate material") { generate() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(sources.count < 1 || !canRun)
+                    // Disabled when the SCOPE has no work: a single source yields
+                    // one loop unit but zero edges, so "Edges only" needs ≥2.
+                    .disabled(scopedUnitCount == 0 || !canRun)
                 // Cancel is visible ONLY while work is running (v0.5.9 fix: the
                 // old `if canRun` guard showed the button only when NOT running —
                 // inverted, so it was never visible-enabled mid-run).
@@ -336,6 +407,12 @@ private struct GenerateTab: View {
         }
         .formStyle(.grouped)
         .padding(.top, 6)
+        .task {
+            // Initial shard from Settings (AppPreferences.flockDefaultShard):
+            // the named catalog/preset shard if it exists, else the default.
+            shard = await resolveInitialShard(pref: appModel.prefs.flockDefaultShard,
+                                              catalog: catalog)
+        }
     }
 
     @ViewBuilder
@@ -380,6 +457,41 @@ private struct GenerateTab: View {
         "Genome is mastering (byte-identical to animate, very slow). High/Low trade quality for time."
     }
 
+    /// Scope help (3-way): what each option renders into the archive.
+    private var scopeHelp: String {
+        "Edges = the transitions between adjacent source genomes (the stitch-critical default). " +
+        "Loops = each genome self-spun as its own seamless cycle, with NO transitions. " +
+        "Edges and loops = the full stitchable timeline."
+    }
+
+    /// Units the current scope would render: `N` loops + `N−1` edges are
+    /// enumerated, then filtered by the scope (mirrors the coordinator's
+    /// `inScope` filter). Pure integer count (rule #2).
+    private var scopedUnitCount: Int {
+        let loops = sources.count
+        let edges = max(0, sources.count - 1)
+        switch scope {
+        case .edges: return edges
+        case .loops: return loops
+        case .both:  return loops + edges
+        }
+    }
+
+    /// One-line unit count for the current scope + sources (the plan the button
+    /// will run), including the pace the units render at.
+    private var scopeSummary: String {
+        guard !sources.isEmpty else { return "Pick sources to see the unit count." }
+        let loops = sources.count
+        let edges = max(0, sources.count - 1)
+        let planned: String
+        switch scope {
+        case .edges: planned = "\(edges) edge\(edges == 1 ? "" : "s")"
+        case .loops: planned = "\(loops) loop\(loops == 1 ? "" : "s")"
+        case .both:  planned = "\(edges) edge\(edges == 1 ? "" : "s") + \(loops) loop\(loops == 1 ? "" : "s")"
+        }
+        return "Will render \(planned) at \(String(format: "%.0f", shard.loopSeconds)) s / \(String(format: "%.0f", shard.transSeconds)) s."
+    }
+
     private var running: Bool {
         if case .running = flockModel.generateState { return true }
         if case .rendering = flockModel.generateState { return true }
@@ -389,29 +501,28 @@ private struct GenerateTab: View {
     private var canRun: Bool { !running }
 
     /// Build loop + edge units from the ordered source list, upsert the shard
-    /// (the `artifacts.shard` FK requires the row to pre-exist), then drive the
+    /// (the `artifacts.shard` FK requires the row to pre-exist — this is also
+    /// what makes an un-rendered Standard preset work), then drive the
     /// coordinator through `FlockModel.generate` (fire-and-forget).
     private func generate() {
         let units = buildUnits()
-        guard !units.isEmpty else { return }
-        let scope: GenerateScope = includeLoops ? .both : .edges
         let request = GenerateRequest(shard: shard, units: units, scope: scope,
                                       settings: archiveSettings(for: shard, quality: qualityChoice),
                                       flockRoot: flockRoot)
         Task {
             // FK gate: the shard row must exist before any artifact is inserted.
-            if let catalog { try? await catalog.upsertShard(shard) }
+            // Skipped when there is no in-scope work (FlockModel reports the
+            // empty run as a failure — no point creating an empty shard row).
+            if let catalog, !units.isEmpty { try? await catalog.upsertShard(shard) }
             await flockModel.generate(request)
         }
     }
 
     /// Build loop + edge units from the ordered source list. Delegates to
-    /// `GenerateUnit.enumerate` so the EDGES-FIRST render order (D10) is shared
-    /// with the CLI's `enumerateUnits`: a `.both` (Edges + Loops) run renders the
-    /// stitch-critical edges BEFORE the opt-in loops, so the owner sees edges
-    /// appear rather than hours of loops first (the "only loops, no edges"
-    /// symptom on a real collection). The default `.edges` scope is order-
-    /// independent (loops filtered out).
+    /// `GenerateUnit.enumerate` so the TIMELINE order (loop(A), edge(A→B),
+    /// loop(B), … — the 2026-08-13 owner decision, shared with the CLI) is used
+    /// verbatim; the SCOPE filters which of those units render. The unit set is
+    /// `N` loops + `N−1` edges regardless of order.
     private func buildUnits() -> [GenerateUnit] {
         GenerateUnit.enumerate(sources.map { (gen: $0.gen, id: $0.id, flame: $0.flame) })
     }
@@ -446,14 +557,9 @@ private struct StitchTab: View {
         Form {
             Section("Render shard") {
                 ShardMenu(catalog: catalog, shard: $shard)
-                HStack {
-                    Stepper("Loop: \(String(format: "%.1f", shard.loopSeconds)) s",
-                            value: $shard.loopSeconds, in: 1...120, step: 0.5)
-                        .onChange(of: shard.loopSeconds) { _, _ in recomputePace() }
-                    Stepper("Edge: \(String(format: "%.1f", shard.transSeconds)) s",
-                            value: $shard.transSeconds, in: 1...120, step: 0.5)
-                        .onChange(of: shard.transSeconds) { _, _ in recomputePace() }
-                }
+                // The SAME shared steppers as the Generate tab (one source of
+                // truth for ranges/step + the non-canonical-name recompute).
+                ShardPaceSteppers(shard: $shard)
             }
             Section("Timeline") {
                 Stepper("Loop repetitions: \(loopReps)", value: $loopReps, in: 1...5)
@@ -510,6 +616,12 @@ private struct StitchTab: View {
         }
         .formStyle(.grouped)
         .padding(.top, 6)
+        .task {
+            // Initial shard from Settings (AppPreferences.flockDefaultShard):
+            // the named catalog/preset shard if it exists, else the default.
+            shard = await resolveInitialShard(pref: appModel.prefs.flockDefaultShard,
+                                              catalog: catalog)
+        }
     }
 
     /// Timeline slot count (reps-aware): `N·r` loop slots (each flame's loop
@@ -622,20 +734,9 @@ private struct StitchTab: View {
     }
     private var canRun: Bool { !running }
 
-    /// Rebuild `loopFrames`/`transFrames`/`isCanonical`/`name` after a pace edit
-    /// (mirrors `FlockNaming.shardDir` — canonical iff 15 s / 12 s).
-    private func recomputePace() {
-        let lf = Int((shard.loopSeconds * Double(shard.fps)).rounded())
-        let tf = Int((shard.transSeconds * Double(shard.fps)).rounded())
-        shard.loopFrames = lf
-        shard.transFrames = tf
-        let canonicalLoop = Int((15.0 * Double(shard.fps)).rounded())
-        let canonicalTrans = Int((12.0 * Double(shard.fps)).rounded())
-        shard.isCanonical = (lf == canonicalLoop && tf == canonicalTrans)
-        shard.name = shard.isCanonical
-            ? "\(shard.width)x\(shard.height)_\(shard.fps)fps"
-            : "\(shard.width)x\(shard.height)_\(shard.fps)fps_Lf\(lf)-Tf\(tf)"
-    }
+    // Pace recompute after a stepper edit lives in the shared
+    // `ShardPaceSteppers` (→ `ShardSpec.withPace` in FlameFlock), so Generate
+    // and Stitch can never drift.
 
     private func stitch() {
         let ordered = sequence.map { (gen: $0.gen, id: $0.id, flame: $0.flame) }

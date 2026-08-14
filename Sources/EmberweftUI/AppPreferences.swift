@@ -80,6 +80,13 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// `rememberedCheckpointURL`).
     public var flockDir: URL?
 
+    /// M6.5: the shard NAME the Flock Generate/Stitch tabs start from — a
+    /// `ShardPresets` name (`"1920x1080_30fps"`, …) or any catalog shard name.
+    /// nil ⇒ the canonical default (1080p30) is resolved by the tabs. A stored
+    /// name that no longer exists also falls back to the canonical default.
+    /// Additive (decodes as nil for older prefs files — mirrors `flockDir`).
+    public var flockDefaultShard: String?
+
     public init(
         qualityPreset: QualityPreset = .medium,
         targetFPS: Int = 60,
@@ -100,7 +107,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         seed: UInt64 = 1,
         density: Density = .medium,
         rememberedCheckpointURL: URL? = nil,
-        flockDir: URL? = nil
+        flockDir: URL? = nil,
+        flockDefaultShard: String? = nil
     ) {
         self.qualityPreset = qualityPreset
         self.targetFPS = targetFPS
@@ -122,6 +130,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.density = density
         self.rememberedCheckpointURL = rememberedCheckpointURL
         self.flockDir = flockDir
+        self.flockDefaultShard = flockDefaultShard
     }
 
     // MARK: - Codable (additive: `density` defaults when absent; legacy
@@ -139,6 +148,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         case previewOversample, previewPreset, seed, density
         case rememberedCheckpointURL
         case flockDir
+        case flockDefaultShard
     }
 
     /// Legacy key kept ONLY for one-way migration from the pre-multi-folder
@@ -185,6 +195,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         self.rememberedCheckpointURL = try c.decodeIfPresent(URL.self, forKey: .rememberedCheckpointURL)
         // M6.5 T18: additive — older prefs without the key decode to nil.
         self.flockDir = try c.decodeIfPresent(URL.self, forKey: .flockDir)
+        // M6.5: additive — same pattern as `flockDir` above.
+        self.flockDefaultShard = try c.decodeIfPresent(String.self, forKey: .flockDefaultShard)
     }
 
     // MARK: - Directory sources (multi-folder)
