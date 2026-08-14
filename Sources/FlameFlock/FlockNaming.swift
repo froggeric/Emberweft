@@ -14,14 +14,23 @@ public enum FlockNaming {
     private static let shardRegex = try! NSRegularExpression(pattern: "^[A-Za-z0-9_-]+$")
     private static let digitRegex = try! NSRegularExpression(pattern: "^[0-9]+$")
 
-    /// `<aGen>=<aId>=<bGen>=<bId>.<ext>` (ext excludes the dot). Ids are emitted
-    /// VERBATIM — no padding, no transformation (D1, §5.2). ES ids (e.g. "00628")
-    /// are preserved as-is; minted ids are zero-padded to 6 digits by `IdMinter`
-    /// (T8, reserved flock `900000`) BEFORE being handed here, so the caller owns
-    /// the id's final string form. Padding inside `fileName` was a defect (it
-    /// corrupted 5-digit ES ids like "00628" → "000628"); it stays out.
-    public static func fileName(aGen: String, aId: String, bGen: String, bId: String, ext: String) -> String {
-        "\(aGen)=\(aId)=\(bGen)=\(bId).\(ext)"
+    /// The loop-WRAP file variant (M6.5 seam-aware geometry): a loop unit is two
+    /// files, `<a>=<b>.mov` (the core) + `<a>=<b>.wrap.mov` (the periodic-
+    /// boundary frames). The variant rides as a 5th `=`-field on the stem.
+    public static let wrapVariant = "wrap"
+
+    /// `<aGen>=<aId>=<bGen>=<bId>[=<variant>].<ext>` (ext excludes the dot). Ids
+    /// are emitted VERBATIM — no padding, no transformation (D1, §5.2). ES ids
+    /// (e.g. "00628") are preserved as-is; minted ids are zero-padded to 6 digits
+    /// by `IdMinter` (T8, reserved flock `900000`) BEFORE being handed here, so
+    /// the caller owns the id's final string form. Padding inside `fileName` was
+    /// a defect (it corrupted 5-digit ES ids like "00628" → "000628"); it stays
+    /// out. `variant` (nil = the canonical artifact; `wrapVariant` = a loop's
+    /// wrap file) is the ONLY non-numeric field.
+    public static func fileName(aGen: String, aId: String, bGen: String, bId: String,
+                                ext: String, variant: String? = nil) -> String {
+        let base = "\(aGen)=\(aId)=\(bGen)=\(bId)"
+        return variant.map { "\(base)=\($0).\(ext)" } ?? "\(base).\(ext)"
     }
 
     /// A loop is a self-edge: both (gen,id) endpoints equal.
@@ -30,16 +39,27 @@ public enum FlockNaming {
     }
 
     /// Split the file stem (no extension) on `=`; require exactly 4 numeric
-    /// fields. Returns `nil` for 3/5 fields, non-digit contents, `..` or `/` —
-    /// callers skip + log un-decodable stems.
+    /// fields, or 4 numeric fields plus a trailing `wrap` variant (M6.5 loop
+    /// wrap files). Returns `nil` for other shapes, non-digit contents, `..` or
+    /// `/` — callers skip + log un-decodable stems.
     public static func decode(stem: String) -> (aGen: String, aId: String, bGen: String, bId: String)? {
-        let parts = stem.split(separator: "=").map(String.init)
-        guard parts.count == 4,
+        var parts = stem.split(separator: "=").map(String.init)
+        var variant: String? = nil
+        if parts.count == 5, parts[4] == wrapVariant { variant = parts.removeLast() }
+        guard variant != nil || parts.count == 4,
               parts.allSatisfy({
                   digitRegex.firstMatch(in: $0, range: NSRange(location: 0, length: $0.utf16.count)) != nil
               }),
               !parts.contains(where: { $0.contains("..") || $0.contains("/") }) else { return nil }
         return (parts[0], parts[1], parts[2], parts[3])
+    }
+
+    /// True iff the (already extension-stripped) file stem names a loop WRAP
+    /// variant file (`…=<id>=wrap`) — used by `FlockCatalog.rebuild` to merge
+    /// wrap files into their loop row instead of upserting a colliding row.
+    public static func isWrapStem(_ stem: String) -> Bool {
+        stem.split(separator: "=").count == 5
+            && stem.hasSuffix("=" + wrapVariant)
     }
 
     /// Shard directory name: `WxH_fps` plus `_Lf<loop>-Tf<trans>` iff the pace is
@@ -61,11 +81,12 @@ public enum FlockNaming {
     /// like `1920x1080_30fps_Lf495-Tf300`) and the resolved path is checked to
     /// stay inside `flockRoot` (mirrors spec §5.2 BatchPath.resolve — rejects
     /// symlink-redirect + `..` escape). Layout: `<root>/<shard>/mpeg/<file>`.
+    /// `variant` selects the loop's wrap file (nil = the canonical artifact).
     public static func archiveFileURL(flockRoot: URL, shardDir: String,
                                       aGen: String, aId: String, bGen: String, bId: String,
-                                      ext: String) throws -> URL {
+                                      ext: String, variant: String? = nil) throws -> URL {
         try validateShard(shardDir)
-        let file = fileName(aGen: aGen, aId: aId, bGen: bGen, bId: bId, ext: ext)
+        let file = fileName(aGen: aGen, aId: aId, bGen: bGen, bId: bId, ext: ext, variant: variant)
         let target = flockRoot.resolvingSymlinksInPath()
             .appendingPathComponent(shardDir)
             .appendingPathComponent("mpeg")

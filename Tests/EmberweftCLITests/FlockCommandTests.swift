@@ -197,23 +197,27 @@ final class FlockCommandTests: XCTestCase {
             ])
             XCTAssertEqual(rc, 0, "generate should succeed")
         }
-        // EXACTLY 3 files: 2 loops + 1 edge.
+        // EXACTLY 5 files (seam geometry v2): 2 loops (core + wrap each) + 1 edge.
         let mpeg = root.appendingPathComponent(shardName).appendingPathComponent("mpeg")
         let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
             .filter { $0.hasSuffix(".mov") }.sorted()
         XCTAssertEqual(movs,
-                       ["248=00001=248=00001.mov", "248=00001=248=00002.mov", "248=00002=248=00002.mov"],
-                       "--scope both must produce exactly 2 loops + 1 edge")
+                       ["248=00001=248=00001.mov", "248=00001=248=00001=wrap.mov",
+                        "248=00001=248=00002.mov",
+                        "248=00002=248=00002.mov", "248=00002=248=00002=wrap.mov"],
+                       "--scope both must produce exactly 2 loops (core+wrap) + 1 edge")
 
         // TIMELINE order (owner decision 2026-08-13): the units render as loop,
         // edge, loop — matching the collection order — so the per-unit first-frame
-        // totals are [loopFrames=3, transFrames=2, loopFrames=3].
+        // totals are [loopFrames=3, edge T+2h=4, loopFrames=3] (the loop unit's
+        // core+wrap is reported as one continuous 1..L bar; the edge's EXT range
+        // carries 2h boundary frames — h=1 at L=3).
         let frameTotals = progress.split(separator: "\n").lazy.compactMap { line -> Int? in
             let s = String(line)
             guard let range = s.range(of: " frame 1/") else { return nil }
             return Int(s[range.upperBound...].prefix { $0.isNumber })
         }
-        XCTAssertEqual(Array(frameTotals), [3, 2, 3],
+        XCTAssertEqual(Array(frameTotals), [3, 4, 3],
                        "units must render in timeline order (loop, edge, loop): \(progress)")
     }
 
@@ -235,9 +239,9 @@ final class FlockCommandTests: XCTestCase {
         ])
         XCTAssertEqual(genRC, 0)
 
-        // 2. Stitch: the plan should be all-HIT (will-gen 0); out is a copy of the loop.
-        // `--loop-reps 1` keeps the single-slot copy path (the default 2 would
-        // concat two copies — pinned by testStitchLoopRepsDefaultsToTwo below).
+        // 2. Stitch: the plan should be all-HIT (will-gen 0); out is the core+wrap
+        // concat (a full closed cycle — seam geometry v2 assembles `[core, wrap]`
+        // even at reps=1, so the single-file copy path never fires here).
         let out = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("flock-stitch-\(UUID().uuidString).mov")
         let progress = try await captureOut {
@@ -251,8 +255,8 @@ final class FlockCommandTests: XCTestCase {
         }
         XCTAssertTrue(progress.lowercased().contains("hit") || progress.contains("will-gen"),
                       "stitch should print HIT/will-gen plan: \(progress)")
-        XCTAssertTrue(progress.contains("concatenating 1 segment"),
-                      "reps=1 single genome ⇒ the copy path (1 segment): \(progress)")
+        XCTAssertTrue(progress.contains("concatenating 2 segments"),
+                      "reps=1 single genome ⇒ the core+wrap 2-file concat: \(progress)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "stitch out must exist")
         let size = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
         XCTAssertGreaterThan(size, 0, "stitch out must be non-empty")
@@ -285,27 +289,28 @@ final class FlockCommandTests: XCTestCase {
             ])
             XCTAssertEqual(rc, 0, "stitch should succeed")
         }
-        // The banner reports the reps-aware slot count + the reps value.
-        XCTAssertTrue(progress.contains("segments=2"), "default loop-reps=2 ⇒ 2 slots: \(progress)")
+        // The banner reports the reps-aware FILE count + the reps value.
+        XCTAssertTrue(progress.contains("files=4"), "default loop-reps=2 ⇒ [core,wrap]x2 = 4 files: \(progress)")
         XCTAssertTrue(progress.contains("loop-reps=2"), "the banner should print loop-reps: \(progress)")
-        // All-HIT plan over UNIQUE keys (1 loop) with 2 timeline slots.
-        XCTAssertTrue(progress.contains("HIT=1 will-gen=0 segments=2"),
-                      "plan counts unique work (1 HIT) + slot total (2): \(progress)")
-        // The 2-slot timeline goes through CONCAT, not the single-file copy.
-        XCTAssertTrue(progress.contains("concatenating 2 segments"),
-                      "default reps=2 single genome ⇒ concat of 2 copies: \(progress)")
-        // The archive still holds EXACTLY ONE loop file (repetition never
-        // duplicates archive artifacts).
+        // All-HIT plan over UNIQUE keys (1 loop) with 4 timeline files.
+        XCTAssertTrue(progress.contains("HIT=1 will-gen=0 segments=4"),
+                      "plan counts unique work (1 HIT) + file total (4): \(progress)")
+        // The 4-file timeline goes through CONCAT, not the single-file copy.
+        XCTAssertTrue(progress.contains("concatenating 4 segments"),
+                      "default reps=2 single genome ⇒ concat of [core,wrap,core,wrap]: \(progress)")
+        // The archive still holds EXACTLY ONE loop unit (core + wrap — repetition
+        // never duplicates archive artifacts).
         let mpeg = root.appendingPathComponent(shardName).appendingPathComponent("mpeg")
         let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
-            .filter { $0.hasSuffix(".mov") }
-        XCTAssertEqual(movs, ["248=00001=248=00001.mov"],
-                       "reps duplicate timeline slots, never archive files")
-        // The output plays the loop twice (≈2× the single loop's frames).
-        let single = try await AVURLAsset(url: mpeg.appendingPathComponent(movs[0])).load(.duration).seconds
+            .filter { $0.hasSuffix(".mov") }.sorted()
+        XCTAssertEqual(movs, ["248=00001=248=00001.mov", "248=00001=248=00001=wrap.mov"],
+                       "reps duplicate timeline files, never archive files")
+        // The output plays the loop unit twice (≈2× the core+wrap duration).
+        let core = try await AVURLAsset(url: mpeg.appendingPathComponent(movs[0])).load(.duration).seconds
+        let wrap = try await AVURLAsset(url: mpeg.appendingPathComponent(movs[1])).load(.duration).seconds
         let doubled = try await AVURLAsset(url: out).load(.duration).seconds
-        XCTAssertEqual(doubled, 2 * single, accuracy: 0.2,
-                       "stitched output ≈ 2× the canonical loop duration")
+        XCTAssertEqual(doubled, 2 * (core + wrap), accuracy: 0.2,
+                       "stitched output ≈ 2× the canonical unit duration")
         try? FileManager.default.removeItem(at: out)
     }
 

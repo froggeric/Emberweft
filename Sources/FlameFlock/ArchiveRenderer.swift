@@ -4,61 +4,161 @@ import AVFoundation
 import FlameKit
 import FlameExport
 
-/// Renders one flock archive unit — a loop OR an edge — into an archive-named
-/// `.mov` + `.jpg` thumb + `[AVMetadataItem]` tags (Task 9, spec §14.2 / §4.1).
+/// Renders one flock archive unit — a loop OR an edge — into archive-named
+/// `.mov`(s) + `.jpg` thumb + `[AVMetadataItem]` tags (Task 9, spec §14.2 / §4.1).
 ///
-/// The edge uses the **2-segment lone-edge `FramePlan`** (§4.1): segment 0 is
-/// `loop(A)` (never rendered — Schedule requires a loop before a transition),
-/// segment 1 is `transition(A→B)` (the only slot that is encoded). The render
-/// range is therefore `loopFrames..<(loopFrames + transFrames)`.
+/// # Seam-aware artifact geometry (M6.5, geometry v2)
 ///
-/// Write order is **atomic** (never a catalog row without its file):
-/// `renderSegmentRange` writes a temp beside `out`, atomic-renames to `out`,
-/// THEN this type writes the thumb and upserts the catalog row LAST. So a
-/// failure anywhere before the upsert leaves no row pointing at a missing file.
+/// Archive units are rendered STANDALONE and concatenated file-wise, so the
+/// centered-box temporal smoothing (GUI default ON, h=5) used to clip at every
+/// artifact's frame range: each unit's first/last h frames got one-sided
+/// windows, and — because the DE+display of an averaged histogram tracks the
+/// BRIGHTEST window member (gamma compression) while edges pass through a much
+/// brighter mid-morph state than either endpoint — the boundary frames on the
+/// two sides of a file seam showed completely different brightness. Measured on
+/// `00628/07385/14501` @ 720p spp 30 (the pre-fix stitch): edge→loop seams
+/// jumped up to 80.8 MAD (35.6× the local baseline, Δluma −76), loop→edge up to
+/// 64.6 MAD (17.7×, Δluma +61), loop→loop repeats 24.8 MAD (7.3×) — vs the
+/// one-shot inline export of the SAME genomes/settings, whose cross-boundary
+/// windows turn each boundary into a smooth ~8-frame ramp (≤3× baseline). With
+/// smoothing OFF the same stitch was already seam-clean (0.96–1.2×) — the defect
+/// is entirely the clipped windows, not the content (the sharp endpoint frames
+/// match across the seam to 0.52 MAD).
 ///
-/// **spp source:** `ExportSettings` has no `samplesPerPixel` field; the resolved
-/// spp + oversample come from `settings.quality.resolvedSamplesPerPixel(for:)`.
-/// They are resolved once per unit and threaded into `RenderParams`, the mdta
-/// tags, and the `ArtifactRow` (single source of truth).
+/// The fix re-slices the timeline so every ENCODED frame's centered window lies
+/// strictly inside its own unit's plan, and the boundary frames themselves are
+/// owned by the unit whose plan contains BOTH sides:
+///
+/// - **loop = CORE + WRAP (two files, one row).** Core encodes phases
+///   `[h, L−h)` of a 1-cycle plan (all windows interior). Wrap encodes
+///   `[L−h, L+h)` of a **3-cycle** plan (`loopCycles: 3`, `framesPerSegment:
+///   3L`) — the periodic-boundary frames `L−h…L−1, 0…h−1` as one contiguous
+///   range, whose windows straddle the cycle wrap INSIDE the plan (a loop is
+///   periodic, so this needs no cross-unit context).
+/// - **edge = EXT (one file).** A **3-segment** plan `loop(A) + transition(A→B)
+///   + loop(B)` encoding `[L−h, L+T+h)`: the transition plus h boundary frames
+///   of EACH neighboring loop, whose windows straddle both boundaries. The
+///   (A,B) pair fully determines the context (the stitch always orders
+///   `edge(A→B)` between loopA and loopB), so this stays context-free.
+///
+/// A stitch assembles `[core, (wrap, core)×(r−1)] , ext, …` — every consecutive
+/// frame pair across every seam has windows sharing `2h` of their `2h+1`
+/// members (same as the inline path's intra-timeline frames), which is what
+/// removes the jump. The timeline starts at phase h and (for multi-genome
+/// sequences) ends at phase L−h: h frames at each end are simply not played
+/// (imperceptible on ambient content; documented divergence from geometry v1).
+///
+/// `SeamGeometry.halfWidth` is FIXED (tier-independent) so artifacts of
+/// different quality tiers tile interchangeably — the `geom` column is an exact
+/// hit-gate (like `codec`), NOT a rank.
 public struct ArchiveRenderer: Sendable {
     public init() {}
 
-    // MARK: - FramePlan construction (§4.1, I9)
+    /// The seam-aware artifact geometry (see the type comment). Pure math over
+    /// the shard pace; no I/O.
+    public enum SeamGeometry {
+        /// Geometry version recorded in `ArtifactRow.geom` + the `emberweft.geom`
+        /// tag. 1 = the pre-M6.5 monolithic loop/edge; 2 = core+wrap / ext.
+        /// Bump ONLY with a timeline-layout change (stitches must not mix).
+        public static let version = 2
 
-    /// 1-segment loop plan; segment 0 is `loop(A)`. Render range: `0..<loopFrames`.
-    public static func makeLoopPlan(A: Flame, loopFrames: Int, transFrames: Int, seed: UInt64) -> FramePlan {
+        /// The seam half-width used to slice units. FIXED at the smoothing
+        /// window's `centeredHalfWidth` (5) so the layout is tier-independent;
+        /// a render's smoothing half-width must be ≤ this or its boundary
+        /// windows would clip at the unit's internal seams (pinned by
+        /// `testSeamHalfWidthMatchesSmoothingCap`).
+        public static let seamHalfWidth = TemporalSmoothing.centeredHalfWidth
+
+        /// Effective seam half-width for a shard: clamped so the CORE stays
+        /// non-empty (`2h < L`). Shards with `L > 11` (every real shard; the
+        /// canonical loop is 450 frames) get the full 5.
+        public static func halfWidth(loopFrames L: Int) -> Int {
+            min(seamHalfWidth, max(0, (L - 1) / 2))
+        }
+
+        /// Core encode range on the 1-cycle plan: phases `[h, L−h)`.
+        public static func coreRenderRange(loopFrames L: Int) -> Range<Int> {
+            let h = halfWidth(loopFrames: L)
+            return h..<(L - h)
+        }
+
+        /// Wrap encode range on the 3-CYCLE plan (`framesPerSegment = 3L`,
+        /// `loopCycles = 3`): frames `[2L−h, 2L+h)` — phases `L−h…L−1, 0…h−1`
+        /// as one contiguous run whose ±h windows straddle the cycle wrap.
+        public static func wrapRenderRange(loopFrames L: Int) -> Range<Int> {
+            let h = halfWidth(loopFrames: L)
+            return (2 * L - h)..<(2 * L + h)
+        }
+
+        /// Extended edge encode range on the 3-SEGMENT plan
+        /// (`loop(A) + transition + loop(B)`): `[L−h, L+T+h)` — h boundary
+        /// frames of loop A, the T transition frames, h boundary frames of B.
+        public static func extRenderRange(loopFrames L: Int, transFrames T: Int) -> Range<Int> {
+            let h = halfWidth(loopFrames: L)
+            return (L - h)..<(L + T + h)
+        }
+    }
+
+    // MARK: - FramePlan construction (§4.1, I9 + seam geometry v2)
+
+    /// 1-segment CORE plan; segment 0 is `loop(A)` over `L` frames, 1 cycle.
+    /// Render range: `SeamGeometry.coreRenderRange` (`[h, L−h)`).
+    public static func makeLoopCorePlan(A: Flame, loopFrames: Int, transFrames: Int,
+                                        seed: UInt64, temporalSamples: Int) -> FramePlan {
         var sched = Schedule(librarySize: 1, framesPerSegment: loopFrames,
                              transitionFramesPerSegment: transFrames,
                              selector: Sequential(seed: seed), seed: seed)
         return FramePlan(schedule: &sched, segmentCount: 1, flames: [A],
-                         loopCycles: 1, temporalSamples: A.quality.temporalSamples)
+                         loopCycles: 1, temporalSamples: temporalSamples)
     }
 
-    /// 2-segment edge plan; segment 0 = `loop(A)` (NOT rendered), segment 1 =
-    /// `transition(A→B)`. Render range: `loopFrames..<(loopFrames + transFrames)`.
-    /// The loop-slot frames are NEVER encoded/written — the 2-segment plan exists
-    /// only because `Schedule` requires a loop before a transition (§4.1).
-    public static func makeEdgePlan(A: Flame, B: Flame, loopFrames: Int, transFrames: Int, seed: UInt64) -> FramePlan {
+    /// 1-segment WRAP plan over a **3-cycle** timeline: `framesPerSegment = 3L`,
+    /// `loopCycles = 3` ⇒ frame k's rotation is `(k+1)·2π/L` (the SAME
+    /// per-frame angular velocity as the core), and frames `[2L, 3L)` revisit
+    /// the loop's phases `[0, L)` one cycle later — giving the wrap range
+    /// `[2L−h, 2L+h)` fully-interior ±h windows that straddle the cycle wrap.
+    public static func makeLoopWrapPlan(A: Flame, loopFrames: Int, transFrames: Int,
+                                        seed: UInt64, temporalSamples: Int) -> FramePlan {
+        var sched = Schedule(librarySize: 1, framesPerSegment: 3 * loopFrames,
+                             transitionFramesPerSegment: transFrames,
+                             selector: Sequential(seed: seed), seed: seed)
+        return FramePlan(schedule: &sched, segmentCount: 1, flames: [A],
+                         loopCycles: 3, temporalSamples: temporalSamples)
+    }
+
+    /// 3-segment EXT plan: segment 0 = `loop(A)`, segment 1 =
+    /// `transition(A→B)`, segment 2 = `loop(B)`. Render range:
+    /// `SeamGeometry.extRenderRange` (`[L−h, L+T+h)`). The edge-slot frames'
+    /// descriptors are IDENTICAL to the historical 2-segment plan's (same
+    /// schedule parameters, same blends) — the plan merely adds loop(B) so the
+    /// transition's last frames' smoothing windows reach into real B content
+    /// (the inline one-shot path's behavior).
+    public static func makeEdgeExtPlan(A: Flame, B: Flame, loopFrames: Int, transFrames: Int,
+                                       seed: UInt64, temporalSamples: Int) -> FramePlan {
         var sched = Schedule(librarySize: 2, framesPerSegment: loopFrames,
                              transitionFramesPerSegment: transFrames,
                              selector: Sequential(seed: seed), seed: seed)
-        // flames[A, B]: segment 1 reads flames[0]=A, flames[1]=B (fromSheep=0, toSheep=1).
-        return FramePlan(schedule: &sched, segmentCount: 2, flames: [A, B],
-                         loopCycles: 1, temporalSamples: A.quality.temporalSamples)
+        // flames[A, B]: segment 1 reads flames[0]=A, flames[1]=B (fromSheep=0, toSheep=1);
+        // segment 2 (loop) reads flames[1]=B — exactly the genome the stitch
+        // plays after this edge.
+        return FramePlan(schedule: &sched, segmentCount: 3, flames: [A, B],
+                         loopCycles: 1, temporalSamples: temporalSamples)
     }
 
+    /// Historical geometry-v1 ranges (kept for the migration tests + docs).
     public static func loopRenderRange(loopFrames: Int) -> Range<Int> { 0..<loopFrames }
     public static func edgeRenderRange(loopFrames: Int, transFrames: Int) -> Range<Int> {
         loopFrames..<(loopFrames + transFrames)
     }
 
-    // MARK: - Render one unit → archive file + thumb + tags
+    // MARK: - Render one unit → archive file(s) + thumb + tags
 
-    /// Render a loop artifact (self-edge) into `out` (`.mov`) + `.jpg` thumb, then
-    /// upsert the catalog row. Atomic: temp → rename (inside `renderSegmentRange`)
-    /// → thumb → upsert. `coordinator` is the ExportCoordinator whose
-    /// `renderSegmentRange` we drive (single-sourced Metal/CPU dispatch).
+    /// Render a loop unit (self-edge) as CORE + WRAP (seam geometry v2), then
+    /// upsert ONE catalog row referencing both files. Atomic per file (temp →
+    /// rename inside `renderSegmentRange`); the row is upserted LAST, after both
+    /// files + the thumb exist — a failure anywhere before leaves no row.
+    /// `perFrame` receives 1-indexed progress over the UNIT's `loopFrames`
+    /// (core then wrap), not per-file totals.
     public func renderLoop(
         A: Flame, aGen: String, aId: String, shard: ShardSpec,
         settings: ExportSettings, coordinator: ExportCoordinator,
@@ -69,18 +169,39 @@ public struct ArchiveRenderer: Sendable {
         let seed = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId, bGen: aGen, bId: aId)
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
                                                  aGen: aGen, aId: aId, bGen: aGen, bId: aId, ext: "mov")
+        let wrapOut = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
+                                                     aGen: aGen, aId: aId, bGen: aGen, bId: aId,
+                                                     ext: "mov", variant: FlockNaming.wrapVariant)
         let params = Self.makeParams(A: A, shard: shard, seed: seed, settings: settings)
-        let plan = Self.makeLoopPlan(A: A, loopFrames: shard.loopFrames,
-                                     transFrames: shard.transFrames, seed: seed)
-        let range = Self.loopRenderRange(loopFrames: shard.loopFrames)
-        try await renderIntoArchive(plan: plan, params: params, range: range, settings: settings,
+        let corePlan = Self.makeLoopCorePlan(A: A, loopFrames: shard.loopFrames,
+                                             transFrames: shard.transFrames, seed: seed,
+                                             temporalSamples: settings.temporalSamples)
+        let coreRange = SeamGeometry.coreRenderRange(loopFrames: shard.loopFrames)
+        let wrapPlan = Self.makeLoopWrapPlan(A: A, loopFrames: shard.loopFrames,
+                                             transFrames: shard.transFrames, seed: seed,
+                                             temporalSamples: settings.temporalSamples)
+        let wrapRange = SeamGeometry.wrapRenderRange(loopFrames: shard.loopFrames)
+        // Unit-wide progress: core frames are 1…coreCount, wrap frames
+        // coreCount+1…loopFrames of the SAME unit total (the UI reads one bar).
+        let coreCount = coreRange.count
+        let unitTotal = shard.loopFrames
+        var corePerFrame: (@Sendable (Int, Int) -> Void)? = nil
+        if let cb = perFrame {
+            corePerFrame = { frame, _ in cb(frame, unitTotal) }
+        }
+        try await renderIntoArchive(plan: corePlan, params: params, range: coreRange, settings: settings,
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: aGen, bId: aId,
             kind: .loop, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A, perFrame: perFrame)
+            seed: seed, A: A, wrapOut: wrapOut, wrapPlan: wrapPlan, wrapRange: wrapRange,
+            perFrame: corePerFrame)
     }
 
-    /// Render an edge artifact (A→B). Same shape; 2-segment plan, transition range only.
+    /// Render an edge artifact (A→B) with the seam-aware EXT geometry: a
+    /// 3-segment plan `loop(A) + transition + loop(B)`, encoding
+    /// `[L−h, L+T+h)` — the transition plus h boundary frames of each neighbor
+    /// loop, so the transition's boundary frames' smoothing windows straddle
+    /// into real loop content exactly as the inline one-shot path's do.
     public func renderEdge(
         A: Flame, B: Flame, aGen: String, aId: String, bGen: String, bId: String, shard: ShardSpec,
         settings: ExportSettings, coordinator: ExportCoordinator,
@@ -92,43 +213,68 @@ public struct ArchiveRenderer: Sendable {
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
                                                  aGen: aGen, aId: aId, bGen: bGen, bId: bId, ext: "mov")
         let params = Self.makeParams(A: A, shard: shard, seed: seed, settings: settings)
-        let plan = Self.makeEdgePlan(A: A, B: B, loopFrames: shard.loopFrames,
-                                     transFrames: shard.transFrames, seed: seed)
-        let range = Self.edgeRenderRange(loopFrames: shard.loopFrames, transFrames: shard.transFrames)
+        let plan = Self.makeEdgeExtPlan(A: A, B: B, loopFrames: shard.loopFrames,
+                                        transFrames: shard.transFrames, seed: seed,
+                                        temporalSamples: settings.temporalSamples)
+        let range = SeamGeometry.extRenderRange(loopFrames: shard.loopFrames,
+                                                transFrames: shard.transFrames)
         try await renderIntoArchive(plan: plan, params: params, range: range, settings: settings,
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: bGen, bId: bId,
             kind: .edge, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A, perFrame: perFrame)
+            seed: seed, A: A, wrapOut: nil, wrapPlan: nil, wrapRange: nil, perFrame: perFrame)
     }
 
     /// Shared body: drive `renderSegmentRange` (temp→atomic-rename handled inside
-    /// it), write the thumb, THEN upsert the catalog row (order matters — never a
-    /// row without its file). Bypasses `ExportCheckpoint.sanitizedStem` (the
-    /// archive path is its own root under `<flockRoot>/<shard>/mpeg/`).
+    /// it), optionally the WRAP file, then the thumb, THEN upsert the catalog row
+    /// (order matters — never a row without its files). Bypasses
+    /// `ExportCheckpoint.sanitizedStem` (the archive path is its own root under
+    /// `<flockRoot>/<shard>/mpeg/`).
     private func renderIntoArchive(
         plan: FramePlan, params: RenderParams, range: Range<Int>, settings: ExportSettings,
         out: URL, shard: ShardSpec, aGen: String, aId: String, bGen: String, bId: String,
         kind: ArtifactRow.Kind, backend: ExportCoordinator.Backend, useOffMainMetal: Bool,
         coordinator: ExportCoordinator, catalog: FlockCatalog, sourceSha: String?, flockRoot: URL,
         seed: UInt64, A: Flame,
+        wrapOut: URL?, wrapPlan: FramePlan?, wrapRange: Range<Int>?,
         perFrame: (@Sendable (_ frame: Int, _ frameTotal: Int) -> Void)? = nil
     ) async throws {
         try? FileManager.default.createDirectory(at: out.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         // spp is resolved ONCE from the quality tier + the base flame (there is no
         // settings.samplesPerPixel field). Threaded into tags + the row identically.
+        // `[AVMetadataItem]` is not Sendable, so a FRESH array is built per
+        // renderSegmentRange call (core + wrap) instead of reusing one across
+        // actor hops.
         let (spp, _) = settings.quality.resolvedSamplesPerPixel(for: A)
-        let metadata = Self.makeMetadata(stem: out.deletingPathExtension().lastPathComponent,
-                                         shard: shard, settings: settings, seed: seed,
-                                         sourceSha: sourceSha, spp: spp)
+        let stem = out.deletingPathExtension().lastPathComponent
+        func makeMeta() -> [AVMetadataItem] {
+            Self.makeMetadata(stem: stem, shard: shard, settings: settings, seed: seed,
+                              sourceSha: sourceSha, spp: spp)
+        }
         // renderSegmentRange writes a temp beside `out`, then atomic-renames to `out`.
         // If it throws (e.g. ProRes-in-mp4, cancel, disk-full) no file lands at
         // `out` and we rethrow BEFORE the thumb/upsert — the atomic invariant.
         try await coordinator.renderSegmentRange(
             plan: plan, params: params, budget: nil, useMetal: backend == .metal,
             range: range, smoothingAlpha: settings.smoothingAlpha, settings: settings,
-            out: out, metadata: metadata, perFrame: perFrame)
+            out: out, metadata: makeMeta(), perFrame: perFrame)
+        // WRAP file (loops only): same params/seed, the 3-cycle wrap range. If it
+        // throws, the core file exists but the row does not (still atomic).
+        var wrapRel: String? = nil
+        if let wrapOut, let wrapPlan, let wrapRange {
+            let coreCount = range.count
+            let unitTotal = shard.loopFrames
+            var wrapPerFrame: (@Sendable (Int, Int) -> Void)? = nil
+            if let cb = perFrame {
+                wrapPerFrame = { frame, _ in cb(coreCount + frame, unitTotal) }
+            }
+            try await coordinator.renderSegmentRange(
+                plan: wrapPlan, params: params, budget: nil, useMetal: backend == .metal,
+                range: wrapRange, smoothingAlpha: settings.smoothingAlpha, settings: settings,
+                out: wrapOut, metadata: makeMeta(), perFrame: wrapPerFrame)
+            wrapRel = Self.archiveRelativePath(shard: shard.name, file: wrapOut.lastPathComponent)
+        }
         // Thumb (representative frame: frame 0 of the asset).
         try await Self.writeThumbnail(from: out,
                                       to: try FlockNaming.thumbURL(flockRoot: flockRoot, shardDir: shard.name,
@@ -139,6 +285,8 @@ public struct ArchiveRenderer: Sendable {
         let row = ArtifactRow(
             aGen: aGen, aId: aId, bGen: bGen, bId: bId, shard: shard.name, kind: kind,
             file: Self.archiveRelativePath(shard: shard.name, file: out.lastPathComponent),
+            wrapFile: wrapRel,
+            geom: SeamGeometry.version,
             thumb: Self.thumbRelativePath(shard: shard.name, aGen: aGen, aId: aId, bGen: bGen, bId: bId),
             width: shard.width, height: shard.height, fps: shard.fps,
             loopFrames: shard.loopFrames, transFrames: shard.transFrames,
@@ -215,6 +363,9 @@ public struct ArchiveRenderer: Sendable {
         custom("emberweft.seed", String(Int(truncatingIfNeeded: seed)))
         custom("emberweft.rendered", ISO8601DateFormatter().string(from: Date()))
         custom("emberweft.shard", shard.name)
+        // Seam-geometry version (read back by `FlockCatalog.rebuild` into
+        // `ArtifactRow.geom` — the exact hit-gate alongside `codec`).
+        custom("emberweft.geom", String(SeamGeometry.version))
         return items
     }
 

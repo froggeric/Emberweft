@@ -318,6 +318,18 @@ final class DeterminismPinsTests: XCTestCase {
         XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: out1.path)[.size] as? Int ?? 0, 0)
         XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: out2.path)[.size] as? Int ?? 0, 0)
 
+        // Seam geometry v2: a loop unit is CORE + WRAP — both files materialize
+        // at the deterministic paths in BOTH roots, and both rows record the
+        // identical wrapFile relative path.
+        let wrap1 = try FlockNaming.archiveFileURL(flockRoot: root1, shardDir: shard.name,
+                                                   aGen: aGen, aId: aId, bGen: bGen, bId: bId,
+                                                   ext: "mov", variant: FlockNaming.wrapVariant)
+        let wrap2 = try FlockNaming.archiveFileURL(flockRoot: root2, shardDir: shard.name,
+                                                   aGen: aGen, aId: aId, bGen: bGen, bId: bId,
+                                                   ext: "mov", variant: FlockNaming.wrapVariant)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wrap1.path), "wrap file must exist (root 1)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wrap2.path), "wrap file must exist (root 2)")
+
         // Both catalog rows carry the identical canonical seed (the deterministic
         // input that drives `renderFrames`); same spp/temporal/qualityRank.
         // (`XCTUnwrap`'s autoclosure can't `await`, so resolve the actor calls
@@ -330,6 +342,9 @@ final class DeterminismPinsTests: XCTestCase {
         XCTAssertEqual(row1.spp, row2.spp)
         XCTAssertEqual(row1.temporal, row2.temporal)
         XCTAssertEqual(row1.qualityRank, row2.qualityRank, accuracy: 1e-9)
+        XCTAssertEqual(row1.wrapFile, row2.wrapFile, "both rows record the identical wrap path")
+        XCTAssertEqual(row1.geom, row2.geom)
+        XCTAssertEqual(row1.geom, ArchiveRenderer.SeamGeometry.version)
 
         // As an attempted empirical check (the spec AC): compare the encoded
         // bytes. On the same machine this MAY pass when both renders land in the

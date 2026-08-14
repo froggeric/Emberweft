@@ -50,6 +50,7 @@ extension EmberweftCLI {
         var quality = "genome"
         var codec = "hevc"
         var temporalSamples = 1
+        var smoothing = "off"
         var backend = "cpu"
         var flockRoot = defaultFlockRoot().path
         var i = 0
@@ -75,6 +76,12 @@ extension EmberweftCLI {
             case "--temporal-samples":
                 guard let v = value() else { return missing("--temporal-samples") }
                 temporalSamples = max(1, Int(v) ?? 1); i += 2
+            case "--smoothing":
+                guard let v = value() else { return missing("--smoothing") }
+                let lv = v.lowercased()
+                guard lv == "auto" || lv == "off"
+                else { err("error: --smoothing must be auto|off\n"); return 2 }
+                smoothing = lv; i += 2
             case "--backend":
                 guard let v = value() else { return missing("--backend") }
                 let lv = v.lowercased()
@@ -112,11 +119,14 @@ extension EmberweftCLI {
         let baseFlame = units.first(where: { $0.A.isRenderable })?.A ?? units[0].A
 
         // Resolve ExportSettings via the shared pure resolver (motion-blur fallback
-        // + Metal ts cap + smoothing). Archive path: .mov container, shard WxH,
-        // smoothing OFF (byte-sharp mastering — matches the archive tests).
+        // + Metal ts cap + smoothing). Archive path: .mov container, shard WxH.
+        // `--smoothing auto` reproduces the GUI default archive profile (Standard
+        // tier ⇒ smoothing ON, h=5); the CLI default stays OFF (byte-sharp
+        // mastering — matches the archive tests + the animate byte-identity).
         let settings = Self.resolveArchiveSettings(
             quality: quality, codec: codec, shard: shard,
-            temporalSamples: temporalSamples, baseFlame: baseFlame, backend: coordBackend)
+            temporalSamples: temporalSamples, smoothing: smoothing,
+            baseFlame: baseFlame, backend: coordBackend)
         guard let settings else { return 2 }   // parse error already printed
 
         // HEVC availability probe (mirror ExportCommand: explicit hevc on a host
@@ -198,6 +208,7 @@ extension EmberweftCLI {
         var quality = "genome"
         var codec = "hevc"
         var temporalSamples = 1
+        var smoothing = "off"
         var loopReps = 2
         var backend = "cpu"
         var flockRoot = defaultFlockRoot().path
@@ -224,6 +235,12 @@ extension EmberweftCLI {
             case "--temporal-samples":
                 guard let v = value() else { return missing("--temporal-samples") }
                 temporalSamples = max(1, Int(v) ?? 1); i += 2
+            case "--smoothing":
+                guard let v = value() else { return missing("--smoothing") }
+                let lv = v.lowercased()
+                guard lv == "auto" || lv == "off"
+                else { err("error: --smoothing must be auto|off\n"); return 2 }
+                smoothing = lv; i += 2
             case "--backend":
                 guard let v = value() else { return missing("--backend") }
                 let lv = v.lowercased()
@@ -256,7 +273,8 @@ extension EmberweftCLI {
         let baseFlame = ordered.first(where: { $0.flame.isRenderable })?.flame ?? ordered[0].flame
         let settings = Self.resolveArchiveSettings(
             quality: quality, codec: codec, shard: shard,
-            temporalSamples: temporalSamples, baseFlame: baseFlame, backend: coordBackend)
+            temporalSamples: temporalSamples, smoothing: smoothing,
+            baseFlame: baseFlame, backend: coordBackend)
         guard let settings else { return 2 }
         if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {
             err("error: HEVC (H.265) encode is not available on this host; use --codec h264\n")
@@ -277,8 +295,11 @@ extension EmberweftCLI {
         sig.setEventHandler { Task { await stitcher.cancel() } }
         sig.resume()
 
-        // Timeline slots: N·r loop slots (reps-aware) + N−1 edges (never repeated).
-        out("flock stitch: shard=\(shardName) segments=\(ordered.count * loopReps + max(0, ordered.count-1)) loop-reps=\(loopReps) out=\(outURL.path)\n")
+        // Timeline files (seam geometry v2): each of the N loops contributes r
+        // CORE files + (r−1) inter-repeat WRAP files (+1 trailing wrap closing
+        // the final cycle); each of the N−1 edges contributes one EXT file —
+        // 2·N·r files total.
+        out("flock stitch: shard=\(shardName) files=\(ordered.count * 2 * loopReps) loop-reps=\(loopReps) out=\(outURL.path)\n")
         do {
             let stream = await stitcher.stitch(request, coordinator: coord)
             for try await p in stream {
@@ -440,13 +461,15 @@ extension EmberweftCLI {
 
     /// Build the `ExportSettings` for one archive unit via the shared pure
     /// resolver (motion-blur genome-default fallback + Metal ts cap + smoothing
-    /// resolution). Archive profile: `.mov` container, the shard's WxH, smoothing
-    /// OFF (byte-sharp mastering path — matches the archive test harness + the
-    /// animate↔export byte-identity invariant). Returns nil (+ prints) on a bad
-    /// quality/codec string.
+    /// resolution). Archive profile: `.mov` container, the shard's WxH. Smoothing
+    /// defaults to `.off` (byte-sharp mastering path — matches the archive test
+    /// harness + the animate↔export byte-identity invariant); `--smoothing auto`
+    /// reproduces the GUI's archive default (`.auto` ⇒ ON, h=5, for `.spp`
+    /// tiers). Returns nil (+ prints) on a bad quality/codec string.
     static func resolveArchiveSettings(
         quality: String, codec: String, shard: ShardSpec,
-        temporalSamples: Int, baseFlame: Flame, backend: ExportCoordinator.Backend
+        temporalSamples: Int, smoothing: String = "off",
+        baseFlame: Flame, backend: ExportCoordinator.Backend
     ) -> ExportSettings? {
         guard let codecEnum = Self.normalizeCodec(codec) else {
             err("error: --codec must be h264|hevc|prores-422-hq\n"); return nil
@@ -465,7 +488,7 @@ extension EmberweftCLI {
             segmentFrameBudget: 0,
             baseFlame: baseFlame,
             backend: backend,
-            temporalSmoothing: .off)
+            temporalSmoothing: smoothing == "auto" ? .auto : .off)
     }
 
     /// `h264|hevc|prores-422-hq` → `ExportSettings.Codec` (accepts the dashed

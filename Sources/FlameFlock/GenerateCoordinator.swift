@@ -200,7 +200,12 @@ public actor GenerateCoordinator {
                 let existing = try await catalog.lookup(aGen: unit.aGen, aId: unit.aId,
                                                         bGen: unit.bGen, bId: unit.bId,
                                                         shard: request.shard.name)
-                if let existing, existing.qualityRank >= requestedRank {
+                // Seam-geometry exact gate (same as StitchCoordinator): a v1
+                // monolithic artifact must not be reused as a v2 core/wrap/ext
+                // unit — the frame layout differs.
+                let seamOK = existing?.geom == ArchiveRenderer.SeamGeometry.version
+                    && (existing?.kind == .edge || existing?.wrapFile != nil)
+                if let existing, existing.qualityRank >= requestedRank, seamOK {
                     // HIT — stored quality meets/exceeds the request. Skip; the
                     // archive file is untouched. Recorded in the plan so resume
                     // doesn't re-evaluate it.

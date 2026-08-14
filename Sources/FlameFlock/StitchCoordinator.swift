@@ -38,17 +38,16 @@ public struct StitchRequest: Sendable {
     public let flockRoot: URL
     public let out: URL
     /// **Loop repetitions (stitch-TIME, default 2)** — how many times each LOOP
-    /// slot references its one canonical archive artifact in the assembled
-    /// timeline. This is NOT the removed v0.5.7 frame-repeat: the archive keeps
-    /// exactly ONE loop artifact per (pair, shard) (one rotation cycle at the
-    /// shard's canonical pace — `ArchiveRenderer.makeLoopPlan` stays
-    /// `loopCycles: 1`), and the stitch timeline simply lists the SAME file N
-    /// times in the concat input (`[loopA, loopA, edgeAB, loopB, loopB, …]`).
-    /// Full framerate, zero re-render, seamless because a loop's last frame
-    /// equals its first (`R(2π) = R(0°)`); duplicate-file passthrough concat is
-    /// decode-clean (the codec-gate test concats `loopB` twice). EDGE slots are
-    /// never repeated (a transition plays once). Clamped to ≥ 1 in
-    /// `buildSegmentKeys`.
+    /// slot references its one canonical archive UNIT in the assembled timeline.
+    /// This is NOT the removed v0.5.7 frame-repeat: the archive keeps exactly
+    /// ONE loop unit per (pair, shard) (core + wrap, seam geometry v2 — see
+    /// `ArchiveRenderer.SeamGeometry`), and the stitch timeline interleaves the
+    /// SAME two files `[core, wrap, core, …]` in the concat input (the wrap
+    /// bridges the periodic boundary BETWEEN repetitions with complete centered
+    /// smoothing windows). Full framerate, zero re-render; duplicate-file
+    /// passthrough concat is decode-clean (the codec-gate test concats `loopB`
+    /// twice). EDGE slots are never repeated (a transition plays once). Clamped
+    /// to ≥ 1 in `buildSegmentKeys`.
     public let loopRepetitions: Int
     public init(shard: ShardSpec,
                 orderedFlames: [(gen: String, id: String, flame: Flame)],
@@ -180,11 +179,15 @@ public actor StitchCoordinator {
 
         // 5b. D4 upgrade rule (same as `GenerateCoordinator`): an existing row is
         //     a HIT only if its `qualityRank` meets/exceeds the rank REQUESTED by
-        //     `request.settings`; a lower-rank row ⇒ MISS ⇒ re-render
-        //     (upgrade-overwrite at the same archive path). The requested rank
-        //     resolves per UNIQUE key (spp is flame-resolved for the genome tier)
-        //     and is memoized in a lookup Dict keyed by the canonical PK string
-        //     (rule #2 — a lookup map, never iterated for FP accumulation).
+        //     `request.settings` AND its seam GEOMETRY matches (an exact gate,
+        //     like the codec gate — a geometry-v1 monolithic loop/edge row must
+        //     not be spliced into a geometry-v2 core/wrap/ext timeline: the frame
+        //     counts differ and the phases would duplicate/skip). A lower-rank or
+        //     old-geometry row ⇒ MISS ⇒ re-render (upgrade-overwrite at the same
+        //     archive path). The requested rank resolves per UNIQUE key (spp is
+        //     flame-resolved for the genome tier) and is memoized in a lookup
+        //     Dict keyed by the canonical PK string (rule #2 — a lookup map,
+        //     never iterated for FP accumulation).
         var requestedRankByPK: [String: Double] = [:]
         var hitCount = 0, missCount = 0
         var seenPKs = Set<String>()
@@ -197,19 +200,24 @@ public actor StitchCoordinator {
                 continuation.yield(.failed(String(describing: error)))
                 continuation.finish(); return
             }
-            if let row = byPK[pk], row.qualityRank >= requested { hitCount += 1 }
-            else { missCount += 1 }
+            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row) {
+                hitCount += 1
+            } else {
+                missCount += 1
+            }
         }
         continuation.yield(.plan(hitCount: hitCount, missCount: missCount,
-                                 segmentCount: keys.count))
+                                 segmentCount: timelineFileCount(keys: keys)))
 
         // 6. Per TIMELINE SLOT (duplicate loop keys included): HIT ⇒ collect the
-        //    file URL (the same loop file may be collected `loopRepetitions`
-        //    times — duplicate-file passthrough concat is decode-clean); MISS ⇒
-        //    render into the archive first (ArchiveRenderer atomic-writes the
-        //    file THEN upserts the row), then collect — and the fresh row is
-        //    written back into `byPK` so the key's LATER occurrences HIT instead
-        //    of re-rendering (a repeated loop is ONE canonical artifact, never
+        //    unit's file URL(s) — a seam-aware LOOP unit contributes its CORE
+        //    plus WRAP files interleaved per `loopRepetitions` (`[core, wrap,
+        //    core, …]`; a run with nothing after it closes its final cycle with a
+        //    trailing wrap), an EDGE contributes its one EXT file; MISS ⇒ render
+        //    into the archive first (ArchiveRenderer atomic-writes the files THEN
+        //    upserts the row), then collect — and the fresh row is written back
+        //    into `byPK` so the key's LATER occurrences HIT instead of
+        //    re-rendering (a repeated loop is ONE canonical artifact, never
         //    re-rendered per repetition). `position` is the 1-indexed slot index
         //    over ALL slots so the per-frame `.rendering` events read
         //    "segment 3/5" the way the timeline counted them.
@@ -220,9 +228,10 @@ public actor StitchCoordinator {
             if cancelled { continuation.yield(.cancelled); break }
             let pk = pkStringTuple(key)
             let requested = requestedRankByPK[pk] ?? 0   // memoized in step 5b
-            if let row = byPK[pk], row.qualityRank >= requested {
+            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row) {
                 hit += 1
-                urls.append(request.flockRoot.appendingPathComponent(row.file))
+                urls.append(contentsOf: unitURLs(for: row, idx: idx, keys: keys,
+                                                 flockRoot: request.flockRoot))
             } else {
                 do {
                     try await renderSegment(forKey: key, request: request, coordinator: coordinator,
@@ -239,7 +248,8 @@ public actor StitchCoordinator {
                     // Publish the fresh row (rank == requested — identical
                     // settings) so this key's LATER duplicate occurrences HIT.
                     byPK[pk] = row
-                    urls.append(request.flockRoot.appendingPathComponent(row.file))
+                    urls.append(contentsOf: unitURLs(for: row, idx: idx, keys: keys,
+                                                     flockRoot: request.flockRoot))
                 } catch {
                     continuation.yield(.failed(String(describing: error)))
                     continuation.finish(throwing: error); return
@@ -249,13 +259,13 @@ public actor StitchCoordinator {
         }
         if cancelled { continuation.finish(); return }
 
-        // 7. Single SLOT (one loop file, i.e. a single-genome sequence at
-        //    `loopRepetitions == 1`): copy — `try` (not `try?`) so a copy failure
-        //    surfaces instead of being swallowed. No concat. At reps > 1 the same
-        //    loop file appears `reps` times in `urls`, so the concat below runs
-        //    instead (N copies of one file). `.concatenating` is yielded first so
-        //    the (possibly multi-second) copy/remux tail phase is never a silent
-        //    gap.
+        // 7. Single FILE (defensive): under seam geometry v2 every timeline
+        //    yields ≥ 2 files (a lone loop unit is `[core, wrap]`), so this
+        //    branch is currently unreachable — kept as a cheap, correct fallback
+        //    should a future timeline shape produce exactly one file. Copy —
+        //    `try` (not `try?`) so a copy failure surfaces instead of being
+        //    swallowed. `.concatenating` is yielded first so the (possibly
+        //    multi-second) copy/remux tail phase is never a silent gap.
         if urls.count == 1 {
             continuation.yield(.concatenating(segments: 1))
             do {
@@ -285,6 +295,55 @@ public actor StitchCoordinator {
     }
 
     // MARK: - Helpers
+
+    /// Seam-geometry exact gate (like the codec gate): a row HITs only if its
+    /// files were rendered with the CURRENT geometry version. Geometry-v1
+    /// monolithic artifacts have different frame counts/phases — splicing them
+    /// into a v2 timeline would duplicate or skip phases.
+    private func seamGeometryOK(_ row: ArtifactRow) -> Bool {
+        guard row.geom == ArchiveRenderer.SeamGeometry.version else { return false }
+        // A v2 LOOP row must carry its wrap file (the unit is two files).
+        return row.kind == .edge || row.wrapFile != nil
+    }
+
+    /// The concat-input file URLs contributed by ONE key occurrence (seam
+    /// geometry v2). A loop occurrence contributes `[core]`, or `[wrap, core]`
+    /// when it continues a run (its predecessor key is the same loop — the wrap
+    /// bridges the periodic boundary BETWEEN repetitions); the FINAL occurrence
+    /// of the timeline's last loop additionally closes its cycle with a trailing
+    /// `[wrap]`. An edge occurrence contributes its single EXT file.
+    private func unitURLs(for row: ArtifactRow, idx: Int,
+                          keys: [(aGen: String, aId: String, bGen: String, bId: String, shard: String)],
+                          flockRoot: URL) -> [URL] {
+        let root = flockRoot
+        if row.kind == .edge { return [root.appendingPathComponent(row.file)] }
+        var urls = [root.appendingPathComponent(row.file)]
+        guard let wrapRel = row.wrapFile else { return urls }
+        let wrap = root.appendingPathComponent(wrapRel)
+        let key = keys[idx]
+        // Continuing a repeat run ⇒ the wrap bridges INTO this core.
+        if idx > 0 && keys[idx - 1] == key { urls.insert(wrap, at: 0) }
+        // The timeline's LAST loop closes its final cycle.
+        if idx == keys.count - 1 { urls.append(wrap) }
+        return urls
+    }
+
+    /// Pure count of the concat-input files for a key list (the `.plan` event's
+    /// `segmentCount` denominator) — the same expansion `unitURLs` performs,
+    /// counted without rows (every loop occurrence is either a run continuation
+    /// or not, determinable from the keys alone).
+    private func timelineFileCount(keys: [(aGen: String, aId: String, bGen: String,
+                                            bId: String, shard: String)]) -> Int {
+        var count = 0
+        for (i, key) in keys.enumerated() {
+            let isLoop = key.aGen == key.bGen && key.aId == key.bId
+            if !isLoop { count += 1; continue }
+            count += 1                                            // core
+            if i > 0 && keys[i - 1] == key { count += 1 }         // run-continuation wrap
+            if i == keys.count - 1 { count += 1 }                 // trailing closing wrap
+        }
+        return count
+    }
 
     /// Build the alternating loop/edge key list from `orderedFlames`. Each key
     /// carries the request's single shard name; loops are self-edges (a==b).
@@ -377,12 +436,17 @@ public actor StitchCoordinator {
             throw StitchError.concreteCatalogRequiredForRender
         }
         let isLoop = key.aGen == key.bGen && key.aId == key.bId
-        // The unit's frame total is the shard pace for its kind (loops encode
-        // loopFrames; edges encode only the transFrames range — see
-        // `ArchiveRenderer.loopRenderRange`/`edgeRenderRange`), so a frame-0
-        // yield can go out BEFORE the render starts (kills the one-frame-time
-        // blackout between `.plan`/`.running` and the first encoded frame).
-        let frameTotal = isLoop ? request.shard.loopFrames : request.shard.transFrames
+        // The unit's frame total under seam geometry v2: a loop encodes its
+        // `loopFrames` unit total (core `[h, L−h)` + wrap `2h`, reported as one
+        // continuous 1…L progress by `ArchiveRenderer.renderLoop`); an edge
+        // encodes the EXT range `T + 2h` (h boundary frames of each neighbor
+        // loop). Lets a frame-0 yield go out BEFORE the render starts (kills the
+        // one-frame-time blackout between `.plan`/`.running` and the first
+        // encoded frame).
+        let seamH = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: request.shard.loopFrames)
+        let frameTotal = isLoop
+            ? request.shard.loopFrames
+            : request.shard.transFrames + 2 * seamH
         let perFrame: @Sendable (_ frame: Int, _ frameTotal: Int) -> Void = { frame, frameTotal in
             yield(.rendering(segment: position, total: total, isLoop: isLoop,
                              frame: frame, frameTotal: frameTotal))

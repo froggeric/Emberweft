@@ -41,8 +41,8 @@ final class ArchiveRendererTests: XCTestCase {
     /// the loop and edge renders to a handful of CPU frames at 48×32 spp 4.
     private func shardSpec(name: String = "48x32_30fps") -> ShardSpec {
         ShardSpec(name: name, width: 48, height: 32, fps: 30,
-                  loopSeconds: 0.1, transSeconds: 0.07,
-                  loopFrames: 3, transFrames: 2,
+                  loopSeconds: 0.4, transSeconds: 0.27,
+                  loopFrames: 12, transFrames: 8,
                   isCanonical: false, codec: .h264)
     }
 
@@ -69,69 +69,123 @@ final class ArchiveRendererTests: XCTestCase {
         return s
     }
 
-    // MARK: - Lone-edge plan (load-bearing, pure — no render)
+    // MARK: - Seam geometry (pure, load-bearing)
 
-    /// The lone-edge construction (§4.1): a 2-segment FramePlan renders ONLY the
-    /// transition slot; frame 0 of the rendered range maps to `.transition`.
-    func testLoneEdgePlanRendersOnlyTransitionSlot() throws {
-        let A = Flame(); let B = Flame()
-        let loopFrames = 8, transFrames = 6
-        let plan = ArchiveRenderer.makeEdgePlan(A: A, B: B, loopFrames: loopFrames,
-                                                transFrames: transFrames, seed: 1)
-        let range = ArchiveRenderer.edgeRenderRange(loopFrames: loopFrames, transFrames: transFrames)
-        XCTAssertEqual(range, loopFrames..<(loopFrames + transFrames))   // only the transition slot
-        // Frame 0 of the rendered range (== global frame loopFrames) maps to
-        // segmentId 1 (the transition segment) — proves the 2-segment plan puts
-        // the transition at segment 1, NOT segment 0 (which is loop(A)).
-        let d = plan.descriptor(for: range.lowerBound)
-        XCTAssertEqual(d.segmentId, 1, "edge range lowerBound must map to segment 1 (transition)")
-        XCTAssertEqual(d.kind, .transition)
-        // Velocity match (§4.1 invariant): the rotRatio the plan feeds
-        // Transition.blend is transFrames/loopFrames (re-derived from the plan's
-        // public per-kind counts; FramePlan stores framesPerSegment +
-        // transitionFramesPerSegment as public lets).
-        XCTAssertEqual(Double(plan.transitionFramesPerSegment) / Double(plan.framesPerSegment),
-                       Double(transFrames) / Double(loopFrames), accuracy: 1e-12)
+    /// The seam half-width is pinned to the smoothing window's constant: if a
+    /// future tier widens the smoothing window beyond the artifact geometry's
+    /// slice width, boundary windows would clip at the unit's internal seams —
+    /// this pin forces the geometry constant to move WITH the tier constant.
+    func testSeamHalfWidthMatchesSmoothingCap() {
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.seamHalfWidth,
+                       TemporalSmoothing.centeredHalfWidth)
+        // Real shards (L > 11) get the full width; the core stays non-empty for
+        // degenerate tiny loops (2h < L).
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: 30), 5)
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: 450), 5)
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: 10), 4)
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: 3), 1)
+        // Ranges: core `[h, L-h)`; wrap `[2L-h, 2L+h)`; ext `[L-h, L+T+h)`.
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.coreRenderRange(loopFrames: 30), 5..<25)
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.wrapRenderRange(loopFrames: 30), 55..<65)
+        XCTAssertEqual(ArchiveRenderer.SeamGeometry.extRenderRange(loopFrames: 30, transFrames: 24),
+                       25..<59)
     }
 
-    // MARK: - Loop plan (pure)
+    /// The EXT plan is 3 segments — loop(A), transition(A->B), loop(B) — and the
+    /// TRANSITION-slot descriptors are IDENTICAL to the historical 2-segment
+    /// lone-edge plan's (same schedule parameters): the edge frames' bytes are
+    /// unchanged by the geometry (only the encoded RANGE grew on both sides).
+    func testEdgeExtPlanMatchesHistoricalTransitionDescriptors() throws {
+        let A = Flame(); let B = Flame()
+        let L = 12, T = 8, seed: UInt64 = 3
+        let ext = ArchiveRenderer.makeEdgeExtPlan(A: A, B: B, loopFrames: L,
+                                                  transFrames: T, seed: seed, temporalSamples: 4)
+        XCTAssertEqual(ext.totalFrames, 2 * L + T)
+        // Historical 2-segment plan, built inline for comparison.
+        var sched = Schedule(librarySize: 2, framesPerSegment: L,
+                             transitionFramesPerSegment: T,
+                             selector: Sequential(seed: seed), seed: seed)
+        let legacy = FramePlan(schedule: &sched, segmentCount: 2, flames: [A, B],
+                               loopCycles: 1, temporalSamples: 4)
+        for k in L..<(L + T) {
+            let de = ext.descriptor(for: k)
+            let dl = legacy.descriptor(for: k)
+            XCTAssertEqual(de.segmentId, dl.segmentId)
+            XCTAssertEqual(de.kind, dl.kind)
+            XCTAssertEqual(de.blend, dl.blend, accuracy: 0)
+            XCTAssertEqual(de.fromSheep, dl.fromSheep)
+            XCTAssertEqual(de.toSheep, dl.toSheep)
+            XCTAssertEqual(de.temporal.map(\.delta), dl.temporal.map(\.delta))
+            XCTAssertEqual(de.temporal.map(\.weight), dl.temporal.map(\.weight))
+        }
+        // Segment 2 exists and is loop(B) — the lookahead context.
+        let d2 = ext.descriptor(for: L + T)
+        XCTAssertEqual(d2.segmentId, 2)
+        XCTAssertEqual(d2.kind, .loop)
+        XCTAssertEqual(d2.fromSheep, 1)
+        XCTAssertEqual(d2.blend, Double(1) / Double(L), accuracy: 0)
+    }
 
-    /// The loop construction: a 1-segment FramePlan; render range `0..<loopFrames`;
-    /// frame 0 maps to segmentId 0 / `.loop`.
-    func testLoopPlanRendersOnlyLoopSlot() throws {
+    /// The EXT encode range covers h frames of loop A, the T transition frames,
+    /// and h frames of loop B — every frame's centered ±h window lies INSIDE the
+    /// PLAN (so the smoothing feed-emit's extended range can render it — no
+    /// clipped boundary windows), which is the load-bearing seam fix.
+    func testEdgeExtRangeWindowsAreInterior() throws {
+        let A = Flame(); let B = Flame()
+        let L = 12, T = 8
+        let plan = ArchiveRenderer.makeEdgeExtPlan(A: A, B: B, loopFrames: L,
+                                                   transFrames: T, seed: 1, temporalSamples: 1)
+        XCTAssertEqual(plan.totalFrames, 2 * L + T)
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: L)
+        let range = ArchiveRenderer.SeamGeometry.extRenderRange(loopFrames: L, transFrames: T)
+        XCTAssertEqual(range.count, T + 2 * h)
+        for m in range {
+            XCTAssertTrue(m - h >= 0 && m + h < plan.totalFrames,
+                          "window [\(m - h), \(m + h)] of frame \(m) must lie inside the plan")
+            _ = plan.descriptor(for: m)   // must not trap
+        }
+    }
+
+    /// The WRAP plan: 1 segment of 3L frames with `loopCycles: 3` — frame k's
+    /// rotation equals the 1-cycle frame `(k mod L)`'s (same per-frame angular
+    /// velocity), and the wrap range `[2L-h, 2L+h)`'s windows are interior.
+    func testLoopWrapPlanPhasesAndInteriorWindows() throws {
         let A = Flame()
-        let loopFrames = 5, transFrames = 4
-        let plan = ArchiveRenderer.makeLoopPlan(A: A, loopFrames: loopFrames,
-                                                transFrames: transFrames, seed: 7)
-        XCTAssertEqual(ArchiveRenderer.loopRenderRange(loopFrames: loopFrames), 0..<loopFrames)
-        let d0 = plan.descriptor(for: 0)
-        XCTAssertEqual(d0.segmentId, 0)
-        XCTAssertEqual(d0.kind, .loop)
-        // A 1-segment plan emits exactly loopFrames frames.
-        XCTAssertEqual(plan.totalFrames, loopFrames)
-        XCTAssertEqual(plan.framesPerSegment, loopFrames)
-        XCTAssertEqual(plan.transitionFramesPerSegment, transFrames)
+        let L = 12, T = 8
+        let plan = ArchiveRenderer.makeLoopWrapPlan(A: A, loopFrames: L, transFrames: T,
+                                                    seed: 1, temporalSamples: 1)
+        XCTAssertEqual(plan.totalFrames, 3 * L)
+        XCTAssertEqual(plan.framesPerSegment, 3 * L)
+        // Rotation phase: frame k of the 3-cycle plan spins (k+1)/L turns — the
+        // same angular step as the 1-cycle core plan.
+        let k = 2 * L - 3
+        XCTAssertEqual(plan.descriptor(for: k).blend, Double(k + 1) / Double(3 * L), accuracy: 0)
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: L)
+        let range = ArchiveRenderer.SeamGeometry.wrapRenderRange(loopFrames: L)
+        XCTAssertEqual(range.count, 2 * h)
+        for m in range {
+            XCTAssertTrue(m - h >= 0 && m + h < 3 * L,
+                          "wrap window [\(m - h), \(m + h)] must lie inside the 3-cycle plan")
+        }
     }
 
-    /// The edge plan is structurally 2 segments: loop(A) at segment 0, transition
-    /// at segment 1, totaling `loopFrames + transFrames`. The loop slot exists in
-    /// the plan (Schedule requires a loop before a transition) but is NEVER
-    /// rendered — `edgeRenderRange` starts at `loopFrames`.
-    func testEdgePlanIsLoopThenTransitionTwoSegments() throws {
-        let A = Flame(); let B = Flame()
-        let loopFrames = 8, transFrames = 6
-        let plan = ArchiveRenderer.makeEdgePlan(A: A, B: B, loopFrames: loopFrames,
-                                                transFrames: transFrames, seed: 1)
-        XCTAssertEqual(plan.totalFrames, loopFrames + transFrames)
-        XCTAssertEqual(plan.framesPerSegment, loopFrames)
-        XCTAssertEqual(plan.transitionFramesPerSegment, transFrames)
-        // segment 0 = loop(A), segment 1 = transition(A→B).
-        let dl = plan.descriptor(for: 0)
-        XCTAssertEqual(dl.segmentId, 0); XCTAssertEqual(dl.kind, .loop)
-        XCTAssertEqual(dl.fromSheep, 0); XCTAssertEqual(dl.toSheep, 0)
-        let dt = plan.descriptor(for: loopFrames)
-        XCTAssertEqual(dt.segmentId, 1); XCTAssertEqual(dt.kind, .transition)
-        XCTAssertEqual(dt.fromSheep, 0); XCTAssertEqual(dt.toSheep, 1)
+    /// The CORE plan: 1 segment over L frames, 1 cycle; the core range's windows
+    /// are interior; every core frame maps to segment 0 / `.loop`.
+    func testLoopCorePlanInteriorWindows() throws {
+        let A = Flame()
+        let L = 12, T = 8
+        let plan = ArchiveRenderer.makeLoopCorePlan(A: A, loopFrames: L, transFrames: T,
+                                                    seed: 7, temporalSamples: 1)
+        XCTAssertEqual(plan.totalFrames, L)
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: L)
+        let range = ArchiveRenderer.SeamGeometry.coreRenderRange(loopFrames: L)
+        for m in range {
+            XCTAssertTrue(m - h >= 0 && m + h < L,
+                          "core window [\(m - h), \(m + h)] must lie inside the loop")
+            let d = plan.descriptor(for: m)
+            XCTAssertEqual(d.segmentId, 0)
+            XCTAssertEqual(d.kind, .loop)
+        }
     }
 
     // MARK: - Deterministic seed (pure)
@@ -262,11 +316,18 @@ final class ArchiveRendererTests: XCTestCase {
                                       backend: .cpu, useOffMainMetal: false,
                                       flockRoot: root, sourceSha: "deadbeef")
 
-        // Artifact file at the archive path.
+        // Artifact files at the archive path: the CORE plus the WRAP variant
+        // (seam geometry v2 — a loop unit is two files).
         let out = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
                                                  aGen: "248", aId: "00628",
                                                  bGen: "248", bId: "00628", ext: "mov")
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "artifact .mov must exist")
+        let wrapOut = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                     aGen: "248", aId: "00628",
+                                                     bGen: "248", bId: "00628", ext: "mov",
+                                                     variant: FlockNaming.wrapVariant)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wrapOut.path),
+                      "wrap .mov must exist (seam-aware loop = core + wrap)")
         // Thumb .jpg at the thumb path.
         let thumb = try FlockNaming.thumbURL(flockRoot: root, shardDir: shard.name,
                                              aGen: "248", aId: "00628",
@@ -292,6 +353,8 @@ final class ArchiveRendererTests: XCTestCase {
                                            bGen: "248", bId: "00628", shard: shard.name)
         let r = try XCTUnwrap(row, "catalog row must exist after a successful render")
         XCTAssertEqual(r.kind, .loop)
+        XCTAssertEqual(r.geom, ArchiveRenderer.SeamGeometry.version)
+        XCTAssertEqual(r.wrapFile, "\(shard.name)/mpeg/\(wrapOut.lastPathComponent)")
         XCTAssertEqual(r.spp, 4)
         XCTAssertEqual(r.temporal, 1)
         XCTAssertEqual(r.shard, shard.name)
@@ -327,10 +390,12 @@ final class ArchiveRendererTests: XCTestCase {
                                       backend: .cpu, useOffMainMetal: false,
                                       flockRoot: root, sourceSha: nil)
 
-        // Exactly transFrames frames were appended (the loop slot was NOT rendered).
+        // The EXT range appends T + 2h frames (the transition plus h boundary
+        // frames of EACH neighbor loop — seam geometry v2).
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: shard.loopFrames)
         let appended = await coord.appendedFrameCount
-        XCTAssertEqual(appended, shard.transFrames,
-                       "lone-edge must append exactly transFrames (loop slot skipped)")
+        XCTAssertEqual(appended, shard.transFrames + 2 * h,
+                       "ext edge must append transFrames + 2h boundary frames")
 
         let out = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
                                                  aGen: "248", aId: "00628",
