@@ -127,14 +127,16 @@ struct LibraryView: View {
             // `FlockView`, which owns its own chrome (it is NOT a library grid).
             // `flockModel` is AppModel-owned, so dismissing the area mid-generate
             // cannot orphan the coordinator actors (M4 §13.2).
+            //
+            // v0.5.9: while ANY flock operation runs (generate or stitch), the
+            // row carries a live activity indicator (spinner or determinate bar +
+            // a compact "~12:36" / "3/12" token) — GLOBAL presence, so a long
+            // render is visible from every pane (the owner's explicit ask). Read
+            // from `model.flockModel.flockActivity` (the model, never local
+            // `@State`) so it stays live; nothing renders when idle (no animation
+            // at rest).
             Section("Archive") {
-                Label {
-                    Text("Flock")
-                } icon: {
-                    Image(systemName: "bird.fill")
-                }
-                .tag(SidebarDestination.flock)
-                .accessibilityLabel("Flock archive")
+                flockSidebarRow
             }
             Section {
                 Button {
@@ -267,6 +269,63 @@ struct LibraryView: View {
     private func readyCount(_ s: LoadState) -> Int {
         if case .ready(let entries) = s { return entries.count }
         return 0
+    }
+
+    // MARK: - Flock sidebar row + global activity indicator (v0.5.9)
+
+    /// The Archive-section row. `HStack(Label, Spacer, indicator?)` so the whole
+    /// row keeps its List-selection tag while the trailing slot shows live flock
+    /// activity (nil ⇒ nothing — the row is identical to before at rest).
+    @ViewBuilder
+    private var flockSidebarRow: some View {
+        HStack(spacing: 6) {
+            Label {
+                Text("Flock")
+            } icon: {
+                Image(systemName: "bird.fill")
+            }
+            Spacer(minLength: 0)
+            if let activity = model.flockModel.flockActivity {
+                flockActivityIndicator(activity)
+            }
+        }
+        .contentShape(Rectangle())
+        .tag(SidebarDestination.flock)
+        .accessibilityLabel(flockAccessibilityLabel)
+    }
+
+    /// Compact running indicator for the Flock sidebar row: a determinate mini
+    /// bar when the overall fraction is known, else a spinner; plus the summary's
+    /// compact token ("~12:36" remaining or "3/12"). Subtle by design — macOS
+    /// sidebar idiom, `.mini` controls + caption2 secondary text.
+    @ViewBuilder
+    private func flockActivityIndicator(_ a: FlockActivitySummary) -> some View {
+        HStack(spacing: 4) {
+            if let fraction = a.fraction {
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .controlSize(.mini)
+                    .frame(width: 32)
+            } else {
+                ProgressView()
+                    .controlSize(.mini)
+            }
+            let token = a.compactStatus
+            if !token.isEmpty {
+                Text(token)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        .help("Flock: \(a.kindLabel) — open Flock for details and cancel.")
+    }
+
+    private var flockAccessibilityLabel: String {
+        if let a = model.flockModel.flockActivity {
+            return "Flock archive, \(a.kindLabel)"
+        }
+        return "Flock archive"
     }
 
     // MARK: - Density control (B11)

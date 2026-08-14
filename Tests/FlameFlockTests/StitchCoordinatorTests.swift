@@ -202,6 +202,102 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outURL(root: root).path))
     }
 
+    // MARK: - (c2): MISS renders stream per-frame progress + a concat phase
+
+    /// v0.5.9 — the owner symptom fix: a MISS render must NOT go dark. Every
+    /// MISS segment streams `.rendering` per encoded frame (plus a pre-render
+    /// `frame == 0` yield), labeled loop/edge and positioned over ALL segments
+    /// ("segment 3/5" the way the plan counted them), and the remux tail yields
+    /// `.concatenating` between the last `.running` and `.completed`.
+    func testMissEmitsPerFrameRenderingAndConcatenatingProgress() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)   // empty archive ⇒ all MISS
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski(), B = A
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let request = StitchRequest(
+            shard: shard, orderedFlames: [("248", "00001", A), ("248", "00002", B)],
+            settings: settings, flockRoot: root, out: outURL(root: root))
+
+        let progress = try await drain(stitcher.stitch(request, coordinator: coord))
+
+        // Segment 1 = loop(A) over 6 frames: a frame-0 pre-render yield + one
+        // `.rendering` per encoded frame.
+        let seg1 = progress.filter {
+            if case .rendering(1, 3, true, _, _) = $0 { return true } else { return false }
+        }
+        XCTAssertEqual(seg1.count, shard.loopFrames + 1,
+                       "loop MISS must yield frame-0 + one .rendering per encoded frame")
+        if case .rendering(_, _, _, let f0, let ft)? = seg1.first {
+            XCTAssertEqual(f0, 0, "the first .rendering of a segment is the pre-render yield")
+            XCTAssertEqual(ft, shard.loopFrames, "loop frameTotal = shard.loopFrames")
+        } else {
+            XCTFail("segment 1 should carry .rendering events")
+        }
+        // Segment 2 = edge(A→B) over the transFrames-only range (4 frames).
+        let seg2 = progress.filter {
+            if case .rendering(2, 3, false, _, _) = $0 { return true } else { return false }
+        }
+        XCTAssertEqual(seg2.count, shard.transFrames + 1, "edge MISS over the transition range")
+        // Segment 3 = loop(B), 6 frames.
+        let seg3 = progress.filter {
+            if case .rendering(3, 3, true, _, _) = $0 { return true } else { return false }
+        }
+        XCTAssertEqual(seg3.count, shard.loopFrames + 1)
+
+        // No stray segments/positions and no rendering events for HITs (none here).
+        let allRendering = progress.filter {
+            if case .rendering = $0 { return true } else { return false }
+        }
+        XCTAssertEqual(allRendering.count,
+                       (shard.loopFrames + 1) + (shard.transFrames + 1) + (shard.loopFrames + 1),
+                       "exactly the three MISS segments' worth of .rendering events")
+
+        // The concat phase is yielded between the last .running and .completed.
+        let concatIdx = try XCTUnwrap(progress.firstIndex(where: {
+            if case .concatenating = $0 { return true } else { return false }
+        }), "multi-segment stitch must yield .concatenating")
+        XCTAssertEqual(progress[concatIdx], .concatenating(segments: 3))
+        let lastRunningIdx = try XCTUnwrap(progress.lastIndex(where: {
+            if case .running = $0 { return true } else { return false }
+        }))
+        let completedIdx = try XCTUnwrap(progress.lastIndex(where: {
+            if case .completed = $0 { return true } else { return false }
+        }))
+        XCTAssertLessThan(lastRunningIdx, concatIdx, ".concatenating comes after the last segment")
+        XCTAssertLessThan(concatIdx, completedIdx, ".concatenating comes before .completed")
+    }
+
+    /// The single-file copy tail also yields `.concatenating(segments: 1)` — no
+    /// silent gap on the loop-only path either.
+    func testSingleFileCopyYieldsConcatenatingPhase() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski()
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let request = StitchRequest(
+            shard: shard, orderedFlames: [("248", "00001", A)],
+            settings: settings, flockRoot: root, out: outURL(root: root))
+
+        let progress = try await drain(stitcher.stitch(request, coordinator: coord))
+        XCTAssertTrue(progress.contains(.concatenating(segments: 1)),
+                      "the single-genome copy path must yield .concatenating(segments: 1): \(progress)")
+        XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
+    }
+
     // MARK: - (d): cross-shard refused
 
     /// A stored row referencing a shard other than `request.shard` ⇒ refuse.

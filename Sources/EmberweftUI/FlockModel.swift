@@ -92,6 +92,29 @@ public final class FlockModel {
     private var unitStartAt: ContinuousClock.Instant?
     private var lastRenderCount = 0
 
+    // MARK: - Stitch ETA + elapsed (v0.5.9)
+    // The stitch twin of the generate ETA state, at MISS-SEGMENT granularity
+    // (only generated segments are timed — HITs are instant catalog reads).
+    // `stitchPlanTotal`/`stitchMissTotal` come from the `.plan` event, so the
+    // `.running` state can carry a state-driven total (NOT the view's own
+    // sequence count, which can go stale mid-run).
+    private var stitchEta = GenerateETAEstimator()
+    private var stitchSegmentStartAt: ContinuousClock.Instant?
+    private var stitchLastGenerated = 0
+    private var stitchPlanTotal = 0
+    private var stitchMissTotal = 0
+
+    // MARK: - Run elapsed (v0.5.9 completion feedback)
+    // Set when the run starts; the completed-state elapsed is derived from it and
+    // published alongside the terminal state (completion feedback: a summary
+    // with elapsed, not a flash).
+    private var generateStartAt: ContinuousClock.Instant?
+    private var stitchStartAt: ContinuousClock.Instant?
+    /// Wall-clock seconds of the LAST completed generate run (nil until then).
+    public private(set) var generateElapsedSeconds: Double?
+    /// Wall-clock seconds of the LAST completed stitch run (nil until then).
+    public private(set) var stitchElapsedSeconds: Double?
+
     public init() {}
 
     // MARK: - Backend resolution
@@ -121,6 +144,7 @@ public final class FlockModel {
         generateState = .resolving
         // Reset ETA state for the fresh run (mirrors ExportManager.resetETAState).
         eta.reset(); unitStartAt = nil; lastRenderCount = 0
+        generateStartAt = ContinuousClock.now; generateElapsedSeconds = nil
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let gen = generateFactory(backend, true)
         generateCoord = gen
@@ -176,6 +200,10 @@ public final class FlockModel {
     public func stitch(_ request: StitchRequest) async {
         stitchCoord = nil
         stitchState = .resolving
+        // Reset stitch ETA/elapsed state for the fresh run (twin of generate).
+        stitchEta.reset(); stitchSegmentStartAt = nil; stitchLastGenerated = 0
+        stitchPlanTotal = 0; stitchMissTotal = 0
+        stitchStartAt = ContinuousClock.now; stitchElapsedSeconds = nil
         let backend = resolveBackend(metalAvailable: MetalRenderer.isAvailable)
         let st = stitchFactory(backend, true)
         stitchCoord = st
@@ -277,6 +305,7 @@ public final class FlockModel {
             generateState = .rendering(skip: skip, render: render, total: total,
                                        frame: frame, frameTotal: frameTotal, etaSeconds: etaSec)
         case .completed(let rendered, let skipped):
+            generateElapsedSeconds = elapsedSince(generateStartAt)
             generateState = .completed(rendered: rendered, skipped: skipped)
         case .failed(let message):
             generateState = .failed(message)
@@ -297,15 +326,121 @@ public final class FlockModel {
         case .resolving:
             stitchState = .resolving
         case .plan(let hitCount, let missCount):
+            // Capture the plan tallies: `running` carries the state-driven total
+            // (hit + miss), and the ETA's remaining-unit count is the MISS count.
+            stitchPlanTotal = hitCount + missCount
+            stitchMissTotal = missCount
             stitchState = .plan(hit: hitCount, miss: missCount)
         case .running(let hit, let generated):
-            stitchState = .running(hit: hit, generated: generated)
+            // A MISS render completed iff `generated` increased AND the pre-render
+            // `.rendering(frame: 0)` marked its start (HIT segments complete
+            // instantly and emit `.running` with `generated` unchanged ⇒ not
+            // sampled). Record the wall-clock duration into the EMA.
+            if generated > stitchLastGenerated, let start = stitchSegmentStartAt {
+                stitchEta.record(unitSeconds: Self.seconds(from: ContinuousClock.now - start))
+            }
+            stitchLastGenerated = generated
+            stitchSegmentStartAt = nil
+            let etaSec = stitchEta.etaSeconds(
+                remainingUnits: Double(max(0, stitchMissTotal - generated)))
+            stitchState = .running(hit: hit, generated: generated,
+                                   total: stitchPlanTotal, etaSeconds: etaSec)
+        case .rendering(let segment, let total, let isLoop, let frame, let frameTotal):
+            // frame == 0 is the pre-render yield (see StitchCoordinator) — the
+            // render's true start; the first encoded frame (1) follows.
+            if frame == 0 { stitchSegmentStartAt = ContinuousClock.now }
+            // Smooth within-segment ETA, mirroring generate: the in-flight MISS is
+            // partially done, so subtract its completed fraction from the
+            // remaining count.
+            let remainingWhole = Double(max(0, stitchMissTotal - stitchLastGenerated - 1))
+            let fracDone = Double(max(0, frame - 1)) / Double(max(1, frameTotal))
+            let remaining = remainingWhole + (1.0 - fracDone)
+            let etaSec = stitchEta.etaSeconds(remainingUnits: remaining)
+            stitchState = .rendering(segment: segment, total: total, isLoop: isLoop,
+                                     frame: frame, frameTotal: frameTotal, etaSeconds: etaSec)
+        case .concatenating(let segments):
+            stitchState = .concatenating(segments: segments)
         case .completed(let out):
+            stitchElapsedSeconds = elapsedSince(stitchStartAt)
             stitchState = .completed(out)
         case .failed(let message):
             stitchState = .failed(message)
         case .cancelled:
             stitchState = .cancelled
         }
+    }
+
+    /// Seconds since `start` (0 when start is nil — defensive; the run always
+    /// sets it before events can arrive).
+    private func elapsedSince(_ start: ContinuousClock.Instant?) -> Double {
+        guard let start else { return 0 }
+        return Self.seconds(from: ContinuousClock.now - start)
+    }
+
+    // MARK: - Global activity summary (sidebar presence, v0.5.9)
+
+    /// What the flock is doing RIGHT NOW for global surfaces (the sidebar Flock
+    /// row): nil ⇒ idle (nothing shown — no animation at rest). When BOTH a
+    /// generate and a stitch are in flight, the most recently STARTED one wins
+    /// (the owner's current focus; deterministic — the start instants are set
+    /// synchronously at run start). Pure scalar mapping of the two states.
+    public var flockActivity: FlockActivitySummary? {
+        let gen = generateActivity
+        let st = stitchActivity
+        switch (gen, st) {
+        case (let g?, let s?):
+            return (generateStartAt ?? ContinuousClock.now) >= (stitchStartAt ?? ContinuousClock.now) ? g : s
+        case (let g?, nil): return g
+        case (nil, let s?): return s
+        default: return nil
+        }
+    }
+
+    private var generateActivity: FlockActivitySummary? {
+        switch generateState {
+        case .resolving:
+            return FlockActivitySummary(kind: .generate, fraction: nil,
+                                        completed: nil, total: nil, etaSeconds: nil)
+        case .running(let skip, let render, let total, let eta):
+            return FlockActivitySummary(kind: .generate,
+                                        fraction: unitFraction(skip + render, 0, 1, total),
+                                        completed: skip + render, total: total, etaSeconds: eta)
+        case .rendering(let skip, let render, let total, let frame, let frameTotal, let eta):
+            return FlockActivitySummary(kind: .generate,
+                                        fraction: unitFraction(skip + render, frame, frameTotal, total),
+                                        completed: skip + render, total: total, etaSeconds: eta)
+        case .idle, .completed, .failed, .cancelled:
+            return nil
+        }
+    }
+
+    private var stitchActivity: FlockActivitySummary? {
+        switch stitchState {
+        case .resolving, .plan:
+            // In flight but not yet at a countable phase (plan → segment loop is
+            // immediate) — indeterminate spinner.
+            return FlockActivitySummary(kind: .stitch, fraction: nil,
+                                        completed: nil, total: nil, etaSeconds: nil)
+        case .running(let hit, let generated, let total, let eta):
+            return FlockActivitySummary(kind: .stitch,
+                                        fraction: unitFraction(hit + generated, 0, 1, total),
+                                        completed: hit + generated, total: total, etaSeconds: eta)
+        case .rendering(let segment, let total, _, let frame, let frameTotal, let eta):
+            return FlockActivitySummary(kind: .stitch,
+                                        fraction: unitFraction(segment - 1, frame, frameTotal, total),
+                                        completed: segment - 1, total: total, etaSeconds: eta)
+        case .concatenating:
+            return FlockActivitySummary(kind: .stitch, fraction: nil,
+                                        completed: nil, total: nil, etaSeconds: nil)
+        case .idle, .completed, .failed, .cancelled:
+            return nil
+        }
+    }
+
+    /// Overall 0…1 fraction: `(wholeUnitsDone + withinUnitFrame/frameTotal) / total`,
+    /// clamped. Pure scalar arithmetic (rule #2).
+    private func unitFraction(_ whole: Int, _ frame: Int, _ frameTotal: Int, _ total: Int) -> Double {
+        let inner = Double(frame) / Double(max(1, frameTotal))
+        return min(1, max(0, (Double(whole) + inner) / Double(max(1, total))))
     }
 }

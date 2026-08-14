@@ -323,9 +323,12 @@ private struct GenerateTab: View {
                 Button("Generate material") { generate() }
                     .buttonStyle(.borderedProminent)
                     .disabled(sources.count < 1 || !canRun)
-                if canRun {
+                // Cancel is visible ONLY while work is running (v0.5.9 fix: the
+                // old `if canRun` guard showed the button only when NOT running —
+                // inverted, so it was never visible-enabled mid-run).
+                if running {
                     Button("Cancel") { flockModel.cancelGenerate() }
-                        .disabled(!running)
+                        .help("Stop after the current unit. Completed units stay in the archive (resumable).")
                 }
                 generateProgress
             }
@@ -340,11 +343,14 @@ private struct GenerateTab: View {
         case .idle:
             EmptyView()
         case .resolving:
-            Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+            }
         case .running(let skip, let render, let total, let eta):
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: Double(skip + render), total: Double(max(total, 1)))
-                Text("\(render) rendered · \(skip) skipped · \(total) total\(etaText(eta))")
+                Text("\(render) rendered · \(skip) skipped · \(total) total · \(ProgressFormatting.etaToken(eta))")
                     .font(.caption).foregroundStyle(.secondary)
             }
         case .rendering(let skip, let render, let total, let frame, let frameTotal, let eta):
@@ -353,34 +359,19 @@ private struct GenerateTab: View {
                 // Per-unit sub-bar: the within-edge/loop frame fraction (the
                 // per-video-file progress the owner asked for).
                 ProgressView(value: Double(frame), total: Double(max(frameTotal, 1)))
-                Text("rendering \(skip + render + 1)/\(total) · frame \(frame)/\(frameTotal)\(etaText(eta))")
+                Text("rendering \(skip + render + 1)/\(total) · frame \(frame)/\(frameTotal) · \(ProgressFormatting.etaToken(eta))")
                     .font(.caption).foregroundStyle(.secondary)
             }
         case .completed(let rendered, let skipped):
-            Text("Done — \(rendered) rendered, \(skipped) skipped.")
+            let elapsed = flockModel.generateElapsedSeconds.map { " · \(ProgressFormatting.elapsedLabel($0))" } ?? ""
+            Text("Done — \(rendered) rendered, \(skipped) skipped\(elapsed).")
                 .font(.caption).foregroundStyle(.green)
         case .failed(let msg):
             Text("Failed: \(msg)").font(.caption).foregroundStyle(.red)
         case .cancelled:
-            Text("Cancelled.").font(.caption).foregroundStyle(.secondary)
+            Text("Cancelled. Completed units stay in the archive (re-run Generate to resume).")
+                .font(.caption).foregroundStyle(.secondary)
         }
-    }
-
-    /// ETA token appended to the status line. nil ⇒ cold-start "estimating…".
-    private func etaText(_ eta: Double?) -> String {
-        guard let eta else { return " · estimating…" }
-        return " · \(etaLabel(eta))"
-    }
-
-    /// ETA as whole seconds / minutes / hours (mirrors ExportProgressSurface's
-    /// `etaLabel` style; the `~` prefix signals an estimate).
-    private func etaLabel(_ eta: TimeInterval) -> String {
-        let total = max(0, Int(eta.rounded()))
-        if total < 60 { return "~\(total) s remaining" }
-        let m = total / 60, r = total % 60
-        if m < 60 { return "~\(m) m \(r) s remaining" }
-        let h = m / 60, mr = m % 60
-        return "~\(h) h \(mr) m remaining"
     }
 
     private var qualityHelp: String {
@@ -476,9 +467,11 @@ private struct StitchTab: View {
                     Button("Stitch → Video…") { stitch() }
                         .buttonStyle(.borderedProminent)
                         .disabled(sequence.count < 1 || !canRun)
-                    if canRun {
+                    // Visible ONLY while running (v0.5.9 fix: the old `if canRun`
+                    // guard inverted the visibility — Cancel never showed mid-run).
+                    if running {
                         Button("Cancel") { flockModel.cancelStitch() }
-                            .disabled(!running)
+                            .help("Stop after the current segment. Rendered segments stay in the archive.")
                     }
                 }
             }
@@ -498,21 +491,58 @@ private struct StitchTab: View {
         case .plan(let hit, let miss):
             Text("Plan: \(hit) HIT, \(miss) will-gen.")
                 .font(.caption).foregroundStyle(.secondary)
-        case .running(let hit, let generated):
+        case .resolving:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+            }
+        case .running(let hit, let generated, let total, let eta):
+            // Bar denominator is STATE-driven (hit + miss from the plan), not the
+            // view's `segmentCount` (which goes stale if the sequence changes).
             VStack(alignment: .leading, spacing: 4) {
-                ProgressView(value: Double(hit + generated),
-                             total: Double(max(segmentCount, 1)))
-                Text("\(generated) generated · \(hit) reused")
+                ProgressView(value: Double(hit + generated), total: Double(max(total, 1)))
+                Text("\(generated) generated · \(hit) reused · \(ProgressFormatting.etaToken(eta))")
                     .font(.caption).foregroundStyle(.secondary)
             }
-        case .resolving:
-            Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+        case .rendering(let segment, let total, let isLoop, let frame, let frameTotal, let eta):
+            // Per-frame progress during a MISS render (v0.5.9 — the blackout
+            // fix): overall bar advances smoothly across segment + frame; the
+            // sub-bar is the within-segment frame fraction.
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: Double(segment - 1) + Double(frame) / Double(max(frameTotal, 1)),
+                             total: Double(max(total, 1)))
+                ProgressView(value: Double(frame), total: Double(max(frameTotal, 1)))
+                Text("rendering segment \(segment)/\(total) (\(isLoop ? "loop" : "edge")) · frame \(frame)/\(frameTotal) · \(ProgressFormatting.etaToken(eta))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case .concatenating(let segments):
+            // The remux/copy tail phase — indeterminate, but LABELED (it takes
+            // seconds; silence here reads as a hang).
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(segments > 1 ? "Stitching \(segments) segments…" : "Writing output…")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         case .completed(let out):
-            Text("Assembled: \(out.lastPathComponent)").font(.caption).foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 4) {
+                let elapsed = flockModel.stitchElapsedSeconds.map { " · \(ProgressFormatting.elapsedLabel($0))" } ?? ""
+                Text("Assembled\(elapsed)").font(.caption).foregroundStyle(.green)
+                HStack(spacing: 8) {
+                    Text(out.lastPathComponent)
+                        .font(.caption2).foregroundStyle(.tertiary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .help(out.path)
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([out])
+                    }
+                    .controlSize(.small)
+                }
+            }
         case .failed(let msg):
             Text("Failed: \(msg)").font(.caption).foregroundStyle(.red)
         case .cancelled:
-            Text("Cancelled.").font(.caption).foregroundStyle(.secondary)
+            Text("Cancelled. Rendered segments stay in the archive (re-run Stitch to finish).")
+                .font(.caption).foregroundStyle(.secondary)
         case .idle:
             EmptyView()
         }
@@ -520,7 +550,10 @@ private struct StitchTab: View {
 
     private var running: Bool {
         if case .running = flockModel.stitchState { return true }
+        if case .rendering = flockModel.stitchState { return true }
+        if case .concatenating = flockModel.stitchState { return true }
         if case .resolving = flockModel.stitchState { return true }
+        if case .plan = flockModel.stitchState { return true }
         return false
     }
     private var canRun: Bool { !running }
@@ -585,6 +618,16 @@ private struct BrowseTab: View {
                 }
                 .pickerStyle(.menu)
                 Spacer()
+                // Rebuild feedback (v0.5.9): the scan re-reads the whole archive
+                // and takes seconds — previously only the button disabled, with
+                // NO running indication (a blackout phase).
+                if rebuilding {
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.small)
+                        Text("Rebuilding…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .help("Re-scanning the flock archive files into the catalog.")
+                }
                 browseCounts
                 Button("Rebuild catalog") { rebuild() }
                     .disabled(rebuilding || catalog == nil)
@@ -592,6 +635,15 @@ private struct BrowseTab: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
 
             Divider()
+
+            // Page-load / rebuild failures were previously written into `error`
+            // but never RENDERED (set-and-forgotten) — surface them.
+            if let error {
+                Text(error)
+                    .font(.caption).foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.top, 6)
+            }
 
             browseGrid
         }

@@ -275,6 +275,13 @@ extension EmberweftCLI {
                     out("flock stitch: HIT=\(hit) will-gen=\(miss)\n")
                 case .running(let hit, let generated):
                     out("flock stitch: hit=\(hit) generated=\(generated)\n")
+                case .rendering(let segment, let total, let isLoop, let frame, let frameTotal):
+                    // Per-frame within-MISS progress (v0.5.9), mirroring the
+                    // generate path's per-frame lines: frame 0 is the pre-render
+                    // yield, 1…frameTotal the encoded frames.
+                    out("flock stitch: segment \(segment)/\(total) \(isLoop ? "loop" : "edge") frame \(frame)/\(frameTotal)\n")
+                case .concatenating(let segments):
+                    out("flock stitch: concatenating \(segments) segment\(segments == 1 ? "" : "s")…\n")
                 case .completed(let url):
                     sig.cancel(); out("flock stitch: complete → \(url.path)\n"); return 0
                 case .failed(let msg):
