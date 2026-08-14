@@ -41,18 +41,78 @@ final class FlockCatalogTests: XCTestCase {
 
     // MARK: - Schema
 
-    func testSchemaCreatedOnInitAndSchemaVersionOne() async throws {
+    func testSchemaCreatedOnInitAndSchemaVersionTwo() async throws {
         let root = makeRoot()
         let cat = try FlockCatalog(root: root)
-        // flock_meta.schema_version == "1" (read via the same connection).
+        // flock_meta.schema_version == "2" (v2 = seam-aware geometry columns;
+        // read via the same connection).
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "1")
+        XCTAssertEqual(v, "2")
         // The 4 tables exist (counts don't throw).
         let snap = await cat.snapshot()
         XCTAssertEqual(snap.shardCount, 0)
         XCTAssertEqual(snap.artifactCount, 0)
         // The sqlite file + WAL sidecar were created on disk.
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("flock.sqlite").path))
+    }
+
+    /// v1 → v2 in-place migration: a pre-seam-geometry catalog (schema_version
+    /// "1", no `wrap_file`/`geom` columns) opens cleanly, bumps to "2", and its
+    /// legacy rows decode with `geom == 1` (the exact hit-gate value that makes
+    /// a seam-aware stitch re-render them instead of splicing mixed geometries).
+    func testSchemaV1MigratesInPlaceWithLegacyGeometry() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Hand-build a v1 catalog (the pre-M6.5-seam schema).
+        let v1 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        try v1.exec("""
+            CREATE TABLE flock_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE shards (name TEXT PRIMARY KEY, width INTEGER NOT NULL, height INTEGER NOT NULL,
+              fps INTEGER NOT NULL, loop_seconds REAL NOT NULL, trans_seconds REAL NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, is_canonical INTEGER NOT NULL,
+              codec TEXT NOT NULL);
+            CREATE TABLE sheep (gen TEXT NOT NULL, id TEXT NOT NULL, origin TEXT NOT NULL,
+              source_ref TEXT, source_sha TEXT, display_name TEXT, added_at INTEGER NOT NULL,
+              PRIMARY KEY (gen, id));
+            CREATE TABLE artifacts (
+              a_gen TEXT NOT NULL, a_id TEXT NOT NULL, b_gen TEXT NOT NULL, b_id TEXT NOT NULL,
+              shard TEXT NOT NULL, kind TEXT NOT NULL, file TEXT NOT NULL, thumb TEXT,
+              width INTEGER NOT NULL, height INTEGER NOT NULL, fps INTEGER NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, spp INTEGER NOT NULL,
+              temporal INTEGER NOT NULL, smoothing TEXT NOT NULL, smoothing_hw INTEGER NOT NULL DEFAULT 0,
+              quality_rank REAL NOT NULL, bytes INTEGER NOT NULL, rendered_at INTEGER NOT NULL,
+              source_sha TEXT, seed INTEGER NOT NULL, codec TEXT NOT NULL,
+              PRIMARY KEY (a_gen, a_id, b_gen, b_id, shard),
+              FOREIGN KEY (shard) REFERENCES shards(name));
+            INSERT INTO flock_meta(key,value) VALUES('schema_version','1');
+            INSERT INTO shards VALUES('\(shardName)',1920,1080,30,15.0,12.0,450,360,1,'hevc');
+            INSERT INTO artifacts(a_gen,a_id,b_gen,b_id,shard,kind,file,thumb,width,height,fps,
+              loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,quality_rank,bytes,
+              rendered_at,source_sha,seed,codec)
+              VALUES('248','00628','248','03194','\(shardName)','edge',
+                     'x/mpeg/a.mov',NULL,1920,1080,30,450,360,30,1,'off',0,30.0,1,0,NULL,7,'hevc');
+            """)
+
+        // Opening with the current binary migrates in place.
+        let cat = try FlockCatalog(root: root)
+        let v = try await cat.schemaVersion()
+        XCTAssertEqual(v, "2", "a v1 catalog must migrate to v2 on open")
+        // The legacy row survived and decodes as geometry 1 (legacy monolithic).
+        let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                       shard: shardName)
+        let r = try XCTUnwrap(row, "the v1 row must survive the migration")
+        XCTAssertEqual(r.geom, 1, "legacy rows decode as geometry v1")
+        XCTAssertNil(r.wrapFile)
+        XCTAssertEqual(r.file, "x/mpeg/a.mov")
+        XCTAssertEqual(r.seed, 7)
+        // A NEW upsert writes geometry-v2 fields side by side.
+        var upgraded = sampleRow(seed: 8)
+        upgraded.geom = ArchiveRenderer.SeamGeometry.version
+        try await cat.upsertArtifact(upgraded)
+        let r2 = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                      shard: shardName)
+        XCTAssertEqual(r2?.geom, ArchiveRenderer.SeamGeometry.version)
     }
 
     // MARK: - Upsert / lookup (PK = (a_gen,a_id,b_gen,b_id,shard))

@@ -78,7 +78,9 @@ final class GenerateCoordinatorTests: XCTestCase {
                              shard: String, kind: ArtifactRow.Kind,
                              qualityRank: Double) -> ArtifactRow {
         ArtifactRow(aGen: aGen, aId: aId, bGen: bGen, bId: bId, shard: shard, kind: kind,
-                    file: "\(shard)/mpeg/sentinel.mov", thumb: nil,
+                    file: "\(shard)/mpeg/sentinel.mov",
+                    wrapFile: kind == .loop ? "\(shard)/mpeg/sentinel.wrap.mov" : nil,
+                    geom: ArchiveRenderer.SeamGeometry.version, thumb: nil,
                     width: 48, height: 32, fps: 30, loopFrames: 3, transFrames: 2,
                     spp: 4, temporal: 1, smoothing: "off", smoothingHw: 0,
                     qualityRank: qualityRank, bytes: 999, renderedAt: 0,

@@ -133,17 +133,20 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(progress.first, .resolving)
         XCTAssertNotNil(progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } }))
         let planIdx = progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } })!
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 3))
+        // Seam geometry v2: 2 genomes x reps=1 => [coreA, ext, coreB, wrapB] = 4 files.
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 4))
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
 
-        // Passthrough concat ⇒ output duration ≈ sum of the 3 source durations.
+        // Passthrough concat ⇒ output duration ≈ sum of the 4 source files
+        // (loopB contributes its core AND wrap).
         let out = outURL(root: root)
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "concat output must exist")
         let outDur = try await duration(of: out)
         let srcLoopA = try await duration(of: root.appendingPathComponent(rowLoopA!.file))
         let srcEdge  = try await duration(of: root.appendingPathComponent(rowEdge!.file))
         let srcLoopB = try await duration(of: root.appendingPathComponent(rowLoopB!.file))
-        let sum = srcLoopA + srcEdge + srcLoopB
+        let srcWrapB = try await duration(of: root.appendingPathComponent(rowLoopB!.wrapFile ?? ""))
+        let sum = srcLoopA + srcEdge + srcLoopB + srcWrapB
         XCTAssertEqual(outDur, sum, accuracy: 0.3,
                        "passthrough concat output duration (\(outDur)s) must ≈ sum of sources (\(sum)s)")
         // Multi-file concat ⇒ out is longer than any single source.
@@ -179,7 +182,7 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
         // The plan saw 3 misses (loop A, edge A→B, loop B), 0 hits.
         let planIdx = try XCTUnwrap(progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } }))
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 3))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 4))
 
         // MISS ⇒ rendered INTO the archive first: all 3 rows now exist there.
         let rLoopA = try await catalog.lookup(aGen: "248", aId: "00001", bGen: "248", bId: "00001", shard: shard.name)
@@ -196,9 +199,12 @@ final class StitchCoordinatorTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(r.file).path),
                           "MISS segment archive file must exist: \(r.file)")
         }
-        // Every MISS frame was rendered (loop 6 + edge 4 + loop 6 = 16 frames).
+        // Every MISS frame was rendered: loop 6 (core+wrap) + edge T+2h (8) +
+        // loop 6 = 20 frames (the edge's EXT range carries 2h boundary frames).
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: shard.loopFrames)
         let appended = await coord.appendedFrameCount
-        XCTAssertEqual(appended, shard.loopFrames + shard.transFrames + shard.loopFrames,
+        XCTAssertEqual(appended,
+                       shard.loopFrames + (shard.transFrames + 2 * h) + shard.loopFrames,
                        "all 3 MISS segments must be rendered into the archive")
         // The concat output exists.
         XCTAssertTrue(FileManager.default.fileExists(atPath: outURL(root: root).path))
@@ -243,11 +249,13 @@ final class StitchCoordinatorTests: XCTestCase {
         } else {
             XCTFail("segment 1 should carry .rendering events")
         }
-        // Segment 2 = edge(A→B) over the transFrames-only range (4 frames).
+        // Segment 2 = edge(A→B) over the EXT range (T + 2h frames).
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: shard.loopFrames)
         let seg2 = progress.filter {
             if case .rendering(2, 3, false, _, _) = $0 { return true } else { return false }
         }
-        XCTAssertEqual(seg2.count, shard.transFrames + 1, "edge MISS over the transition range")
+        XCTAssertEqual(seg2.count, shard.transFrames + 2 * h + 1,
+                       "edge MISS over the extended transition range")
         // Segment 3 = loop(B), 6 frames.
         let seg3 = progress.filter {
             if case .rendering(3, 3, true, _, _) = $0 { return true } else { return false }
@@ -259,14 +267,14 @@ final class StitchCoordinatorTests: XCTestCase {
             if case .rendering = $0 { return true } else { return false }
         }
         XCTAssertEqual(allRendering.count,
-                       (shard.loopFrames + 1) + (shard.transFrames + 1) + (shard.loopFrames + 1),
+                       (shard.loopFrames + 1) + (shard.transFrames + 2 * h + 1) + (shard.loopFrames + 1),
                        "exactly the three MISS segments' worth of .rendering events")
 
         // The concat phase is yielded between the last .running and .completed.
         let concatIdx = try XCTUnwrap(progress.firstIndex(where: {
             if case .concatenating = $0 { return true } else { return false }
         }), "multi-segment stitch must yield .concatenating")
-        XCTAssertEqual(progress[concatIdx], .concatenating(segments: 3))
+        XCTAssertEqual(progress[concatIdx], .concatenating(segments: 4))
         let lastRunningIdx = try XCTUnwrap(progress.lastIndex(where: {
             if case .running = $0 { return true } else { return false }
         }))
@@ -277,8 +285,9 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertLessThan(concatIdx, completedIdx, ".concatenating comes before .completed")
     }
 
-    /// The single-file copy tail also yields `.concatenating(segments: 1)` — no
-    /// silent gap on the loop-only path either.
+    /// The single-genome loop-only timeline (seam geometry v2: `[core, wrap]`)
+    /// yields `.concatenating(segments: 2)` — no silent gap on the loop-only
+    /// path either.
     func testSingleFileCopyYieldsConcatenatingPhase() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -297,8 +306,8 @@ final class StitchCoordinatorTests: XCTestCase {
             loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
-        XCTAssertTrue(progress.contains(.concatenating(segments: 1)),
-                      "the single-genome copy path must yield .concatenating(segments: 1): \(progress)")
+        XCTAssertTrue(progress.contains(.concatenating(segments: 2)),
+                      "the single-genome core+wrap timeline must yield .concatenating(segments: 2): \(progress)")
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
     }
 
@@ -381,9 +390,9 @@ final class StitchCoordinatorTests: XCTestCase {
 
     // MARK: - (g): single-genome ⇒ loop-only copy, no concat
 
-    /// One genome ⇒ one loop segment ⇒ `urls.count == 1` ⇒ the file is COPIED
-    /// (byte-identical to the single archive file), NOT concatenated. Only a loop
-    /// row is created (no edge).
+    /// One genome ⇒ one loop unit ⇒ seam geometry v2 assembles `[core, wrap]`
+    /// (a full closed cycle) via a 2-file concat. Only a loop row is created (no
+    /// edge).
     func testSingleGenomeLoopOnlyCopyNoConcat() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -415,13 +424,15 @@ final class StitchCoordinatorTests: XCTestCase {
         let appended = await coord.appendedFrameCount
         XCTAssertEqual(appended, shard.loopFrames, "only the loop slot is rendered for a single genome")
 
-        // Copy, not concat: out is byte-identical to the single archive file.
-        let archiveFile = root.appendingPathComponent(loopRow.file)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: archiveFile.path),
-                      "the source loop archive file must still exist (copy, not move)")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "the copy output must exist")
-        XCTAssertTrue(FileManager.default.contentsEqual(atPath: out.path, andPath: archiveFile.path),
-                      "single-genome output must be byte-identical to the loop archive file (copy, not concat)")
+        // The wrap file exists too (a loop unit is TWO files), and the output is
+        // the concat of core + wrap (a closed full cycle), not a byte-copy.
+        let wrapFile = root.appendingPathComponent(loopRow.wrapFile ?? "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wrapFile.path),
+                      "the loop unit's wrap file must exist")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "the output must exist")
+        XCTAssertFalse(FileManager.default.contentsEqual(atPath: out.path,
+                                                         andPath: root.appendingPathComponent(loopRow.file).path),
+                       "single-genome output is a core+wrap concat, not a copy of one file")
     }
 
     // MARK: - (h): loop repetitions (stitch-time, default 2)
@@ -469,8 +480,8 @@ final class StitchCoordinatorTests: XCTestCase {
         let planIdx = try XCTUnwrap(progress.firstIndex(where: {
             if case .plan = $0 { return true } else { return false }
         }))
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 5),
-                       "reps=2: 3 unique HIT keys, 5 timeline slots")
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 8),
+                       "reps=2: 3 unique HIT keys, 8 timeline files")
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
         // The final running tally counts SLOTS: 5 assembled (3 first-occurrence
         // HITs + 2 repeat-reference HITs), 0 generated.
@@ -479,9 +490,9 @@ final class StitchCoordinatorTests: XCTestCase {
         }))
         XCTAssertEqual(lastRunning, .running(hit: 5, generated: 0),
                        "all 5 slots are HITs (repeats reuse the same row)")
-        // Concat of 5 slots (the two loop files listed twice each).
-        XCTAssertTrue(progress.contains(.concatenating(segments: 5)),
-                      "5-slot timeline ⇒ 5-file concat input: \(progress)")
+        // Concat of 8 files: [coreA, wrapA, coreA, ext, coreB, wrapB, coreB, wrapB].
+        XCTAssertTrue(progress.contains(.concatenating(segments: 8)),
+                      "reps=2 timeline ⇒ 8-file concat input: \(progress)")
         // Duration ≈ 2·loopA + edge + 2·loopB (the reps actually extend the
         // assembled timeline — the point of the feature).
         let out = outURL(root: root)
@@ -489,9 +500,12 @@ final class StitchCoordinatorTests: XCTestCase {
         let srcLoopA = try await duration(of: root.appendingPathComponent(rowLoopA!.file))
         let srcEdge  = try await duration(of: root.appendingPathComponent(rowEdge!.file))
         let srcLoopB = try await duration(of: root.appendingPathComponent(rowLoopB!.file))
+        let srcWrapA = try await duration(of: root.appendingPathComponent(rowLoopA!.wrapFile ?? ""))
+        let srcWrapB = try await duration(of: root.appendingPathComponent(rowLoopB!.wrapFile ?? ""))
         let outDur = try await duration(of: out)
-        XCTAssertEqual(outDur, 2 * srcLoopA + srcEdge + 2 * srcLoopB, accuracy: 0.4,
-                       "reps=2 output duration must ≈ 2·loopA + edge + 2·loopB")
+        XCTAssertEqual(outDur, 2 * srcLoopA + 2 * srcWrapA + srcEdge + 2 * srcLoopB + 2 * srcWrapB,
+                       accuracy: 0.6,
+                       "reps=2 output duration must ≈ 2·(coreA+wrapA) + edge + 2·(coreB+wrapB)")
     }
 
     /// reps=2 on the ALL-MISS path: each loop is rendered EXACTLY ONCE (the
@@ -521,14 +535,16 @@ final class StitchCoordinatorTests: XCTestCase {
         let planIdx = try XCTUnwrap(progress.firstIndex(where: {
             if case .plan = $0 { return true } else { return false }
         }))
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 5),
-                       "3 unique will-gens (loopA, edge, loopB) across 5 timeline slots")
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 8),
+                       "3 unique will-gens (loopA, edge, loopB) across 8 timeline files")
 
-        // Each loop rendered ONCE: loop 6 + edge 4 + loop 6 = 16 frames total
-        // (NOT 6+6+4+6+6 = 28 — repetitions never re-render).
+        // Each loop rendered ONCE: loop 6 (core+wrap) + edge 8 (T+2h) + loop 6 =
+        // 20 frames total (repetitions never re-render).
+        let h = ArchiveRenderer.SeamGeometry.halfWidth(loopFrames: shard.loopFrames)
         let appended = await coord.appendedFrameCount
-        XCTAssertEqual(appended, shard.loopFrames + shard.transFrames + shard.loopFrames,
-                       "reps=2 must render each loop exactly once (the canonical artifact)")
+        XCTAssertEqual(appended,
+                       shard.loopFrames + (shard.transFrames + 2 * h) + shard.loopFrames,
+                       "reps=2 must render each loop exactly once (the canonical unit)")
 
         // Timeline positions: slot 1 = loopA MISS (renders), slot 2 = loopA
         // repeat HIT (NO rendering events at position 2), slot 3 = edge MISS,
@@ -548,7 +564,8 @@ final class StitchCoordinatorTests: XCTestCase {
         let mpeg = root.appendingPathComponent(shard.name).appendingPathComponent("mpeg")
         let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
             .filter { $0.hasSuffix(".mov") }
-        XCTAssertEqual(movs.count, 3, "reps duplicate TIMELINE slots, never archive files: \(movs)")
+        XCTAssertEqual(movs.count, 5,
+                       "reps duplicate TIMELINE files, never archive files (2 cores + 2 wraps + 1 edge): \(movs)")
         // Final running tally: 5 slots assembled (3 generated + 2 repeat HITs).
         let lastRunning = try XCTUnwrap(progress.last(where: {
             if case .running = $0 { return true } else { return false }
@@ -556,9 +573,10 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(lastRunning, .running(hit: 2, generated: 3))
     }
 
-    /// Single genome × reps=2 ⇒ `urls.count == 2` ⇒ the CONCAT path (two copies
-    /// of the one loop file), NOT the single-file copy path. The archive still
-    /// holds exactly ONE loop row and the loop renders once.
+    /// Single genome × reps=2 ⇒ the CONCAT path with 4 files
+    /// (`[core, wrap, core, wrap]` — two full cycles), NOT the single-file copy
+    /// path. The archive still holds exactly ONE loop row and the loop renders
+    /// once.
     func testSingleGenomeTwoRepsConcatsTwoCopiesNotCopy() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -580,9 +598,9 @@ final class StitchCoordinatorTests: XCTestCase {
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
 
         XCTAssertEqual(progress.last, .completed(out: out))
-        // Concat of 2 segments — NOT the single-file copy (segments == 1).
-        XCTAssertTrue(progress.contains(.concatenating(segments: 2)),
-                      "single genome × reps=2 must concat 2 copies: \(progress)")
+        // Concat of 4 segments — NOT the single-file copy (segments == 1).
+        XCTAssertTrue(progress.contains(.concatenating(segments: 4)),
+                      "single genome × reps=2 must concat [core, wrap, core, wrap]: \(progress)")
         XCTAssertFalse(progress.contains(.concatenating(segments: 1)),
                        "the copy path must NOT fire when reps > 1")
         // Rendered once; one archive row; output duration ≈ 2× the loop.
@@ -591,13 +609,60 @@ final class StitchCoordinatorTests: XCTestCase {
         let loopRowOpt = try await catalog.lookup(aGen: "248", aId: "00001",
                                                   bGen: "248", bId: "00001", shard: shard.name)
         let loopRow = try XCTUnwrap(loopRowOpt)
-        let srcDur = try await duration(of: root.appendingPathComponent(loopRow.file))
+        let srcCore = try await duration(of: root.appendingPathComponent(loopRow.file))
+        let srcWrap = try await duration(of: root.appendingPathComponent(loopRow.wrapFile ?? ""))
+        let srcDur = srcCore + srcWrap
         let outDur = try await duration(of: out)
         XCTAssertEqual(outDur, 2 * srcDur, accuracy: 0.3,
-                       "single genome × reps=2 output ≈ 2× the canonical loop duration")
+                       "single genome × reps=2 output ≈ 2× the canonical unit (core+wrap) duration")
         XCTAssertFalse(FileManager.default.contentsEqual(atPath: out.path,
                                                          andPath: root.appendingPathComponent(loopRow.file).path),
                        "out is a 2-copy concat, not a byte-copy of the single archive file")
+    }
+
+    // MARK: - (i2): HIT requires the exact seam geometry (like the codec gate)
+
+    /// A legacy geometry-v1 row (rank sufficient, `geom == 1`) is NOT a HIT: its
+    /// monolithic file layout cannot be spliced into a seam-aware v2 timeline
+    /// (frame counts/phases differ) — it must be re-rendered, even though its
+    /// quality rank meets the request. Mirrors the exact-match codec gate.
+    func testLegacyGeometryRowMissesDespiteSufficientRank() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard, spp: 4)
+        let A = try parseSierpinski()
+
+        // A legacy row: rank 100 (>= any request here) but geometry 1, no wrap.
+        var legacy = makeRow(aGen: "248", aId: "00001", bGen: "248", bId: "00001",
+                             shard: shard.name, codec: shard.codec)
+        legacy.qualityRank = 100.0
+        legacy.geom = 1
+        legacy.wrapFile = nil
+        try await catalog.upsertArtifact(legacy)
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let progress = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: settings, flockRoot: root, out: outURL(root: root),
+                          loopRepetitions: 1),
+            coordinator: coord))
+
+        let planIdx = try XCTUnwrap(progress.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 1, segmentCount: 2),
+                       "a legacy-geometry row must MISS regardless of rank")
+        XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
+        // The re-rendered row is geometry v2 with a wrap file.
+        let row = try await catalog.lookup(aGen: "248", aId: "00001",
+                                           bGen: "248", bId: "00001", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(row).geom, ArchiveRenderer.SeamGeometry.version)
+        XCTAssertNotNil(try XCTUnwrap(row).wrapFile)
     }
 
     // MARK: - (i): HIT respects the D4 quality rank (upgrade-overwrite)
@@ -640,7 +705,7 @@ final class StitchCoordinatorTests: XCTestCase {
         let plan1 = try XCTUnwrap(progress1.firstIndex(where: {
             if case .plan = $0 { return true } else { return false }
         }))
-        XCTAssertEqual(progress1[plan1], .plan(hitCount: 0, missCount: 1, segmentCount: 1),
+        XCTAssertEqual(progress1[plan1], .plan(hitCount: 0, missCount: 1, segmentCount: 2),
                        "a lower-rank row is a MISS at the higher requested quality")
         let upgradedOpt = try await catalog.lookup(aGen: "248", aId: "00001",
                                                    bGen: "248", bId: "00001", shard: shard.name)
@@ -660,7 +725,7 @@ final class StitchCoordinatorTests: XCTestCase {
         let plan2 = try XCTUnwrap(progress2.firstIndex(where: {
             if case .plan = $0 { return true } else { return false }
         }))
-        XCTAssertEqual(progress2[plan2], .plan(hitCount: 1, missCount: 0, segmentCount: 1),
+        XCTAssertEqual(progress2[plan2], .plan(hitCount: 1, missCount: 0, segmentCount: 2),
                        "an equal-rank row IS a HIT")
         let appendedAfter = await coord.appendedFrameCount
         XCTAssertEqual(appendedBefore, appendedAfter, "the HIT must not re-render any frame")
@@ -673,10 +738,14 @@ final class StitchCoordinatorTests: XCTestCase {
     private func makeRow(aGen: String, aId: String, bGen: String, bId: String,
                          shard: String, codec: ExportSettings.Codec,
                          file: String = "stub.mov") -> ArtifactRow {
-        ArtifactRow(
+        let kind: ArtifactRow.Kind = (aGen == bGen && aId == bId) ? .loop : .edge
+        return ArtifactRow(
             aGen: aGen, aId: aId, bGen: bGen, bId: bId, shard: shard,
-            kind: (aGen == bGen && aId == bId) ? .loop : .edge,
-            file: file, thumb: nil, width: 48, height: 32, fps: 30,
+            kind: kind,
+            file: file,
+            wrapFile: kind == .loop ? "stub.wrap.mov" : nil,
+            geom: ArchiveRenderer.SeamGeometry.version,
+            thumb: nil, width: 48, height: 32, fps: 30,
             loopFrames: 6, transFrames: 4, spp: 4, temporal: 1,
             smoothing: "off", smoothingHw: 0, qualityRank: 4.0, bytes: 0,
             renderedAt: 0, sourceSha: nil, seed: 0, codec: codec)
