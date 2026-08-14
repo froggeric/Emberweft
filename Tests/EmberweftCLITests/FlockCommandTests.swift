@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import AVFoundation   // AVURLAsset duration (loop-reps stitch output)
 @testable import EmberweftCLI
 @testable import FlameFlock     // FlockCatalog seeding (export-list / browse-with-shard)
 @testable import FlameExport    // ExportSettings, ArtifactRow, ShardSpec
@@ -235,6 +236,45 @@ final class FlockCommandTests: XCTestCase {
         XCTAssertEqual(genRC, 0)
 
         // 2. Stitch: the plan should be all-HIT (will-gen 0); out is a copy of the loop.
+        // `--loop-reps 1` keeps the single-slot copy path (the default 2 would
+        // concat two copies — pinned by testStitchLoopRepsDefaultsToTwo below).
+        let out = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("flock-stitch-\(UUID().uuidString).mov")
+        let progress = try await captureOut {
+            let rc = await EmberweftCLI.flock([
+                "stitch", "--sequence", from.path, "--shard", shardName,
+                "--codec", "h264", "--quality", "4", "--backend", "cpu",
+                "--loop-reps", "1",
+                "--flock", root.path, "--out", out.path,
+            ])
+            XCTAssertEqual(rc, 0, "stitch should succeed")
+        }
+        XCTAssertTrue(progress.lowercased().contains("hit") || progress.contains("will-gen"),
+                      "stitch should print HIT/will-gen plan: \(progress)")
+        XCTAssertTrue(progress.contains("concatenating 1 segment"),
+                      "reps=1 single genome ⇒ the copy path (1 segment): \(progress)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "stitch out must exist")
+        let size = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
+        XCTAssertGreaterThan(size, 0, "stitch out must be non-empty")
+        try? FileManager.default.removeItem(at: out)
+    }
+
+    /// `--loop-reps` DEFAULT is 2 (mirrors the GUI): a single-genome stitch
+    /// without the flag builds a 2-slot timeline `[loopA, loopA]` ⇒ concat of
+    /// two copies of the ONE canonical loop file (NOT the single-file copy
+    /// path, and NOT a re-render — the archive keeps exactly one loop).
+    func testStitchLoopRepsDefaultsToTwo() async throws {
+        let root = makeFlockRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let from = try makeFromDir(genomeCount: 1)
+        defer { try? FileManager.default.removeItem(at: from) }
+        let genRC = await EmberweftCLI.flock([
+            "generate", "--from", from.path, "--shard", shardName,
+            "--scope", "loops", "--quality", "4", "--codec", "h264",
+            "--backend", "cpu", "--flock", root.path,
+        ])
+        XCTAssertEqual(genRC, 0)
+
         let out = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("flock-stitch-\(UUID().uuidString).mov")
         let progress = try await captureOut {
@@ -245,12 +285,39 @@ final class FlockCommandTests: XCTestCase {
             ])
             XCTAssertEqual(rc, 0, "stitch should succeed")
         }
-        XCTAssertTrue(progress.lowercased().contains("hit") || progress.contains("will-gen"),
-                      "stitch should print HIT/will-gen plan: \(progress)")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "stitch out must exist")
-        let size = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
-        XCTAssertGreaterThan(size, 0, "stitch out must be non-empty")
+        // The banner reports the reps-aware slot count + the reps value.
+        XCTAssertTrue(progress.contains("segments=2"), "default loop-reps=2 ⇒ 2 slots: \(progress)")
+        XCTAssertTrue(progress.contains("loop-reps=2"), "the banner should print loop-reps: \(progress)")
+        // All-HIT plan over UNIQUE keys (1 loop) with 2 timeline slots.
+        XCTAssertTrue(progress.contains("HIT=1 will-gen=0 segments=2"),
+                      "plan counts unique work (1 HIT) + slot total (2): \(progress)")
+        // The 2-slot timeline goes through CONCAT, not the single-file copy.
+        XCTAssertTrue(progress.contains("concatenating 2 segments"),
+                      "default reps=2 single genome ⇒ concat of 2 copies: \(progress)")
+        // The archive still holds EXACTLY ONE loop file (repetition never
+        // duplicates archive artifacts).
+        let mpeg = root.appendingPathComponent(shardName).appendingPathComponent("mpeg")
+        let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
+            .filter { $0.hasSuffix(".mov") }
+        XCTAssertEqual(movs, ["248=00001=248=00001.mov"],
+                       "reps duplicate timeline slots, never archive files")
+        // The output plays the loop twice (≈2× the single loop's frames).
+        let single = try await AVURLAsset(url: mpeg.appendingPathComponent(movs[0])).load(.duration).seconds
+        let doubled = try await AVURLAsset(url: out).load(.duration).seconds
+        XCTAssertEqual(doubled, 2 * single, accuracy: 0.2,
+                       "stitched output ≈ 2× the canonical loop duration")
         try? FileManager.default.removeItem(at: out)
+    }
+
+    /// `--loop-reps` validation: out-of-range / non-integer values exit 2.
+    func testStitchLoopRepsRejectsInvalidValues() async throws {
+        for bad in ["0", "-1", "abc", "6"] {
+            let rc = await EmberweftCLI.flock([
+                "stitch", "--sequence", "/tmp", "--shard", shardName,
+                "--codec", "h264", "--loop-reps", bad, "--flock", "/tmp/nowhere",
+            ])
+            XCTAssertEqual(rc, 2, "--loop-reps \(bad) must be rejected")
+        }
     }
 
     // MARK: - rebuild (AC: rebuild flock.sqlite)

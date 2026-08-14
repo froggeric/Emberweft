@@ -49,13 +49,13 @@ final class StitchCoordinatorTests: XCTestCase {
                   loopFrames: 6, transFrames: 4,
                   isCanonical: false, codec: codec)
     }
-    private func archiveSettings(matching shard: ShardSpec) -> ExportSettings {
+    private func archiveSettings(matching shard: ShardSpec, spp: Int = 4) -> ExportSettings {
         var s = ExportSettings()
         s.codec = shard.codec
         s.container = .mov
         s.resolution = .custom(width: shard.width, height: shard.height)
         s.fps = shard.fps
-        s.quality = .spp(4)
+        s.quality = .spp(spp)
         s.temporalSamples = 1
         return s
     }
@@ -118,7 +118,8 @@ final class StitchCoordinatorTests: XCTestCase {
         let request = StitchRequest(
             shard: shard,
             orderedFlames: [("248", "00001", A), ("248", "00002", B)],
-            settings: settings, flockRoot: root, out: outURL(root: root))
+            settings: settings, flockRoot: root, out: outURL(root: root),
+            loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
 
@@ -132,7 +133,7 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(progress.first, .resolving)
         XCTAssertNotNil(progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } }))
         let planIdx = progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } })!
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 3))
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
 
         // Passthrough concat ⇒ output duration ≈ sum of the 3 source durations.
@@ -170,14 +171,15 @@ final class StitchCoordinatorTests: XCTestCase {
         let request = StitchRequest(
             shard: shard,
             orderedFlames: [("248", "00001", A), ("248", "00002", B)],
-            settings: settings, flockRoot: root, out: outURL(root: root))
+            settings: settings, flockRoot: root, out: outURL(root: root),
+            loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
 
         XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
         // The plan saw 3 misses (loop A, edge A→B, loop B), 0 hits.
         let planIdx = try XCTUnwrap(progress.firstIndex(where: { if case .plan = $0 { return true } else { return false } }))
-        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 3))
 
         // MISS ⇒ rendered INTO the archive first: all 3 rows now exist there.
         let rLoopA = try await catalog.lookup(aGen: "248", aId: "00001", bGen: "248", bId: "00001", shard: shard.name)
@@ -223,7 +225,8 @@ final class StitchCoordinatorTests: XCTestCase {
                                          backend: .cpu, useOffMainMetal: false)
         let request = StitchRequest(
             shard: shard, orderedFlames: [("248", "00001", A), ("248", "00002", B)],
-            settings: settings, flockRoot: root, out: outURL(root: root))
+            settings: settings, flockRoot: root, out: outURL(root: root),
+            loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
 
@@ -290,7 +293,8 @@ final class StitchCoordinatorTests: XCTestCase {
                                          backend: .cpu, useOffMainMetal: false)
         let request = StitchRequest(
             shard: shard, orderedFlames: [("248", "00001", A)],
-            settings: settings, flockRoot: root, out: outURL(root: root))
+            settings: settings, flockRoot: root, out: outURL(root: root),
+            loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
         XCTAssertTrue(progress.contains(.concatenating(segments: 1)),
@@ -395,7 +399,8 @@ final class StitchCoordinatorTests: XCTestCase {
         let out = outURL(root: root)
         let request = StitchRequest(
             shard: shard, orderedFlames: [("248", "00001", A)],
-            settings: settings, flockRoot: root, out: out)
+            settings: settings, flockRoot: root, out: out,
+            loopRepetitions: 1)
 
         let progress = try await drain(stitcher.stitch(request, coordinator: coord))
 
@@ -417,6 +422,248 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "the copy output must exist")
         XCTAssertTrue(FileManager.default.contentsEqual(atPath: out.path, andPath: archiveFile.path),
                       "single-genome output must be byte-identical to the loop archive file (copy, not concat)")
+    }
+
+    // MARK: - (h): loop repetitions (stitch-time, default 2)
+
+    /// reps=2 timeline shape on the ALL-HIT path: the keys list is
+    /// `[loopA, loopA, edgeAB, loopB, loopB]` — 5 timeline slots from 3 unique
+    /// keys. The plan counts UNIQUE archive work (3 HIT, 0 will-gen) while the
+    /// slot total is 5; the concat input carries `loopA`'s and `loopB`'s file
+    /// URLs TWICE each, and the output duration ≈ 2·loopA + edge + 2·loopB.
+    /// `loopRepetitions` is OMITTED here — this also pins the default == 2.
+    func testLoopRepetitionsDefaultTwoShapeAllHit() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let realCatalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await realCatalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+
+        // Pre-render the 3 unique segments (loop A, edge A→B, loop B).
+        let A = try parseSierpinski(), B = A
+        let coord = ExportCoordinator(backend: .cpu)
+        let renderer = ArchiveRenderer()
+        try await renderer.renderLoop(A: A, aGen: "248", aId: "00001", shard: shard,
+                                      settings: settings, coordinator: coord, catalog: realCatalog,
+                                      backend: .cpu, useOffMainMetal: false, flockRoot: root, sourceSha: nil)
+        try await renderer.renderEdge(A: A, B: B, aGen: "248", aId: "00001", bGen: "248", bId: "00002",
+                                      shard: shard, settings: settings, coordinator: coord, catalog: realCatalog,
+                                      backend: .cpu, useOffMainMetal: false, flockRoot: root, sourceSha: nil)
+        try await renderer.renderLoop(A: B, aGen: "248", aId: "00002", shard: shard,
+                                      settings: settings, coordinator: coord, catalog: realCatalog,
+                                      backend: .cpu, useOffMainMetal: false, flockRoot: root, sourceSha: nil)
+        let rowLoopA = try await realCatalog.lookup(aGen: "248", aId: "00001", bGen: "248", bId: "00001", shard: shard.name)
+        let rowEdge  = try await realCatalog.lookup(aGen: "248", aId: "00001", bGen: "248", bId: "00002", shard: shard.name)
+        let rowLoopB = try await realCatalog.lookup(aGen: "248", aId: "00002", bGen: "248", bId: "00002", shard: shard.name)
+
+        let spy = CatalogSpy(rows: [rowLoopA!, rowEdge!, rowLoopB!])
+        let stitcher = StitchCoordinator(catalog: spy, renderer: renderer, backend: .cpu, useOffMainMetal: false)
+        let request = StitchRequest(
+            shard: shard, orderedFlames: [("248", "00001", A), ("248", "00002", B)],
+            settings: settings, flockRoot: root, out: outURL(root: root))   // reps default = 2
+
+        let progress = try await drain(stitcher.stitch(request, coordinator: coord))
+
+        // Plan: UNIQUE counts (3 HIT / 0 will-gen) + the slot total (5).
+        let planIdx = try XCTUnwrap(progress.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 3, missCount: 0, segmentCount: 5),
+                       "reps=2: 3 unique HIT keys, 5 timeline slots")
+        XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
+        // The final running tally counts SLOTS: 5 assembled (3 first-occurrence
+        // HITs + 2 repeat-reference HITs), 0 generated.
+        let lastRunning = try XCTUnwrap(progress.last(where: {
+            if case .running = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(lastRunning, .running(hit: 5, generated: 0),
+                       "all 5 slots are HITs (repeats reuse the same row)")
+        // Concat of 5 slots (the two loop files listed twice each).
+        XCTAssertTrue(progress.contains(.concatenating(segments: 5)),
+                      "5-slot timeline ⇒ 5-file concat input: \(progress)")
+        // Duration ≈ 2·loopA + edge + 2·loopB (the reps actually extend the
+        // assembled timeline — the point of the feature).
+        let out = outURL(root: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+        let srcLoopA = try await duration(of: root.appendingPathComponent(rowLoopA!.file))
+        let srcEdge  = try await duration(of: root.appendingPathComponent(rowEdge!.file))
+        let srcLoopB = try await duration(of: root.appendingPathComponent(rowLoopB!.file))
+        let outDur = try await duration(of: out)
+        XCTAssertEqual(outDur, 2 * srcLoopA + srcEdge + 2 * srcLoopB, accuracy: 0.4,
+                       "reps=2 output duration must ≈ 2·loopA + edge + 2·loopB")
+    }
+
+    /// reps=2 on the ALL-MISS path: each loop is rendered EXACTLY ONCE (the
+    /// canonical artifact), and its repetitions are HITs — NOT re-renders. The
+    /// timeline positions advance over all 5 slots (the repeated loop's second
+    /// occurrence occupies position 2 with no render). Edges are never repeated.
+    func testLoopRepetitionsTwoMissRendersEachLoopOnce() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)   // empty ⇒ all unique keys MISS
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski(), B = A
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let request = StitchRequest(
+            shard: shard, orderedFlames: [("248", "00001", A), ("248", "00002", B)],
+            settings: settings, flockRoot: root, out: outURL(root: root),
+            loopRepetitions: 2)
+
+        let progress = try await drain(stitcher.stitch(request, coordinator: coord))
+
+        XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
+        let planIdx = try XCTUnwrap(progress.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 3, segmentCount: 5),
+                       "3 unique will-gens (loopA, edge, loopB) across 5 timeline slots")
+
+        // Each loop rendered ONCE: loop 6 + edge 4 + loop 6 = 16 frames total
+        // (NOT 6+6+4+6+6 = 28 — repetitions never re-render).
+        let appended = await coord.appendedFrameCount
+        XCTAssertEqual(appended, shard.loopFrames + shard.transFrames + shard.loopFrames,
+                       "reps=2 must render each loop exactly once (the canonical artifact)")
+
+        // Timeline positions: slot 1 = loopA MISS (renders), slot 2 = loopA
+        // repeat HIT (NO rendering events at position 2), slot 3 = edge MISS,
+        // slot 4 = loopB MISS, slot 5 = loopB repeat HIT (no position-5 events).
+        XCTAssertTrue(progress.contains { if case .rendering(1, 5, true, _, _) = $0 { return true } else { return false } },
+                      "slot 1 (loopA) renders at position 1/5")
+        XCTAssertTrue(progress.contains { if case .rendering(3, 5, false, _, _) = $0 { return true } else { return false } },
+                      "slot 3 (edge) renders at position 3/5")
+        XCTAssertTrue(progress.contains { if case .rendering(4, 5, true, _, _) = $0 { return true } else { return false } },
+                      "slot 4 (loopB) renders at position 4/5")
+        XCTAssertFalse(progress.contains { if case .rendering(2, _, _, _, _) = $0 { return true } else { return false } },
+                       "slot 2 is a repeated-loop HIT — it must NOT render")
+        XCTAssertFalse(progress.contains { if case .rendering(5, _, _, _, _) = $0 { return true } else { return false } },
+                       "slot 5 is a repeated-loop HIT — it must NOT render")
+
+        // The archive gained EXACTLY 3 rows / 3 files (no per-repetition files).
+        let mpeg = root.appendingPathComponent(shard.name).appendingPathComponent("mpeg")
+        let movs = ((try? FileManager.default.contentsOfDirectory(atPath: mpeg.path)) ?? [])
+            .filter { $0.hasSuffix(".mov") }
+        XCTAssertEqual(movs.count, 3, "reps duplicate TIMELINE slots, never archive files: \(movs)")
+        // Final running tally: 5 slots assembled (3 generated + 2 repeat HITs).
+        let lastRunning = try XCTUnwrap(progress.last(where: {
+            if case .running = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(lastRunning, .running(hit: 2, generated: 3))
+    }
+
+    /// Single genome × reps=2 ⇒ `urls.count == 2` ⇒ the CONCAT path (two copies
+    /// of the one loop file), NOT the single-file copy path. The archive still
+    /// holds exactly ONE loop row and the loop renders once.
+    func testSingleGenomeTwoRepsConcatsTwoCopiesNotCopy() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski()
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let out = outURL(root: root)
+        let request = StitchRequest(
+            shard: shard, orderedFlames: [("248", "00001", A)],
+            settings: settings, flockRoot: root, out: out,
+            loopRepetitions: 2)
+
+        let progress = try await drain(stitcher.stitch(request, coordinator: coord))
+
+        XCTAssertEqual(progress.last, .completed(out: out))
+        // Concat of 2 segments — NOT the single-file copy (segments == 1).
+        XCTAssertTrue(progress.contains(.concatenating(segments: 2)),
+                      "single genome × reps=2 must concat 2 copies: \(progress)")
+        XCTAssertFalse(progress.contains(.concatenating(segments: 1)),
+                       "the copy path must NOT fire when reps > 1")
+        // Rendered once; one archive row; output duration ≈ 2× the loop.
+        let appended = await coord.appendedFrameCount
+        XCTAssertEqual(appended, shard.loopFrames, "the loop renders once regardless of reps")
+        let loopRowOpt = try await catalog.lookup(aGen: "248", aId: "00001",
+                                                  bGen: "248", bId: "00001", shard: shard.name)
+        let loopRow = try XCTUnwrap(loopRowOpt)
+        let srcDur = try await duration(of: root.appendingPathComponent(loopRow.file))
+        let outDur = try await duration(of: out)
+        XCTAssertEqual(outDur, 2 * srcDur, accuracy: 0.3,
+                       "single genome × reps=2 output ≈ 2× the canonical loop duration")
+        XCTAssertFalse(FileManager.default.contentsEqual(atPath: out.path,
+                                                         andPath: root.appendingPathComponent(loopRow.file).path),
+                       "out is a 2-copy concat, not a byte-copy of the single archive file")
+    }
+
+    // MARK: - (i): HIT respects the D4 quality rank (upgrade-overwrite)
+
+    /// A stored row below the REQUESTED rank is NOT a HIT: it is re-rendered
+    /// (upgrade-overwrite at the same archive path), and the row's quality comes
+    /// up to the request. A second stitch at the SAME quality then HITs (no
+    /// re-render). This mirrors `GenerateCoordinator`'s D4 rule on the stitch path.
+    func testHitRespectsQualityRankUpgradesLowerRankRow() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        let low = archiveSettings(matching: shard, spp: 2)     // rank 2
+        let high = archiveSettings(matching: shard, spp: 4)    // rank 4
+        let A = try parseSierpinski()
+
+        // Seed the archive with a LOW-rank loop (as a prior generate would).
+        let coord = ExportCoordinator(backend: .cpu)
+        let renderer = ArchiveRenderer()
+        try await renderer.renderLoop(A: A, aGen: "248", aId: "00001", shard: shard,
+                                      settings: low, coordinator: coord, catalog: catalog,
+                                      backend: .cpu, useOffMainMetal: false, flockRoot: root, sourceSha: nil)
+        let seededOpt = try await catalog.lookup(aGen: "248", aId: "00001",
+                                                 bGen: "248", bId: "00001", shard: shard.name)
+        let seeded = try XCTUnwrap(seededOpt)
+        XCTAssertEqual(seeded.spp, 2, "seed row is the low-quality artifact")
+
+        // Stitch 1 at the HIGHER quality: the low-rank row must NOT hit ⇒
+        // upgrade re-render (MISS), then collect.
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: renderer,
+                                         backend: .cpu, useOffMainMetal: false)
+        let out1 = root.appendingPathComponent("upgrade.mov")
+        let progress1 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: high, flockRoot: root, out: out1, loopRepetitions: 1),
+            coordinator: coord))
+        XCTAssertEqual(progress1.last, .completed(out: out1))
+        let plan1 = try XCTUnwrap(progress1.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress1[plan1], .plan(hitCount: 0, missCount: 1, segmentCount: 1),
+                       "a lower-rank row is a MISS at the higher requested quality")
+        let upgradedOpt = try await catalog.lookup(aGen: "248", aId: "00001",
+                                                   bGen: "248", bId: "00001", shard: shard.name)
+        let upgraded = try XCTUnwrap(upgradedOpt)
+        XCTAssertEqual(upgraded.spp, 4, "the row must be upgraded to the requested quality")
+
+        // Stitch 2 at the SAME quality: now the row's rank meets the request ⇒
+        // HIT, nothing regenerated (the coordinator's lookup is only used on
+        // MISS — assert via the frame counter instead: no new frames appended).
+        let appendedBefore = await coord.appendedFrameCount
+        let out2 = root.appendingPathComponent("hit.mov")
+        let progress2 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: high, flockRoot: root, out: out2, loopRepetitions: 1),
+            coordinator: coord))
+        XCTAssertEqual(progress2.last, .completed(out: out2))
+        let plan2 = try XCTUnwrap(progress2.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress2[plan2], .plan(hitCount: 1, missCount: 0, segmentCount: 1),
+                       "an equal-rank row IS a HIT")
+        let appendedAfter = await coord.appendedFrameCount
+        XCTAssertEqual(appendedBefore, appendedAfter, "the HIT must not re-render any frame")
     }
 
     // MARK: - fixtures

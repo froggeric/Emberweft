@@ -325,12 +325,15 @@ public final class FlockModel {
         switch p {
         case .resolving:
             stitchState = .resolving
-        case .plan(let hitCount, let missCount):
-            // Capture the plan tallies: `running` carries the state-driven total
-            // (hit + miss), and the ETA's remaining-unit count is the MISS count.
-            stitchPlanTotal = hitCount + missCount
+        case .plan(let hitCount, let missCount, let segmentCount):
+            // Capture the plan tallies: `running` carries the state-driven
+            // timeline-slot total (`segmentCount` — with loop repetitions the
+            // slot count exceeds the unique hit+miss archive work), and the
+            // ETA's remaining-unit count is the unique MISS count (only MISSes
+            // take render time; a repeated loop renders once).
+            stitchPlanTotal = segmentCount
             stitchMissTotal = missCount
-            stitchState = .plan(hit: hitCount, miss: missCount)
+            stitchState = .plan(hit: hitCount, miss: missCount, segments: segmentCount)
         case .running(let hit, let generated):
             // A MISS render completed iff `generated` increased AND the pre-render
             // `.rendering(frame: 0)` marked its start (HIT segments complete

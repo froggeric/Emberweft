@@ -180,12 +180,17 @@ extension EmberweftCLI {
 
     // MARK: - stitch (Path B — drive StitchCoordinator)
 
-    /// `flock stitch --shard <name> --sequence <dir|flam3>`.
+    /// `flock stitch --shard <name> --sequence <dir|flam3> [--loop-reps N]`.
     ///
     /// Assembles a long-form video from the archive: one batched catalog lookup
-    /// resolves every segment's HIT/MISS, MISSes are rendered into the archive
-    /// first, then same-codec passthrough concat (no re-encode). Prints the
-    /// HIT/will-gen plan then per-segment progress (T11).
+    /// resolves every segment's HIT/MISS (D4 quality-rank rule — a stored row
+    /// HITs only if it meets/exceeds `--quality`), MISSes are rendered into the
+    /// archive first, then same-codec passthrough concat (no re-encode). Prints
+    /// the HIT/will-gen plan then per-segment progress (T11).
+    /// `--loop-reps` (default 2, matching the GUI): each loop slot references
+    /// its ONE canonical archive artifact that many times in the concat list —
+    /// a stitch-time timeline parameter, NOT a frame repeat (the removed v0.5.7
+    /// feature); edges play once.
     private nonisolated static func stitch(_ args: [String]) async -> Int32 {
         var shardName: String? = nil
         var sequence: String? = nil
@@ -193,6 +198,7 @@ extension EmberweftCLI {
         var quality = "genome"
         var codec = "hevc"
         var temporalSamples = 1
+        var loopReps = 2
         var backend = "cpu"
         var flockRoot = defaultFlockRoot().path
         var i = 0
@@ -206,6 +212,11 @@ extension EmberweftCLI {
             case "--sequence":  guard let v = value() else { return missing("--sequence") }; sequence = v; i += 2
             case "--out":       guard let v = value() else { return missing("--out") }; outPath = v; i += 2
             case "--quality":   guard let v = value() else { return missing("--quality") }; quality = v; i += 2
+            case "--loop-reps":
+                guard let v = value() else { return missing("--loop-reps") }
+                guard let n = Int(v), n >= 1, n <= 5
+                else { err("error: --loop-reps must be an integer 1…5\n"); return 2 }
+                loopReps = n; i += 2
             case "--codec":
                 guard let v = value() else { return missing("--codec") }
                 guard Self.normalizeCodec(v) != nil else { err("error: --codec must be h264|hevc|prores-422-hq\n"); return 2 }
@@ -255,7 +266,8 @@ extension EmberweftCLI {
         let outURL = URL(fileURLWithPath: outPath ?? defaultStitchOut(flockRoot: flockRoot, shard: shardName))
         try? FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let request = StitchRequest(shard: shard, orderedFlames: ordered,
-                                    settings: settings, flockRoot: flockURL, out: outURL)
+                                    settings: settings, flockRoot: flockURL, out: outURL,
+                                    loopRepetitions: loopReps)
         let coord = ExportCoordinator(backend: coordBackend)
         let stitcher = StitchCoordinator(catalog: cat, renderer: ArchiveRenderer(),
                                          backend: coordBackend, useOffMainMetal: false)
@@ -265,14 +277,15 @@ extension EmberweftCLI {
         sig.setEventHandler { Task { await stitcher.cancel() } }
         sig.resume()
 
-        out("flock stitch: shard=\(shardName) segments=\(max(0, 2*ordered.count-1)) out=\(outURL.path)\n")
+        // Timeline slots: N·r loop slots (reps-aware) + N−1 edges (never repeated).
+        out("flock stitch: shard=\(shardName) segments=\(ordered.count * loopReps + max(0, ordered.count-1)) loop-reps=\(loopReps) out=\(outURL.path)\n")
         do {
             let stream = await stitcher.stitch(request, coordinator: coord)
             for try await p in stream {
                 switch p {
                 case .resolving: out("flock stitch: resolving…\n")
-                case .plan(let hit, let miss):
-                    out("flock stitch: HIT=\(hit) will-gen=\(miss)\n")
+                case .plan(let hit, let miss, let segments):
+                    out("flock stitch: HIT=\(hit) will-gen=\(miss) segments=\(segments)\n")
                 case .running(let hit, let generated):
                     out("flock stitch: hit=\(hit) generated=\(generated)\n")
                 case .rendering(let segment, let total, let isLoop, let frame, let frameTotal):
