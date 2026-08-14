@@ -85,7 +85,7 @@ struct ExportSheet: View {
 
                     Picker("Quality", selection: $em.qualityChoice) {
                         ForEach(ExportQualityChoice.allCases, id: \.self) {
-                            Text($0.sheetLabel).tag($0)
+                            Text($0.displayName).tag($0)
                         }
                     }
                     .help(qualityHelp)
@@ -181,6 +181,11 @@ struct ExportSheet: View {
         .frame(width: 500)
         .onAppear {
             syncResolutionFromManager()
+            // Seed the quality picker from the Settings default (each sheet opens
+            // at the configured tier; an in-run change does not persist back).
+            // Setting the var fires the picker's `.onChange`, which also applies
+            // the tier's recommended temporal samples — the intended default.
+            model.exportManager.qualityChoice = model.prefs.exportQualityChoice
         }
     }
 
@@ -378,16 +383,8 @@ private enum SheetResolutionTier: String, CaseIterable, Identifiable {
 
 // MARK: - Picker label helpers
 
-private extension ExportQualityChoice {
-    var sheetLabel: String {
-        switch self {
-        case .genomeDefault: "Genome default"
-        case .low:           "Low"
-        case .medium:        "Medium"
-        case .high:          "High"
-        }
-    }
-}
+// ExportQualityChoice's label is the shared public `displayName` (EmberweftUI),
+// so the sheet's picker and Settings' default picker always agree.
 
 private extension BackendChoice {
     var sheetLabel: String {

@@ -2,25 +2,32 @@ import Foundation
 import FlameExport
 import FlameKit
 
-/// User-facing export-quality choice for the GUI sheet (spec §4.5 / G4 / G5).
-///
-/// Bridges the dormant `AppPreferences.QualityPreset` to `ExportQuality`,
-/// pinning `oversample == 1` for EVERY case (engine spec D6 — export byte-identity
-/// with `animate` requires oversample 1, even for `.high` whose preview-side
-/// `QualityPreset` uses oversample 2).
+/// User-facing export-quality choice for the GUI sheet (spec §4.5 / G4 / G5)
+/// and the Settings default that seeds it (`AppPreferences.exportQuality`).
+/// Pins `oversample == 1` for EVERY case (engine spec D6 — export byte-identity
+/// with `animate` requires oversample 1, even for `.high`).
 ///
 /// - `.genomeDefault` maps to `.genome` (byte-identical to `emberweft animate`).
 /// - `.low/.medium/.high` map to `.spp(8/30/100)` (RETUNED 2026-08-11; was
-///   2/8/30). These are now EXPORT-SPECIFIC tiers, decoupled from the preview-
-///   side `AppPreferences.QualityPreset.samplesPerPixel` (still 2/8/30): the
-///   empirical grain+perf sweep found clean output needs effective spp ~330+
-///   (Standard), which temporal smoothing supplies as free supersampling
-///   (`smoothingLabel`).
+///   2/8/30). These are EXPORT-SPECIFIC tiers: the empirical grain+perf sweep
+///   found clean output needs effective spp ~330+ (Standard), which temporal
+///   smoothing supplies as free supersampling (`smoothingLabel`).
 public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
     case genomeDefault
     case low
     case medium
     case high
+
+    /// Human label shared by the export sheet's picker and Settings' default
+    /// picker (one source so the two never disagree).
+    public var displayName: String {
+        switch self {
+        case .genomeDefault: "Genome default"
+        case .low:           "Low"
+        case .medium:        "Medium"
+        case .high:          "High"
+        }
+    }
 
     /// The `ExportQuality` consumed by `ExportSettings.resolve(…)`.
     public var exportQuality: ExportQuality {
@@ -61,18 +68,6 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
         case .spp(let n):
             let eff = n * (2 * TemporalSmoothing.centeredHalfWidth + 1)
             return "smoothed, ≈\(eff) spp"
-        }
-    }
-
-    /// Seed the default sheet choice from the dormant prefs field (the sheet's
-    /// Quality picker defaults from `prefs.qualityPreset`). There is no
-    /// `.genomeDefault` preset, so callers wanting genome-default must set it
-    /// explicitly (the sheet offers it as the first, recommended option).
-    public static func defaultChoice(from preset: AppPreferences.QualityPreset) -> ExportQualityChoice {
-        switch preset {
-        case .low:    return .low
-        case .medium: return .medium
-        case .high:   return .high
         }
     }
 }

@@ -60,18 +60,15 @@ final class ExportQualityChoiceTests: XCTestCase {
         XCTAssertEqual(resolved.oversample, 1)
     }
 
-    // MARK: - defaultChoice(from:) (spec §9.4 testExportQualityChoiceDefaultFromPreset)
+    // MARK: - displayName (the shared sheet/Settings label)
 
-    func testDefaultChoiceFromLowPreset() {
-        XCTAssertEqual(ExportQualityChoice.defaultChoice(from: .low), .low)
-    }
-
-    func testDefaultChoiceFromMediumPreset() {
-        XCTAssertEqual(ExportQualityChoice.defaultChoice(from: .medium), .medium)
-    }
-
-    func testDefaultChoiceFromHighPreset() {
-        XCTAssertEqual(ExportQualityChoice.defaultChoice(from: .high), .high)
+    func testDisplayNameMatchesSheetLabels() {
+        // One label source for the export sheet's picker and Settings' default
+        // picker, so the two surfaces can never disagree.
+        XCTAssertEqual(ExportQualityChoice.genomeDefault.displayName, "Genome default")
+        XCTAssertEqual(ExportQualityChoice.low.displayName, "Low")
+        XCTAssertEqual(ExportQualityChoice.medium.displayName, "Medium")
+        XCTAssertEqual(ExportQualityChoice.high.displayName, "High")
     }
 
     func testAllCasesAreTheFourDocumentedChoices() {

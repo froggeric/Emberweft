@@ -13,12 +13,13 @@ final class AppPreferencesTests: XCTestCase {
 
     func testDefaultsRoundTrip() throws {
         let dir = try tempDir()
-        let prefs = AppPreferences(qualityPreset: .high, targetFPS: 30, backend: .cpu)
+        let prefs = AppPreferences(exportQuality: ExportQualityChoice.high.rawValue,
+                                   targetFPS: 30, backend: .cpu)
         try prefs.save(directory: dir)
 
         let loaded = AppPreferences.load(directory: dir)
         XCTAssertEqual(loaded, prefs)
-        XCTAssertEqual(loaded.qualityPreset, .high)
+        XCTAssertEqual(loaded.exportQualityChoice, .high)
         XCTAssertEqual(loaded.targetFPS, 30)
         XCTAssertEqual(loaded.backend, .cpu)
     }
@@ -46,14 +47,37 @@ final class AppPreferencesTests: XCTestCase {
         }
     }
 
-    func testRenderParamsMapping() {
-        let prefs = AppPreferences(qualityPreset: .high)
-        let rp = prefs.renderParams(width: 1920, height: 1080)
-        XCTAssertEqual(rp.width, 1920)
-        XCTAssertEqual(rp.height, 1080)
-        XCTAssertEqual(rp.samplesPerPixel, AppPreferences.QualityPreset.high.samplesPerPixel)
-        XCTAssertEqual(rp.oversample, AppPreferences.QualityPreset.high.oversample)
-        XCTAssertEqual(rp.seed, prefs.seed)
+    /// v0.6.x: `exportQuality` (String raw of `ExportQualityChoice`) is the
+    /// Settings default that seeds the export sheet. Defaults to genome-default
+    /// (mastering) — the pre-existing sheet default — and decodes additively
+    /// (an older prefs file without the key loads at the default; the legacy
+    /// `qualityPreset` key it carries is ignored). An unknown stored value
+    /// resolves back to genome-default via `exportQualityChoice`.
+    func testExportQualityDefaultRoundTripAndLegacyDecode() throws {
+        XCTAssertEqual(AppPreferences().exportQualityChoice, .genomeDefault,
+                       "out-of-box default is the genome-default mastering tier")
+        var prefs = AppPreferences()
+        prefs.exportQuality = ExportQualityChoice.medium.rawValue
+        let dir = try tempDir()
+        try prefs.save(directory: dir)
+        XCTAssertEqual(AppPreferences.load(directory: dir).exportQualityChoice, .medium)
+
+        // Legacy file (pre-exportQuality, carries the removed qualityPreset key):
+        // decodes at the default, ignores the unknown key.
+        let legacy = dir.appendingPathComponent("preferences.json")
+        try """
+        {"backend":"metal","targetFPS":60,"defaultSamplesPerPixel":8,
+         "qualityPreset":"high","seed":1,"thumbnailBackend":"metal",
+         "thumbnailHeight":144,"thumbnailSPP":8,"thumbnailWidth":256,
+         "thumbnailRenderWidth":1280,"thumbnailRenderHeight":720,
+         "previewSamplesPerPixel":2,"previewWidth":854,"previewHeight":480,
+         "previewOversample":1,"previewPreset":"draft","density":"medium"}
+        """.write(to: legacy, atomically: true, encoding: .utf8)
+        XCTAssertEqual(AppPreferences.load(directory: dir).exportQualityChoice, .genomeDefault)
+
+        // Unknown stored value falls back, never crashes.
+        prefs.exportQuality = "bogus"
+        XCTAssertEqual(prefs.exportQualityChoice, .genomeDefault)
     }
 
     func testThumbnailParamsMapping() {
@@ -122,7 +146,6 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(loaded.density, .medium,
                        "legacy file without density must default to .medium (additive)")
         XCTAssertEqual(loaded.backend, .metal)
-        XCTAssertEqual(loaded.qualityPreset, .medium)
     }
 
     // MARK: - directorySources (multi-folder)

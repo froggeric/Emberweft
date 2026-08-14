@@ -8,10 +8,17 @@ import FlameKit
 /// cache. Decode failure is resilient (defaults + quarantine the bad file).
 public struct AppPreferences: Codable, Sendable, Equatable {
 
-    public var qualityPreset: QualityPreset
+    /// Default quality for the ONE-SHOT export sheet (Settings → Export). Stored
+    /// as the raw `ExportQualityChoice` string; the sheet seeds its picker from
+    /// this on open, and an in-sheet change affects that run only (Settings
+    /// stays the source of truth — no hidden remember-last-used). The Flock
+    /// archive tabs keep their own quality setting (archive policy ≠ delivery
+    /// policy). Additive: decodes as the default for older prefs files (the
+    /// legacy `qualityPreset` key they carry is simply ignored).
+    public var exportQuality: String
     public var targetFPS: Int
-    /// Used only when `qualityPreset` is a future `.custom` (currently unused;
-    /// kept so the settings UI can grow without a schema change).
+    /// Reserved for a future `.custom` export tier (currently unused; kept so
+    /// the settings UI can grow without a schema change).
     public var defaultSamplesPerPixel: Int
     public var backend: Backend
     /// Backend used for THUMBNAIL rendering. Defaults to `.metal`: the thumbnail
@@ -88,7 +95,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     public var flockDefaultShard: String?
 
     public init(
-        qualityPreset: QualityPreset = .medium,
+        exportQuality: String = ExportQualityChoice.genomeDefault.rawValue,
         targetFPS: Int = 60,
         defaultSamplesPerPixel: Int = 8,
         backend: Backend = .metal,
@@ -110,7 +117,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         flockDir: URL? = nil,
         flockDefaultShard: String? = nil
     ) {
-        self.qualityPreset = qualityPreset
+        self.exportQuality = exportQuality
         self.targetFPS = targetFPS
         self.defaultSamplesPerPixel = defaultSamplesPerPixel
         self.backend = backend
@@ -141,7 +148,7 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// — it lives in `LegacyKey` below and is decoded one-way for migration only
     /// (never re-encoded), so round-trips drop it cleanly.
     private enum CodingKeys: String, CodingKey {
-        case qualityPreset, targetFPS, defaultSamplesPerPixel, backend, thumbnailBackend
+        case exportQuality, targetFPS, defaultSamplesPerPixel, backend, thumbnailBackend
         case directorySources, thumbnailWidth, thumbnailHeight
         case thumbnailRenderWidth, thumbnailRenderHeight, thumbnailSPP
         case previewSamplesPerPixel, previewWidth, previewHeight
@@ -165,7 +172,8 @@ public struct AppPreferences: Codable, Sendable, Equatable {
     /// `directorySources` is deduped by standardized path (deterministic, rule #2).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.qualityPreset = try c.decode(AppPreferences.QualityPreset.self, forKey: .qualityPreset)
+        self.exportQuality = try c.decodeIfPresent(String.self, forKey: .exportQuality)
+            ?? ExportQualityChoice.genomeDefault.rawValue
         self.targetFPS = try c.decode(Int.self, forKey: .targetFPS)
         self.defaultSamplesPerPixel = try c.decode(Int.self, forKey: .defaultSamplesPerPixel)
         self.backend = try c.decode(AppPreferences.Backend.self, forKey: .backend)
@@ -227,17 +235,10 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         directorySources.removeAll { $0.standardizedFileURL.path == key }
     }
 
-    /// Build full-window `RenderParams` for a given view size, using the preset's
-    /// sample budget. `spatialFilterRadius` defaults to 0.5 (flam3 default); the
-    /// renderer threads `flame.quality.filterRadius` in regardless.
-    public func renderParams(width: Int, height: Int) -> RenderParams {
-        RenderParams(
-            seed: seed,
-            width: max(width, 1),
-            height: max(height, 1),
-            oversample: qualityPreset.oversample,
-            samplesPerPixel: qualityPreset.samplesPerPixel
-        )
+    /// The resolved sheet-default quality (raw string → enum; an unknown stored
+    /// value falls back to the genome-default mastering choice).
+    public var exportQualityChoice: ExportQualityChoice {
+        ExportQualityChoice(rawValue: exportQuality) ?? .genomeDefault
     }
 
     /// Thumbnail `RenderParams` at the high render resolution (the result is
@@ -344,24 +345,6 @@ public struct AppPreferences: Codable, Sendable, Equatable {
 
     public enum Backend: String, Codable, CaseIterable, Sendable {
         case cpu, metal
-    }
-
-    public enum QualityPreset: String, Codable, CaseIterable, Sendable {
-        case low, medium, high
-
-        public var samplesPerPixel: Int {
-            switch self {
-            case .low: return 2
-            case .medium: return 8
-            case .high: return 30
-            }
-        }
-        public var oversample: Int {
-            switch self {
-            case .low, .medium: return 1
-            case .high: return 2
-            }
-        }
     }
 
     /// Realtime-preview quality preset (M4 final). `.custom` defers to the
