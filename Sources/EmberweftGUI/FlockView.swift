@@ -234,11 +234,12 @@ private struct FlockSourceMenu: View {
 /// resolves) — genome-default was impractically slow (~1000 spp ⇒ hours per 1080p
 /// edge, which with the old per-unit-only progress read as "0 rendered for
 /// hours"). The Flock Generate quality picker lets the owner choose mastering
-/// (genome) vs fast (standard/low); Stitch stays genome-default (its current
-/// setting) by passing `.genomeDefault` here. spp is resolved per-unit against
-/// each unit's flame in `ArchiveRenderer` (so a tier like genome uses each
-/// genome's own spp), which is why `ExportSettings.resolve` (single-baseFlame)
-/// is NOT used here.
+/// (genome) vs fast (standard/low). v0.5.10: the STITCH tab got the same picker
+/// (default `.medium` too — its MISS re-renders pay the same genome-tier cost),
+/// replacing the old hardcoded `.genomeDefault`; both tabs share this ONE helper.
+/// spp is resolved per-unit against each unit's flame in `ArchiveRenderer` (so a
+/// tier like genome uses each genome's own spp), which is why
+/// `ExportSettings.resolve` (single-baseFlame) is NOT used here.
 private func archiveSettings(for shard: ShardSpec, quality: ExportQualityChoice) -> ExportSettings {
     var s = ExportSettings()
     s.codec = shard.codec
@@ -425,6 +426,18 @@ private struct StitchTab: View {
     @State private var shard = defaultShard
     @State private var sequence: [LoadedFlame] = []
     @State private var loadError: String?
+    /// v0.5.10: stitch-time render quality for MISS segments — the SAME picker
+    /// (and `.medium` default) as the Generate tab, replacing the old hardcoded
+    /// `.genomeDefault`. The plan's D4 rank comparison uses it: an existing
+    /// archive row only HITs if its quality meets/exceeds this choice, else the
+    /// segment is re-rendered (upgrade-overwrite).
+    @State private var qualityChoice: ExportQualityChoice = .medium
+    /// Loop repetitions (stitch-TIME, default 2): each loop SLOT references its
+    /// one canonical archive artifact this many times in the concat list. NOT a
+    /// frame repeat (the removed v0.5.7 feature) — full framerate, one archive
+    /// file, zero re-render; a loop's last frame equals its first, so back-to-
+    /// back plays are seamless. Edges are never repeated.
+    @State private var loopReps = 2
 
     private var catalog: FlockCatalog? { appModel.flockCatalog }
     private var flockRoot: URL { appModel.flockRoot }
@@ -442,6 +455,12 @@ private struct StitchTab: View {
                         .onChange(of: shard.transSeconds) { _, _ in recomputePace() }
                 }
             }
+            Section("Timeline") {
+                Stepper("Loop repetitions: \(loopReps)", value: $loopReps, in: 1...5)
+                    .disabled(running)
+                    .help(repsHelp)
+                Text(repsSummary).font(.caption).foregroundStyle(.secondary)
+            }
             Section("Sequence") {
                 HStack {
                     FlockSourceMenu(label: "Choose Sequence…", catalog: catalog) { loaded in
@@ -449,7 +468,7 @@ private struct StitchTab: View {
                         loadError = loaded.count < 2
                             ? "Pick at least 2 genomes for a transition." : nil
                     }
-                    Text("\(sequence.count) genome\(sequence.count == 1 ? "" : "s")  ·  \(segmentCount) segments")
+                    Text("\(sequence.count) genome\(sequence.count == 1 ? "" : "s")  ·  \(segmentCount) segments  ·  \(timelineDuration)")
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -460,6 +479,19 @@ private struct StitchTab: View {
                     .frame(minHeight: 100, maxHeight: 200)
                 }
                 if let loadError { Text(loadError).font(.caption).foregroundStyle(.red) }
+            }
+            Section("Quality") {
+                Picker("Quality", selection: $qualityChoice) {
+                    Text("Genome (mastering)").tag(ExportQualityChoice.genomeDefault)
+                    Text("Standard").tag(ExportQualityChoice.medium)
+                    Text("High").tag(ExportQualityChoice.high)
+                    Text("Low (draft)").tag(ExportQualityChoice.low)
+                }
+                .disabled(running)
+                .help(stitchQualityHelp)
+                if qualityChoice != .genomeDefault {
+                    Text(qualityChoice.smoothingLabel).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section {
                 stitchPlan
@@ -480,16 +512,48 @@ private struct StitchTab: View {
         .padding(.top, 6)
     }
 
-    /// Alternating loop/edge count: one loop per flame plus one edge per pair.
+    /// Timeline slot count (reps-aware): `N·r` loop slots (each flame's loop
+    /// referenced `loopReps` times) + `N−1` edge slots (never repeated).
     private var segmentCount: Int {
-        sequence.isEmpty ? 0 : (2 * sequence.count - 1)
+        sequence.isEmpty ? 0 : sequence.count * loopReps + (sequence.count - 1)
+    }
+
+    /// Assembled-timeline duration: `N·r·loopSec + (N−1)·edgeSec`, formatted by
+    /// the ONE shared duration formatter (rule: do not fork formatters).
+    private var timelineDuration: String {
+        guard !sequence.isEmpty else { return "0 s" }
+        let seconds = Double(sequence.count) * Double(loopReps) * shard.loopSeconds
+            + Double(sequence.count - 1) * shard.transSeconds
+        return ProgressFormatting.elapsedLabel(seconds)
+    }
+
+    private var repsHelp: String {
+        "Each loop plays this many times in the stitched timeline; the archived artifact stays one canonical cycle. "
+            + "Not a frame repeat: full framerate, one archive file per loop, edges play once."
+    }
+
+    /// One-line summary of what reps does to the timeline (shown under the
+    /// stepper): the loop/edge slot split + the total duration.
+    private var repsSummary: String {
+        let loops = sequence.count * loopReps
+        let edges = max(0, sequence.count - 1)
+        return "\(loops) loop plays + \(edges) transition\(edges == 1 ? "" : "s") · total \(timelineDuration)"
+    }
+
+    private var stitchQualityHelp: String {
+        "Quality for segments Stitch must (re)generate. Existing archive material is reused only if it meets or "
+            + "exceeds this quality (else it is re-rendered as an upgrade). Standard (spp 30 + smoothing) is the "
+            + "practical default; Genome is mastering (byte-identical to animate, very slow)."
     }
 
     @ViewBuilder
     private var stitchPlan: some View {
         switch flockModel.stitchState {
-        case .plan(let hit, let miss):
-            Text("Plan: \(hit) HIT, \(miss) will-gen.")
+        case .plan(let hit, let miss, let segments):
+            // hit/miss count UNIQUE archive work (a repeated loop that must be
+            // generated is ONE will-gen); `segments` is the timeline slot total
+            // (duplicates included — the progress denominator).
+            Text("Plan: \(hit) HIT, \(miss) will-gen · \(segments) segment\(segments == 1 ? "" : "s").")
                 .font(.caption).foregroundStyle(.secondary)
         case .resolving:
             HStack(spacing: 6) {
@@ -580,8 +644,9 @@ private struct StitchTab: View {
         let out = chooseSaveURL(defaultName: "flock-stitch.\(ext)", suggestedDir: flockRoot)
             ?? flockRoot.appendingPathComponent("flock-stitch.\(ext)")
         let request = StitchRequest(shard: shard, orderedFlames: ordered,
-                                    settings: archiveSettings(for: shard, quality: .genomeDefault),
-                                    flockRoot: flockRoot, out: out)
+                                    settings: archiveSettings(for: shard, quality: qualityChoice),
+                                    flockRoot: flockRoot, out: out,
+                                    loopRepetitions: loopReps)
         Task {
             if let catalog { try? await catalog.upsertShard(shard) }
             await flockModel.stitch(request)

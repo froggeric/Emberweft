@@ -160,7 +160,7 @@ final class FlockModelTests: XCTestCase {
             case .yieldUntilCancelled:
                 storedCont = cont
                 cont.yield(.resolving)
-                cont.yield(.plan(hitCount: 0, missCount: 0))
+                cont.yield(.plan(hitCount: 0, missCount: 0, segmentCount: 0))
                 cont.yield(.running(hit: 0, generated: 0))
                 if cancelled {
                     storedCont = nil
@@ -363,7 +363,7 @@ final class FlockModelTests: XCTestCase {
         let out = outURL()
         installStitchSpy(vm, script: .yieldProgress([
             .resolving,
-            .plan(hitCount: 2, missCount: 0),
+            .plan(hitCount: 2, missCount: 0, segmentCount: 2),
             .running(hit: 2, generated: 0),
             .completed(out: out),
         ]))
@@ -433,24 +433,27 @@ final class FlockModelTests: XCTestCase {
 
     func testStitchRunningCarriesPlanTotalAndColdStartETA() async {
         let vm = FlockModel()
-        // No terminal ⇒ the last applied state is observable (.running).
+        // No terminal ⇒ the last applied state is observable (.running). The
+        // plan deliberately has segmentCount (5) ≠ hit + miss (3) — the
+        // loop-repetition shape: 3 unique archive keys across 5 timeline slots.
         installStitchSpy(vm, script: .yieldProgress([
             .resolving,
-            .plan(hitCount: 2, missCount: 1),
+            .plan(hitCount: 2, missCount: 1, segmentCount: 5),
             .running(hit: 2, generated: 1),
         ]))
         await vm.stitch(stitchRequest())
         await vm.awaitStitchCompletion()
-        // The state-driven total is the plan tally (2 + 1), NOT the view's own
-        // sequence count. ETA nil: no completed-MISS sample yet (cold start).
-        XCTAssertEqual(vm.stitchState, .running(hit: 2, generated: 1, total: 3, etaSeconds: nil))
+        // The state-driven total is the plan's SEGMENT (slot) count, NOT
+        // hit + miss (unique work) and NOT the view's own sequence count. ETA
+        // nil: no completed-MISS sample yet (cold start).
+        XCTAssertEqual(vm.stitchState, .running(hit: 2, generated: 1, total: 5, etaSeconds: nil))
     }
 
     func testStitchRenderingMapsToStateWithColdStartETA() async {
         let vm = FlockModel()
         installStitchSpy(vm, script: .yieldProgress([
             .resolving,
-            .plan(hitCount: 0, missCount: 3),
+            .plan(hitCount: 0, missCount: 3, segmentCount: 3),
             .running(hit: 0, generated: 0),
             .rendering(segment: 1, total: 3, isLoop: true, frame: 0, frameTotal: 450),
             .rendering(segment: 1, total: 3, isLoop: true, frame: 180, frameTotal: 450),
@@ -466,7 +469,7 @@ final class FlockModelTests: XCTestCase {
         let vm = FlockModel()
         installStitchSpy(vm, script: .yieldProgress([
             .resolving,
-            .plan(hitCount: 0, missCount: 1),
+            .plan(hitCount: 0, missCount: 1, segmentCount: 1),
             .running(hit: 0, generated: 1),
             .concatenating(segments: 2),
         ]))
@@ -481,7 +484,7 @@ final class FlockModelTests: XCTestCase {
         let vm = FlockModel()
         let out = outURL()
         installStitchSpy(vm, script: .yieldProgress([
-            .resolving, .plan(hitCount: 0, missCount: 0), .completed(out: out),
+            .resolving, .plan(hitCount: 0, missCount: 0, segmentCount: 0), .completed(out: out),
         ]))
         await vm.stitch(stitchRequest())
         await vm.awaitStitchCompletion()
@@ -538,7 +541,7 @@ final class FlockModelTests: XCTestCase {
     func testFlockActivityFromStitchRendering() async {
         let vm = FlockModel()
         installStitchSpy(vm, script: .yieldProgress([
-            .plan(hitCount: 1, missCount: 2),
+            .plan(hitCount: 1, missCount: 2, segmentCount: 3),
             .rendering(segment: 2, total: 3, isLoop: true, frame: 3, frameTotal: 6),
         ]))
         await vm.stitch(stitchRequest())
@@ -560,7 +563,7 @@ final class FlockModelTests: XCTestCase {
         XCTAssertEqual(vm.flockActivity?.kind, .generate)
 
         let vm2 = FlockModel()
-        installStitchSpy(vm2, script: .yieldProgress([.plan(hitCount: 2, missCount: 1)]))
+        installStitchSpy(vm2, script: .yieldProgress([.plan(hitCount: 2, missCount: 1, segmentCount: 3)]))
         await vm2.stitch(stitchRequest())
         await vm2.awaitStitchCompletion()
         XCTAssertEqual(vm2.flockActivity?.fraction, nil)
@@ -584,7 +587,7 @@ final class FlockModelTests: XCTestCase {
         XCTAssertEqual(vm.flockActivity?.kind, .generate)
 
         installStitchSpy(vm, script: .yieldProgress([
-            .plan(hitCount: 0, missCount: 2), .running(hit: 0, generated: 1),
+            .plan(hitCount: 0, missCount: 2, segmentCount: 2), .running(hit: 0, generated: 1),
         ]))
         await vm.stitch(stitchRequest())
         await vm.awaitStitchCompletion()

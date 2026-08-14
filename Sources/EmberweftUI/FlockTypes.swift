@@ -90,18 +90,20 @@ public struct GenerateETAEstimator: Equatable, Sendable {
 }
 
 /// Stitch state machine: `idle → resolving → plan → running → rendering → concatenating → completed | failed | cancelled`.
-/// `plan` carries the HIT/MISS tally from the single batched catalog lookup;
-/// `running` carries the per-segment `(hit, generated)` counters plus the
-/// plan-derived `total` segment count (state-driven — NOT the view's own
-/// sequence count, which can go stale mid-run) and a smoothed `etaSeconds`
-/// (nil ⇒ cold-start "estimating…"); `rendering` is the per-frame within-MISS
-/// progress (v0.5.9 — the blackout fix; `frame == 0` is the pre-render yield);
-/// `concatenating` is the remux/copy tail phase (indeterminate).
-/// `completed` carries the assembled output URL.
+/// `plan` carries the UNIQUE-key HIT/MISS tally from the single batched catalog
+/// lookup plus the TIMELINE slot total (`segments` — with loop repetitions a
+/// repeated loop is one HIT but `r` timeline slots, so hit + miss ≠ segments);
+/// `running` carries the per-slot `(hit, generated)` counters (their sum is
+/// slots assembled) plus the plan-derived `total` slot count (state-driven —
+/// NOT the view's own sequence count, which can go stale mid-run) and a
+/// smoothed `etaSeconds` (nil ⇒ cold-start "estimating…"); `rendering` is the
+/// per-frame within-MISS progress (v0.5.9 — the blackout fix; `frame == 0` is
+/// the pre-render yield); `concatenating` is the remux/copy tail phase
+/// (indeterminate). `completed` carries the assembled output URL.
 public enum StitchUIState: Sendable, Equatable {
     case idle
     case resolving
-    case plan(hit: Int, miss: Int)
+    case plan(hit: Int, miss: Int, segments: Int)
     case running(hit: Int, generated: Int, total: Int, etaSeconds: Double?)
     case rendering(segment: Int, total: Int, isLoop: Bool, frame: Int, frameTotal: Int, etaSeconds: Double?)
     case concatenating(segments: Int)
