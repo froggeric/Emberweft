@@ -183,7 +183,7 @@ final class FlockCommandTests: XCTestCase {
     /// `unit 1/N frame 1/<frameTotal>` per frame; the first such line's
     /// `<frameTotal>` is the edge's `transFrames` (2), NOT a loop's `loopFrames`
     /// (3). A loops-first regression would make this 3.
-    func testGenerateBothScopeProducesTwoLoopsOneEdge_EdgeFirst() async throws {
+    func testGenerateBothScopeProducesTwoLoopsOneEdge_TimelineOrder() async throws {
         let root = makeFlockRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let from = try makeFromDir(genomeCount: 2)
@@ -204,15 +204,16 @@ final class FlockCommandTests: XCTestCase {
                        ["248=00001=248=00001.mov", "248=00001=248=00002.mov", "248=00002=248=00002.mov"],
                        "--scope both must produce exactly 2 loops + 1 edge")
 
-        // Edges-first: the first per-frame line is the EDGE (frameTotal == transFrames == 2).
-        let firstFrameTotal = progress.split(separator: "\n").lazy.compactMap { line -> Int? in
+        // TIMELINE order (owner decision 2026-08-13): the units render as loop,
+        // edge, loop — matching the collection order — so the per-unit first-frame
+        // totals are [loopFrames=3, transFrames=2, loopFrames=3].
+        let frameTotals = progress.split(separator: "\n").lazy.compactMap { line -> Int? in
             let s = String(line)
             guard let range = s.range(of: " frame 1/") else { return nil }
             return Int(s[range.upperBound...].prefix { $0.isNumber })
-        }.first
-        XCTAssertNotNil(firstFrameTotal, "progress should emit per-frame lines: \(progress)")
-        XCTAssertEqual(firstFrameTotal, 2,
-                       "first rendered unit must be the edge (transFrames=2), not a loop (loopFrames=3): \(progress)")
+        }
+        XCTAssertEqual(Array(frameTotals), [3, 2, 3],
+                       "units must render in timeline order (loop, edge, loop): \(progress)")
     }
 
     // MARK: - stitch smoke (AC: HIT/will-gen plan + single-file copy)

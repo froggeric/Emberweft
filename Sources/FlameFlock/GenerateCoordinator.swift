@@ -81,21 +81,23 @@ public struct GenerateUnit: Sendable {            // loop OR edge; a==b ⇒ loop
     /// (§4.2); the unit SET is unchanged, only the render order.
     public static func enumerate(_ flames: [(gen: String, id: String, flame: Flame)]) -> [GenerateUnit] {
         guard !flames.isEmpty else { return [] }
-        var edges: [GenerateUnit] = []
-        var loops: [GenerateUnit] = []
-        loops.reserveCapacity(flames.count)
-        if flames.count > 1 { edges.reserveCapacity(flames.count - 1) }
+        var units: [GenerateUnit] = []
+        units.reserveCapacity(2 * flames.count - 1)
+        // TIMELINE order (owner decision 2026-08-13): loop(A), edge(A→B), loop(B),
+        // edge(B→C), …, loop(N) — matching the collection/selection order, so the
+        // archive builds in the same order Stitch consumes it (a partial generate
+        // covers the earliest timeline first) and progress reads as "building the
+        // sequence from the start". The unit SET is unchanged (N loops + N−1 edges).
         for i in 0..<flames.count {
             let a = flames[i]
-            loops.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: a.gen, bId: a.id, A: a.flame))
+            units.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: a.gen, bId: a.id, A: a.flame))
             if i + 1 < flames.count {
                 let b = flames[i + 1]
-                edges.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: b.gen, bId: b.id,
+                units.append(GenerateUnit(aGen: a.gen, aId: a.id, bGen: b.gen, bId: b.id,
                                           A: a.flame, B: b.flame))
             }
         }
-        // Edges first (D10 priority); loops last (opt-in extras).
-        return edges + loops
+        return units
     }
 }
 

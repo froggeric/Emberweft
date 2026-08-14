@@ -166,30 +166,28 @@ final class GenerateCoordinatorTests: XCTestCase {
 
     // MARK: - AC (g): enumeration order — edges first (D10)
 
-    /// `GenerateUnit.enumerate` emits EDGES first, then loops, so a `.both` run
-    /// renders the stitch-critical edges before the opt-in loops (D10). For 3
-    /// genomes: 2 edges (adjacent pairs) + 3 loops (self-edges), in that order.
-    /// A loops-first order would fill the output with `N × loopFrames` of loops
-    /// before the first edge (the "only loops, no edges" owner symptom).
-    func testEnumerateEmitsEdgesBeforeLoops() throws {
+    /// `GenerateUnit.enumerate` emits units in TIMELINE order matching the
+    /// collection/selection order (owner decision 2026-08-13): loop(A), edge(A→B),
+    /// loop(B), edge(B→C), loop(C). For 3 genomes: 3 loops + 2 edges interleaved.
+    /// The archive thus builds in the order Stitch consumes it (a partial generate
+    /// covers the earliest timeline first).
+    func testEnumerateInterleavesTimelineOrder() throws {
         let A = try parseSierpinski()
         let flames: [(gen: String, id: String, flame: Flame)] = [
             ("248", "00001", A), ("248", "00002", A), ("248", "00003", A),
         ]
         let units = GenerateUnit.enumerate(flames)
-        // 2 edges + 3 loops = 5 units.
+        // 3 loops + 2 edges = 5 units, interleaved.
         XCTAssertEqual(units.count, 5)
-        // Edges FIRST: 00001→00002, then 00002→00003.
-        XCTAssertFalse(units[0].isLoop, "unit 0 must be an edge")
-        XCTAssertEqual(units[0].aId, "00001"); XCTAssertEqual(units[0].bId, "00002")
-        XCTAssertFalse(units[1].isLoop, "unit 1 must be an edge")
-        XCTAssertEqual(units[1].aId, "00002"); XCTAssertEqual(units[1].bId, "00003")
-        // THEN loops: 00001, 00002, 00003 (self-edges).
-        XCTAssertTrue(units[2].isLoop, "unit 2 must be a loop")
-        XCTAssertEqual(units[2].aId, "00001"); XCTAssertEqual(units[2].bId, "00001")
-        XCTAssertTrue(units[3].isLoop, "unit 3 must be a loop")
-        XCTAssertEqual(units[3].aId, "00002")
-        XCTAssertTrue(units[4].isLoop, "unit 4 must be a loop")
+        XCTAssertTrue(units[0].isLoop, "unit 0 must be loop(00001)")
+        XCTAssertEqual(units[0].aId, "00001"); XCTAssertEqual(units[0].bId, "00001")
+        XCTAssertFalse(units[1].isLoop, "unit 1 must be edge(00001→00002)")
+        XCTAssertEqual(units[1].aId, "00001"); XCTAssertEqual(units[1].bId, "00002")
+        XCTAssertTrue(units[2].isLoop, "unit 2 must be loop(00002)")
+        XCTAssertEqual(units[2].aId, "00002"); XCTAssertEqual(units[2].bId, "00002")
+        XCTAssertFalse(units[3].isLoop, "unit 3 must be edge(00002→00003)")
+        XCTAssertEqual(units[3].aId, "00002"); XCTAssertEqual(units[3].bId, "00003")
+        XCTAssertTrue(units[4].isLoop, "unit 4 must be loop(00003)")
         XCTAssertEqual(units[4].aId, "00003")
     }
 
