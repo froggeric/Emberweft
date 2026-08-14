@@ -6,11 +6,10 @@ import FlameFlock
 /// The macOS Settings (⌘,) window. Two distinct quality settings, by purpose:
 ///   - **Preview quality** (`previewPreset`) — the *realtime* preview in the
 ///     playback window (`previewParams`): small, fast, tuned for fluid FPS.
-///   - **Export quality** (`qualityPreset`) — the staged default for full-quality
-///     rendering. Exports shipped in v0.5.0, but the export SHEET has its own
-///     Quality picker (the governing control per run); this preset is read only
-///     through `ExportQualityChoice.defaultChoice(from:)`, which production does
-///     not yet call — so it is still dormant (kept staged, not removed).
+///   - **Export quality** (`exportQuality`) — the DEFAULT for the one-shot
+///     export sheet: the sheet seeds its Quality picker from this on open, and
+///     an in-sheet change affects that run only (Settings is the source of
+///     truth). The Flock archive tabs keep their own quality setting.
 /// These are intentionally separate so a fast, low-cost preview never forces a
 /// slow export, and vice versa. The playback window's quality popover edits the
 /// same `previewPreset` (and exposes per-parameter Custom tuning).
@@ -52,11 +51,13 @@ struct SettingsView: View {
                 .help("The framerate the realtime preview paces to and the FPS readout is measured against.")
             }
 
-            Section("Export (maximum quality)") {
-                Picker("Export quality", selection: $model.prefs.qualityPreset) {
-                    ForEach(AppPreferences.QualityPreset.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+            Section("Export") {
+                Picker("Export quality", selection: exportQualityBinding) {
+                    ForEach(ExportQualityChoice.allCases, id: \.self) {
+                        Text($0.displayName).tag($0)
+                    }
                 }
-                .help("The staged default for full-quality rendering. Each export's quality is chosen in the export sheet (that picker governs the run); this preset does NOT affect the realtime preview, which has its own Preview quality setting above.")
+                .help("The default quality for the one-shot export sheet — each sheet opens at this tier and an in-sheet change affects that run only. Does NOT affect the realtime preview (its own Preview quality above) or the Flock archive (its own quality setting).")
             }
 
             Section("Thumbnails") {
@@ -223,5 +224,14 @@ struct SettingsView: View {
     /// the same convention Browse's per-artifact readout uses).
     private static func bytesLabel(_ n: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
+    }
+
+    /// Bridge the export-quality Picker to the prefs-backed raw string (an
+    /// unknown stored value resolves to the genome-default choice on read).
+    private var exportQualityBinding: Binding<ExportQualityChoice> {
+        Binding(
+            get: { model.prefs.exportQualityChoice },
+            set: { model.prefs.exportQuality = $0.rawValue }   // persisted by the Form's `.onChange(of: model.prefs)` save
+        )
     }
 }
