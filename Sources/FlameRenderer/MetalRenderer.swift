@@ -32,9 +32,11 @@ public enum MetalRenderer {
         if let d = _device, let l = _library { return (d, l) }
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         // The .metal sources are bundled as SwiftPM resources (.copy("Metal")).
-        guard let url = Bundle.module.url(
+        // ModuleResources resolves Contents/Resources for the bundled .app (see its doc
+        // comment); everywhere else it is the same bundle Bundle.module finds.
+        guard let url = ModuleResources.bundle.url(
             forResource: "Kernels", withExtension: "metal", subdirectory: "Metal"
-        ) ?? Bundle.module.url(forResource: "Kernels", withExtension: "metal"),
+        ) ?? ModuleResources.bundle.url(forResource: "Kernels", withExtension: "metal"),
             let source = try? String(contentsOf: url, encoding: .utf8),
             let library = try? device.makeLibrary(source: source, options: nil)
         else { return nil }

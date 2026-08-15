@@ -95,7 +95,8 @@ swift run emberweft --list-backends
 ### The app (M4)
 
 ```
-swift run emberweft-gui      # launch the SwiftUI app
+swift run emberweft-gui      # launch the SwiftUI app (from source)
+make dist                    # build ./dist: Emberweft.app (double-click, or `open dist/Emberweft.app`) + the CLI
 ```
 
 The sidebar switches between **All** (unified), **Library** (curated 24-genome bundle), **★ Liked**, **Imported**, and each folder you open (**Open Directory…** → point at `genomes/electric-sheep/sheep/` for the full flock; open several at once). **Drag-and-drop** `.flam3` files in to import them. Click a thumbnail to open a non-modal realtime playback window (browse and rate while it plays); **filter** by name / sentiment / category / palette; **multi-select** (`⌘`/shift/`⌘A`) for bulk Like/Dislike or to **Save as Collection**; mark each genome with a tri-state **sentiment** (👍/○/👎). Collections play as a loop+transition sequence in their own window. Keyboard: Space, Esc, `+`/`0`/`−`, `⌘1–4`, `⌘?`. Thumbnails render off-main (Metal background queue) so the UI never freezes; settings persist across launches.
