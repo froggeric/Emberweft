@@ -768,3 +768,63 @@ final class FlockModelTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Integration: real-coordinator cancel lands a terminal state (repro for the stuck-.cancelling bug)
+
+extension FlockModelTests {
+    /// Repro (owner-reported): cancelling mid-render leaves the UI stuck in
+    /// `.cancelling` — the GPU unwinds but no terminal state lands. This drives
+    /// the REAL GenerateCoordinator + FlockCatalog + ArchiveRenderer (tiny CPU
+    /// render, sierpinski), cancels mid-render, and polls for a terminal state
+    /// with a timeout (never awaiting the possibly-hung task directly).
+    func testCancelDuringRealRenderLandsCancelled() async throws {
+        let flame = try Flam3Parser.parse(Data(contentsOf:
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Goldens/genomes/sierpinski.flam3")))[0]
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("flock-cancel-repro-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = ShardSpec(name: "48x32_30fps", width: 48, height: 32, fps: 30,
+                              loopSeconds: 2.0, transSeconds: 2.0,
+                              loopFrames: 60, transFrames: 60,
+                              isCanonical: false, codec: .h264)
+        try await catalog.upsertShard(shard)
+        var settings = ExportSettings()
+        settings.codec = .h264; settings.container = .mov
+        settings.resolution = .custom(width: 48, height: 32)
+        settings.fps = 30; settings.quality = .spp(4); settings.temporalSamples = 1
+
+        let vm = FlockModel()
+        vm.generateFactory = { _, _ in
+            GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                backend: .cpu, useOffMainMetal: false)
+        }
+        let unit = GenerateUnit(aGen: "248", aId: "00001", bGen: "248", bId: "00001", A: flame)
+        let request = GenerateRequest(shard: shard, units: [unit], scope: .loops,
+                                      settings: settings, flockRoot: root)
+
+        await vm.generate(request)
+        // Wait until mid-render (state .rendering), bounded.
+        var sawRendering = false
+        for _ in 0..<600 {   // 30 s max
+            if case .rendering = vm.generateState { sawRendering = true; break }
+            if case .failed = vm.generateState { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(sawRendering, "never reached .rendering; state=\(vm.generateState)")
+
+        vm.cancelGenerate()
+        // Poll for a TERMINAL state, bounded (10 s). Stuck-at-.cancelling repro.
+        for _ in 0..<200 {
+            switch vm.generateState {
+            case .cancelled, .failed, .completed: break
+            default: try await Task.sleep(nanoseconds: 50_000_000); continue
+            }
+            break
+        }
+        XCTAssertEqual(vm.generateState, .cancelled,
+                       "terminal state must land after cancel; got \(vm.generateState)")
+    }
+}
