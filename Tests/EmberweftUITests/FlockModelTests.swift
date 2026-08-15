@@ -394,11 +394,14 @@ final class FlockModelTests: XCTestCase {
         vm.cancelGenerate()
         XCTAssertEqual(vm.generateState, .cancelling)
         await vm.awaitGenerateCompletion()
-        XCTAssertEqual(vm.generateState, .cancelling,
-                       "stale .running/.rendering after Cancel must be ignored")
-        XCTAssertEqual(vm.flockActivity?.kind, .generate,
-                       "the sidebar indicator reflects the cancelling run")
-        XCTAssertNil(vm.flockActivity?.fraction, "cancelling is indeterminate (spinner)")
+        // The stale-progress guard still holds THROUGH the unwind, and once the
+        // stream ends (this spy yields no terminal — the cancelled-iteration
+        // race shape) the terminal LANDS as .cancelled (the stuck-Cancelling
+        // bug fix): the state must not sit at .cancelling forever.
+        XCTAssertEqual(vm.generateState, .cancelled,
+                       "stale .running/.rendering after Cancel is ignored, then the terminal lands")
+        XCTAssertNil(vm.flockActivity,
+                     "a terminal run has no sidebar activity (was the stuck-Cancelling symptom)")
     }
 
     /// Stitch twin: `.cancelling` synchronously on Cancel, terminal
@@ -422,9 +425,9 @@ final class FlockModelTests: XCTestCase {
         vm.cancelStitch()
         XCTAssertEqual(vm.stitchState, .cancelling)
         await vm.awaitStitchCompletion()
-        XCTAssertEqual(vm.stitchState, .cancelling)
-        XCTAssertEqual(vm.flockActivity?.kind, .stitch)
-        XCTAssertNil(vm.flockActivity?.fraction)
+        XCTAssertEqual(vm.stitchState, .cancelled,
+                       "stale progress ignored through the unwind, then the terminal lands")
+        XCTAssertNil(vm.flockActivity)
     }
 
     /// The `.concatenating` remux tail is NOT cancellable by design
