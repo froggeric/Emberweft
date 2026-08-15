@@ -74,6 +74,12 @@ final class FlockModelTests: XCTestCase {
             case throwImmediately(Error)
             /// Yield `.resolving` + `.running` then park until `cancel()` ends it.
             case yieldUntilCancelled
+            /// Park like `yieldUntilCancelled`, but `cancel()` emits STALE
+            /// progress (`.running` + `.rendering`) and finishes WITHOUT a
+            /// terminal event — pins FlockModel's guard that non-terminal
+            /// progress arriving after Cancel cannot move `.cancelling`
+            /// (v0.5.11).
+            case yieldUntilCancelledStaleProgressOnly
         }
 
         private let script: Script
@@ -99,7 +105,7 @@ final class FlockModelTests: XCTestCase {
                 cont.finish()
             case .throwImmediately(let err):
                 cont.finish(throwing: err)
-            case .yieldUntilCancelled:
+            case .yieldUntilCancelled, .yieldUntilCancelledStaleProgressOnly:
                 // Race-free: store first, then check the flag. If cancel() already
                 // ran we finish now; otherwise we park and cancel() finishes us.
                 storedCont = cont
@@ -107,10 +113,21 @@ final class FlockModelTests: XCTestCase {
                 cont.yield(.running(skip: 0, render: 0, total: 1))
                 if cancelled {
                     storedCont = nil
-                    cont.yield(.cancelled)
-                    cont.finish()
+                    finishScript(cont)
                 }
             }
+        }
+
+        /// How `cancel()` ends the parked stream (script-dependent).
+        private func finishScript(_ cont: AsyncThrowingStream<GenerateUIProgress, Error>.Continuation) {
+            if case .yieldUntilCancelledStaleProgressOnly = script {
+                // Stale progress only — NO terminal (the guard must hold).
+                cont.yield(.running(skip: 9, render: 9, total: 9))
+                cont.yield(.rendering(skip: 9, render: 9, total: 9, frame: 9, frameTotal: 9))
+            } else {
+                cont.yield(.cancelled)
+            }
+            cont.finish()
         }
 
         func cancel() async {
@@ -118,8 +135,7 @@ final class FlockModelTests: XCTestCase {
             cancelled = true
             let cont = storedCont
             storedCont = nil
-            cont?.yield(.cancelled)
-            cont?.finish()
+            if let cont { finishScript(cont) }
         }
     }
 
@@ -132,6 +148,9 @@ final class FlockModelTests: XCTestCase {
             case yieldProgress([StitchUIProgress])
             case throwImmediately(Error)
             case yieldUntilCancelled
+            /// Park; `cancel()` emits stale progress + finishes without a
+            /// terminal (twin of `GenerateSpy.yieldUntilCancelledStaleProgressOnly`).
+            case yieldUntilCancelledStaleProgressOnly
         }
 
         private let script: Script
@@ -157,17 +176,26 @@ final class FlockModelTests: XCTestCase {
                 cont.finish()
             case .throwImmediately(let err):
                 cont.finish(throwing: err)
-            case .yieldUntilCancelled:
+            case .yieldUntilCancelled, .yieldUntilCancelledStaleProgressOnly:
                 storedCont = cont
                 cont.yield(.resolving)
                 cont.yield(.plan(hitCount: 0, missCount: 0, segmentCount: 0))
                 cont.yield(.running(hit: 0, generated: 0))
                 if cancelled {
                     storedCont = nil
-                    cont.yield(.cancelled)
-                    cont.finish()
+                    finishScript(cont)
                 }
             }
+        }
+
+        private func finishScript(_ cont: AsyncThrowingStream<StitchUIProgress, Error>.Continuation) {
+            if case .yieldUntilCancelledStaleProgressOnly = script {
+                cont.yield(.running(hit: 9, generated: 9))
+                cont.yield(.rendering(segment: 9, total: 9, isLoop: true, frame: 9, frameTotal: 9))
+            } else {
+                cont.yield(.cancelled)
+            }
+            cont.finish()
         }
 
         func cancel() async {
@@ -175,8 +203,7 @@ final class FlockModelTests: XCTestCase {
             cancelled = true
             let cont = storedCont
             storedCont = nil
-            cont?.yield(.cancelled)
-            cont?.finish()
+            if let cont { finishScript(cont) }
         }
     }
 
@@ -332,6 +359,91 @@ final class FlockModelTests: XCTestCase {
         // No task / no coordinator — must not crash.
         vm.cancelGenerate()
         XCTAssertEqual(vm.generateState, .idle)
+    }
+
+    // MARK: - Cancel: immediate "Cancelling…" feedback (v0.5.11)
+
+    /// `.cancelling` is set SYNCHRONOUSLY by `cancelGenerate()` — visible the
+    /// moment Cancel is pressed, BEFORE any async unwinding — then replaced by
+    /// the terminal `.cancelled`. A double-press while cancelling is a no-op
+    /// (exactly one coordinator `cancel()`).
+    func testCancelGenerateShowsCancellingSynchronouslyThenCancelled() async {
+        let vm = FlockModel()
+        let spy = installGenerateSpy(vm, script: .yieldUntilCancelled)
+        await vm.generate(generateRequest())   // fire-and-forget
+        vm.cancelGenerate()
+        XCTAssertEqual(vm.generateState, .cancelling,
+                       "Cancel must show .cancelling synchronously, before the unwind")
+        vm.cancelGenerate()                    // double-press: no-op
+        XCTAssertEqual(vm.generateState, .cancelling)
+        await vm.awaitGenerateCompletion()
+        XCTAssertEqual(vm.generateState, .cancelled, "terminal .cancelled replaces .cancelling")
+        let cancels = await spy.cancelCount
+        XCTAssertEqual(cancels, 1, "double-press must not issue a second coordinator cancel")
+    }
+
+    /// Progress events arriving AFTER Cancel (the one-or-two in-flight frames
+    /// during the unwind) must NOT regress `.cancelling` back to
+    /// `.running`/`.rendering`. The spy's `cancel()` emits stale progress and
+    /// finishes WITHOUT a terminal ⇒ the final state is still `.cancelling`,
+    /// and the sidebar indicator reads it as an indeterminate spinner.
+    func testStaleProgressAfterCancelDoesNotRegressCancellingState() async {
+        let vm = FlockModel()
+        installGenerateSpy(vm, script: .yieldUntilCancelledStaleProgressOnly)
+        await vm.generate(generateRequest())
+        vm.cancelGenerate()
+        XCTAssertEqual(vm.generateState, .cancelling)
+        await vm.awaitGenerateCompletion()
+        XCTAssertEqual(vm.generateState, .cancelling,
+                       "stale .running/.rendering after Cancel must be ignored")
+        XCTAssertEqual(vm.flockActivity?.kind, .generate,
+                       "the sidebar indicator reflects the cancelling run")
+        XCTAssertNil(vm.flockActivity?.fraction, "cancelling is indeterminate (spinner)")
+    }
+
+    /// Stitch twin: `.cancelling` synchronously on Cancel, terminal
+    /// `.cancelled` after the unwind; stale progress ignored.
+    func testCancelStitchShowsCancellingSynchronouslyThenCancelled() async {
+        let vm = FlockModel()
+        let spy = installStitchSpy(vm, script: .yieldUntilCancelled)
+        await vm.stitch(stitchRequest())
+        vm.cancelStitch()
+        XCTAssertEqual(vm.stitchState, .cancelling)
+        await vm.awaitStitchCompletion()
+        XCTAssertEqual(vm.stitchState, .cancelled)
+        let cancels = await spy.cancelCount
+        XCTAssertEqual(cancels, 1)
+    }
+
+    func testStaleStitchProgressAfterCancelIsIgnored() async {
+        let vm = FlockModel()
+        installStitchSpy(vm, script: .yieldUntilCancelledStaleProgressOnly)
+        await vm.stitch(stitchRequest())
+        vm.cancelStitch()
+        XCTAssertEqual(vm.stitchState, .cancelling)
+        await vm.awaitStitchCompletion()
+        XCTAssertEqual(vm.stitchState, .cancelling)
+        XCTAssertEqual(vm.flockActivity?.kind, .stitch)
+        XCTAssertNil(vm.flockActivity?.fraction)
+    }
+
+    /// The `.concatenating` remux tail is NOT cancellable by design
+    /// (seconds-bounded; the stitch completes) — Cancel during that phase is a
+    /// strict state no-op (must not enter `.cancelling`, whose terminal would
+    /// never arrive).
+    func testCancelStitchDuringConcatenatingIsNoOpByDesign() async {
+        let vm = FlockModel()
+        installStitchSpy(vm, script: .yieldProgress([
+            .resolving,
+            .plan(hitCount: 0, missCount: 0, segmentCount: 1),
+            .running(hit: 0, generated: 1),
+            .concatenating(segments: 2),
+        ]))
+        await vm.stitch(stitchRequest())
+        await vm.awaitStitchCompletion()
+        vm.cancelStitch()
+        XCTAssertEqual(vm.stitchState, .concatenating(segments: 2),
+                       "cancel during the non-cancellable concat phase must be a state no-op")
     }
 
     func testSubsequentGenerateAfterCancelStartsCleanly() async {

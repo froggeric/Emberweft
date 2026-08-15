@@ -400,7 +400,10 @@ private struct GenerateTab: View {
                 // inverted, so it was never visible-enabled mid-run).
                 if running {
                     Button("Cancel") { flockModel.cancelGenerate() }
-                        .help("Stop after the current unit. Completed units stay in the archive (resumable).")
+                        .disabled(cancelling)
+                        .help(cancelling
+                              ? "Stopping the in-flight render…"
+                              : "Stop the in-flight render (takes effect within a frame or two). Completed units stay in the archive (resumable).")
                 }
                 generateProgress
             }
@@ -444,6 +447,13 @@ private struct GenerateTab: View {
             let elapsed = flockModel.generateElapsedSeconds.map { " · \(ProgressFormatting.elapsedLabel($0))" } ?? ""
             Text("Done — \(rendered) rendered, \(skipped) skipped\(elapsed).")
                 .font(.caption).foregroundStyle(.green)
+        case .cancelling:
+            // Set synchronously at Cancel press (v0.5.11) — immediate feedback
+            // while the in-flight frame unwinds (≤ a frame or two).
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Cancelling…").font(.caption).foregroundStyle(.secondary)
+            }
         case .failed(let msg):
             Text("Failed: \(msg)").font(.caption).foregroundStyle(.red)
         case .cancelled:
@@ -496,6 +506,13 @@ private struct GenerateTab: View {
         if case .running = flockModel.generateState { return true }
         if case .rendering = flockModel.generateState { return true }
         if case .resolving = flockModel.generateState { return true }
+        // The unwind is sub-two-frame, but keep the run marked in-flight until
+        // the terminal state lands (Generate disabled, Cancel shown but dimmed).
+        if case .cancelling = flockModel.generateState { return true }
+        return false
+    }
+    private var cancelling: Bool {
+        if case .cancelling = flockModel.generateState { return true }
         return false
     }
     private var canRun: Bool { !running }
@@ -607,9 +624,17 @@ private struct StitchTab: View {
                         .disabled(sequence.count < 1 || !canRun)
                     // Visible ONLY while running (v0.5.9 fix: the old `if canRun`
                     // guard inverted the visibility — Cancel never showed mid-run).
+                    // Disabled while `.cancelling` (a second press is a no-op) and
+                    // during `.concatenating` (the seconds-bounded remux tail is
+                    // not cancellable by design — it completes the stitch).
                     if running {
                         Button("Cancel") { flockModel.cancelStitch() }
-                            .help("Stop after the current segment. Rendered segments stay in the archive.")
+                            .disabled(cancelling || concatenating)
+                            .help(cancelling
+                                  ? "Stopping the in-flight render…"
+                                  : (concatenating
+                                     ? "Finishing the final remux (a few seconds)…"
+                                     : "Stop the in-flight render (takes effect within a frame or two). Rendered segments stay in the archive."))
                     }
                 }
             }
@@ -699,6 +724,13 @@ private struct StitchTab: View {
                 Text(segments > 1 ? "Stitching \(segments) segments…" : "Writing output…")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        case .cancelling:
+            // Set synchronously at Cancel press (v0.5.11) — immediate feedback
+            // while the in-flight MISS frame unwinds (≤ a frame or two).
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Cancelling…").font(.caption).foregroundStyle(.secondary)
+            }
         case .completed(let out):
             VStack(alignment: .leading, spacing: 4) {
                 let elapsed = flockModel.stitchElapsedSeconds.map { " · \(ProgressFormatting.elapsedLabel($0))" } ?? ""
@@ -730,6 +762,16 @@ private struct StitchTab: View {
         if case .concatenating = flockModel.stitchState { return true }
         if case .resolving = flockModel.stitchState { return true }
         if case .plan = flockModel.stitchState { return true }
+        // Keep the run marked in-flight until the terminal state lands.
+        if case .cancelling = flockModel.stitchState { return true }
+        return false
+    }
+    private var cancelling: Bool {
+        if case .cancelling = flockModel.stitchState { return true }
+        return false
+    }
+    private var concatenating: Bool {
+        if case .concatenating = flockModel.stitchState { return true }
         return false
     }
     private var canRun: Bool { !running }

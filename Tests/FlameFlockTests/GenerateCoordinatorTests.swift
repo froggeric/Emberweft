@@ -400,4 +400,126 @@ final class GenerateCoordinatorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: planURL.path),
                        "cancel with no completions must not write a plan file")
     }
+
+    // MARK: - AC (v0.5.11): mid-unit cancel propagates into the render loop
+
+    /// All `.partial` temps anywhere under `root` (the render path writes a
+    /// hidden `.<file>.partial` beside its target; a mid-unit cancel must leave
+    /// NONE).
+    private func partialFiles(under root: URL) -> [URL] {
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        else { return [] }
+        return (en.compactMap { $0 as? URL }).filter { $0.lastPathComponent.contains(".partial") }
+    }
+
+    /// Mid-unit cancel must stop the IN-FLIGHT unit within a frame or two —
+    /// `cancel()` propagates into the shared `ExportCoordinator`, whose
+    /// per-frame guard throws `ExportError.cancelled`, which `generateBody`
+    /// maps to `.cancelled` (NOT `.failed`). The aborted unit leaves no file,
+    /// no row, and no `.partial`; the plan file retains EXACTLY the completed
+    /// units; a fresh run resumes and completes cleanly.
+    ///
+    /// Long shard (150-frame loops / 130-frame edges at 48×32 spp 4 CPU) so the
+    /// cancel — a couple of actor hops — lands far before the unit finishes.
+    /// Unit order is the timeline order: loop(00628), edge(00628→03194),
+    /// loop(03194). Cancel fires on unit 2's FIRST frame event, after unit 1
+    /// completed.
+    func testMidUnitCancelStopsRenderPromptlyAndResumesCleanly() async throws {
+        let root = makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = ShardSpec(name: "48x32_30fps", width: 48, height: 32, fps: 30,
+                              loopSeconds: 5.0, transSeconds: 4.0,
+                              loopFrames: 150, transFrames: 120,
+                              isCanonical: false, codec: .h264)
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski()
+        let units = GenerateUnit.enumerate([("248", "00628", A), ("248", "03194", A)])
+        XCTAssertEqual(units.count, 3, "2 genomes ⇒ loop, edge, loop")
+        let req = GenerateRequest(shard: shard, units: units, scope: .both,
+                                  settings: settings, flockRoot: root)
+        let gen = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                      backend: .cpu, useOffMainMetal: false)
+        let exportCoord = ExportCoordinator(backend: .cpu)
+
+        var events: [GenerateUIProgress] = []
+        var cancelledOnce = false
+        let stream = await gen.generate(req, coordinator: exportCoord)
+        for try await e in stream {
+            events.append(e)
+            if case .rendering(let skip, let render, _, let frame, _) = e,
+               skip == 0, render == 1, frame == 1, !cancelledOnce {
+                cancelledOnce = true
+                await gen.cancel()   // propagates into exportCoord's per-frame guard
+            }
+        }
+
+        XCTAssertTrue(cancelledOnce, "the cancel hook must have fired (unit 2 frame 1)")
+        XCTAssertEqual(events.last, .cancelled, "mid-unit cancel must terminate with .cancelled")
+        XCTAssertFalse(events.contains {
+            if case .failed = $0 { return true } else { return false }
+        }, "cancel must not surface as .failed")
+        // Promptness: unit 2 (the edge — 120 trans + 2×5 seam = 130 frames)
+        // rendered far fewer than its total before the throw landed.
+        let unit2Frames = events.filter {
+            if case .rendering(_, let render, _, let frame, _) = $0 {
+                return render == 1 && frame >= 1
+            }
+            return false
+        }.count
+        XCTAssertGreaterThanOrEqual(unit2Frames, 1, "at least the trigger frame must have rendered")
+        XCTAssertLessThan(unit2Frames, 130,
+                          "cancel must stop the in-flight unit well before it completes")
+
+        // The ABORTED unit (edge 00628→03194): no file, no row.
+        let edgeFile = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                      aGen: "248", aId: "00628", bGen: "248", bId: "03194", ext: "mov")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: edgeFile.path),
+                       "aborted unit must leave no archive file")
+        let edgeRow = try await catalog.lookup(aGen: "248", aId: "00628", bGen: "248",
+                                               bId: "03194", shard: shard.name)
+        XCTAssertNil(edgeRow, "aborted unit must not be cataloged (atomic rename-then-upsert)")
+        // The COMPLETED unit (loop 00628) is intact.
+        let loopFile = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                      aGen: "248", aId: "00628", bGen: "248", bId: "00628", ext: "mov")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: loopFile.path))
+        let loopRow = try await catalog.lookup(aGen: "248", aId: "00628", bGen: "248",
+                                               bId: "00628", shard: shard.name)
+        XCTAssertNotNil(loopRow, "completed unit must be cataloged")
+        // The plan retains EXACTLY the completed unit (resume key).
+        let planURL = GenerateCoordinator.planFileURL(flockRoot: root)
+        let plan = try JSONDecoder().decode([GeneratePlanKey].self, from: Data(contentsOf: planURL))
+        XCTAssertEqual(plan, [GeneratePlanKey(aGen: "248", aId: "00628", bGen: "248",
+                                              bId: "00628", shard: shard.name)])
+        // No `.partial` remnant anywhere under the flock root.
+        let partials = partialFiles(under: root)
+        XCTAssertTrue(partials.isEmpty, "mid-unit cancel must leave no temp remnant: \(partials)")
+
+        // RESUME: a fresh coordinator + fresh export coordinator complete the
+        // two remaining units (edge + loop(03194)); the completed loop is
+        // resume-skipped from the plan; the plan file is consumed on success.
+        let gen2 = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                       backend: .cpu, useOffMainMetal: false)
+        let events2 = try await collect(gen2.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events2, rendered: 2, skipped: 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: planURL.path),
+                       "a completed resume run must consume the plan file")
+    }
+
+    /// Double-cancel (and cancel with no run in flight) must be a safe no-op:
+    /// the flag write is idempotent and the export-coordinator slot is nil.
+    func testDoubleCancelAndIdleCancelAreSafe() async throws {
+        let root = makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let gen = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                      backend: .cpu, useOffMainMetal: false)
+        await gen.cancel()   // no run in flight: flag-only, nil coordinator slot
+        await gen.cancel()   // second press: same no-op, no crash
+        let shard = shardSpec(); try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let req = GenerateRequest(shard: shard, units: [try edgeUnit()],
+                                  scope: .edges, settings: settings, flockRoot: root)
+        let events = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        XCTAssertEqual(events.last, .cancelled, "flag from the idle cancels must still stop the later run")
+    }
 }

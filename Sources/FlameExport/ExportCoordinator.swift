@@ -787,13 +787,25 @@ public actor ExportCoordinator: ExportCoordinating {
         // counter mutation) is serialized on the actor — no cross-thread access.
         let counter = SegmentFrameCounter()
         let frameTotal = range.count
-        try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
-                               range: range, smoothingAlpha: smoothingAlpha,
-                               into: encoder, yield: { _ in
-            counter.n &+= 1
-            perFrame?(counter.n, frameTotal)
-        })
-        try await encoder.finish()
+        do {
+            try await renderFrames(plan: plan, params: params, budget: budget, useMetal: useMetal,
+                                   range: range, smoothingAlpha: smoothingAlpha,
+                                   into: encoder, yield: { _ in
+                counter.n &+= 1
+                perFrame?(counter.n, frameTotal)
+            })
+            try await encoder.finish()
+        } catch {
+            // Throw-path cleanup (the same contract `runJob`/`runLongFormJob`/
+            // `runResumableBody` already honor on their catch paths): tear down
+            // the started AVAssetWriter session (`cancelWriting` — never leave
+            // it dangling) and remove the partial temp so a cancelled/failed
+            // unit leaves NO `.partial` remnant beside `out`. Success-path
+            // bytes are untouched (this block only runs on throw).
+            encoder.cancel()
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
+        }
         // Rename partial -> out. For a FRESH artifact (no existing file) this is a
         // clean atomic move. For an UPGRADE-overwrite (existing file present) the
         // remove-then-move has a narrow window where `out` is absent; prefer

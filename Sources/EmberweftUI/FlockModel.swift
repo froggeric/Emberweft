@@ -70,6 +70,14 @@ public final class FlockModel {
 
     private var generateTask: Task<Void, Never>?
     private var stitchTask: Task<Void, Never>?
+    /// v0.5.11: cancel requested on the CURRENT run. While `true`,
+    /// `applyGenerate`/`applyStitch` ignore NON-TERMINAL progress events so the
+    /// synchronous `.cancelling` state cannot flicker back to `.rendering`
+    /// during the (now sub-two-frame) unwind; terminal events always apply.
+    /// Set by `cancelGenerate()`/`cancelStitch()`, cleared at the start of the
+    /// next run.
+    private var generateCancelRequested = false
+    private var stitchCancelRequested = false
     /// Held for `cancelGenerate()` — the coordinator actor's `cancelled` flag
     /// is the authoritative stop (M4 §13.2: a bare `Task.cancel()` does NOT
     /// cross actor isolation). Nil at rest.
@@ -141,6 +149,7 @@ public final class FlockModel {
             generateState = .failed("No genomes to generate from.")
             return
         }
+        generateCancelRequested = false
         generateState = .resolving
         // Reset ETA state for the fresh run (mirrors ExportManager.resetETAState).
         eta.reset(); unitStartAt = nil; lastRenderCount = 0
@@ -173,20 +182,44 @@ public final class FlockModel {
     /// `CancellationError` into the stream iteration) AND the coordinator
     /// actor's own `cancelled` flag (the actor's loop checks `self.cancelled`,
     /// which a bare `Task.cancel` does NOT set — the actor is a separate
-    /// isolation domain).
+    /// isolation domain). The real `GenerateCoordinator.cancel()` additionally
+    /// cancels the run's shared `ExportCoordinator`, so the in-flight unit's
+    /// per-frame guard throws within ~one frame (v0.5.11) instead of the run
+    /// burning the GPU to the end of a minutes-long unit.
+    ///
+    /// IMMEDIATE feedback: if a run is in flight, `.cancelling` is set
+    /// SYNCHRONOUSLY here — before any async unwinding — so the UI shows an
+    /// indeterminate "Cancelling…" and disables the Cancel button at once.
+    /// `generateCancelRequested` makes `applyGenerate` ignore the few in-flight
+    /// non-terminal progress events that can still arrive during the unwind; a
+    /// terminal state always replaces `.cancelling`.
     ///
     /// The strong-`self` capture in the cancel `Task` is deliberate: it keeps
     /// `FlockModel` alive until the coordinator acknowledges stop, so a sheet
     /// dismissal cannot orphan a GPU-running actor. The `Task` is stored as
     /// `cancelGenerateTask` and self-cleared on completion, breaking the
     /// self → cancelGenerateTask → task → self cycle (mirrors
-    /// `PlaybackViewModel.beginStop`).
+    /// `PlaybackViewModel.beginStop`). Idle/terminal/double-cancel: the guard
+    /// makes this a strict no-op on state (the `Task?.cancel()` above is
+    /// nil/idempotent-safe).
     public func cancelGenerate() {
         generateTask?.cancel()
+        guard generateRunInFlight else { return }
+        generateCancelRequested = true
+        generateState = .cancelling
         let coord = generateCoord
         cancelGenerateTask = Task { [self] in
             await coord?.cancel()
             self.cancelGenerateTask = nil
+        }
+    }
+
+    /// True iff a generate run is currently in flight (a non-terminal,
+    /// non-cancel-pending state) — gates `cancelGenerate()`'s state write.
+    private var generateRunInFlight: Bool {
+        switch generateState {
+        case .resolving, .running, .rendering: return true
+        case .idle, .cancelling, .completed, .failed, .cancelled: return false
         }
     }
 
@@ -199,6 +232,7 @@ public final class FlockModel {
     /// design — generate's empty guard is spec line 1833).
     public func stitch(_ request: StitchRequest) async {
         stitchCoord = nil
+        stitchCancelRequested = false
         stitchState = .resolving
         // Reset stitch ETA/elapsed state for the fresh run (twin of generate).
         stitchEta.reset(); stitchSegmentStartAt = nil; stitchLastGenerated = 0
@@ -227,13 +261,36 @@ public final class FlockModel {
 
     /// Cancel the in-flight stitch run (twin of `cancelGenerate()`; same M4
     /// §13.2 teardown-safe strong-self + actor-flag cancel, stored as
-    /// `cancelStitchTask` and self-cleared on completion).
+    /// `cancelStitchTask` and self-cleared on completion). Like generate, the
+    /// real `StitchCoordinator.cancel()` also cancels the shared
+    /// `ExportCoordinator` (fast mid-MISS unwind) and this sets `.cancelling`
+    /// SYNCHRONOUSLY for immediate UI feedback.
+    ///
+    /// NOT cancellable: the `.concatenating` tail phase (the seconds-bounded
+    /// passthrough remux — see `StitchCoordinator.cancel()`). Cancel there is a
+    /// deliberate no-op: the remux would complete anyway, and cancelling the
+    /// consume Task would mislabel the completing stitch as `.cancelled`
+    /// (the CancellationError catch racing the `.completed` event). The view
+    /// disables Cancel during that phase.
     public func cancelStitch() {
+        guard stitchRunInFlight else { return }
         stitchTask?.cancel()
+        stitchCancelRequested = true
+        stitchState = .cancelling
         let coord = stitchCoord
         cancelStitchTask = Task { [self] in
             await coord?.cancel()
             self.cancelStitchTask = nil
+        }
+    }
+
+    /// True iff a CANCELLABLE stitch phase is in flight — gates
+    /// `cancelStitch()` (idle/terminal/double-cancel ⇒ strict no-op; and
+    /// `.concatenating` ⇒ no-op by design, see above).
+    private var stitchRunInFlight: Bool {
+        switch stitchState {
+        case .resolving, .plan, .running, .rendering: return true
+        case .concatenating, .idle, .cancelling, .completed, .failed, .cancelled: return false
         }
     }
 
@@ -277,8 +334,10 @@ public final class FlockModel {
     private func applyGenerate(_ p: GenerateUIProgress) {
         switch p {
         case .resolving:
+            guard !generateCancelRequested else { return }
             generateState = .resolving
         case .running(let skip, let render, let total):
+            guard !generateCancelRequested else { return }
             // A render unit completed iff `render` increased and we timed its
             // render (skips/resume-skip emit `.running` with `render` unchanged ⇒
             // `unitStartAt` is nil or stale; not sampled). Record the wall-clock
@@ -291,6 +350,7 @@ public final class FlockModel {
             let etaSec = eta.etaSeconds(remainingUnits: Double(max(0, total - skip - render)))
             generateState = .running(skip: skip, render: render, total: total, etaSeconds: etaSec)
         case .rendering(let skip, let render, let total, let frame, let frameTotal):
+            guard !generateCancelRequested else { return }
             // First frame of a unit marks the render start (the catalog lookup
             // ran between the prior `.running` and this; measuring here captures
             // render time only, not lookup). Overwrite is correct: a new unit's
@@ -324,8 +384,10 @@ public final class FlockModel {
     private func applyStitch(_ p: StitchUIProgress) {
         switch p {
         case .resolving:
+            guard !stitchCancelRequested else { return }
             stitchState = .resolving
         case .plan(let hitCount, let missCount, let segmentCount):
+            guard !stitchCancelRequested else { return }
             // Capture the plan tallies: `running` carries the state-driven
             // timeline-slot total (`segmentCount` — with loop repetitions the
             // slot count exceeds the unique hit+miss archive work), and the
@@ -335,6 +397,7 @@ public final class FlockModel {
             stitchMissTotal = missCount
             stitchState = .plan(hit: hitCount, miss: missCount, segments: segmentCount)
         case .running(let hit, let generated):
+            guard !stitchCancelRequested else { return }
             // A MISS render completed iff `generated` increased AND the pre-render
             // `.rendering(frame: 0)` marked its start (HIT segments complete
             // instantly and emit `.running` with `generated` unchanged ⇒ not
@@ -349,6 +412,7 @@ public final class FlockModel {
             stitchState = .running(hit: hit, generated: generated,
                                    total: stitchPlanTotal, etaSeconds: etaSec)
         case .rendering(let segment, let total, let isLoop, let frame, let frameTotal):
+            guard !stitchCancelRequested else { return }
             // frame == 0 is the pre-render yield (see StitchCoordinator) — the
             // render's true start; the first encoded frame (1) follows.
             if frame == 0 { stitchSegmentStartAt = ContinuousClock.now }
@@ -401,7 +465,10 @@ public final class FlockModel {
 
     private var generateActivity: FlockActivitySummary? {
         switch generateState {
-        case .resolving:
+        case .resolving, .cancelling:
+            // Resolving: not yet at a countable phase. Cancelling: the unwind
+            // takes < a frame or two, but show the indeterminate spinner until
+            // the terminal state lands (immediate feedback on global surfaces).
             return FlockActivitySummary(kind: .generate, fraction: nil,
                                         completed: nil, total: nil, etaSeconds: nil)
         case .running(let skip, let render, let total, let eta):
@@ -419,9 +486,10 @@ public final class FlockModel {
 
     private var stitchActivity: FlockActivitySummary? {
         switch stitchState {
-        case .resolving, .plan:
+        case .resolving, .plan, .cancelling:
             // In flight but not yet at a countable phase (plan → segment loop is
-            // immediate) — indeterminate spinner.
+            // immediate) — indeterminate spinner. Cancelling: same, until the
+            // terminal state lands.
             return FlockActivitySummary(kind: .stitch, fraction: nil,
                                         completed: nil, total: nil, etaSeconds: nil)
         case .running(let hit, let generated, let total, let eta):
