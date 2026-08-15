@@ -201,22 +201,25 @@ struct SelectionBar: View {
         }
     }
 
-    /// "Add to ▾" submenu — appends the whole selection (deterministically
-    /// ordered by identity — rule #2: never persist Set iteration order) to an
-    /// existing collection. Disabled when there are no collections.
+    /// "Add to ▾" submenu — leads with "New Collection…" (the same create-from-
+    /// selection sheet the standalone button opens — create AND add in one step,
+    /// so the menu is never a dead end on an empty store), then appends the
+    /// whole selection (deterministically ordered by identity — rule #2: never
+    /// persist Set iteration order) to an existing collection.
     private var addToSelectionMenu: some View {
         Menu {
-            if model.collectionsStore.collections.isEmpty {
-                Button("No collections yet") {}.disabled(true)
-            } else {
-                ForEach(model.collectionsStore.collections) { c in
-                    Button(c.name) { addToSelection(c.id, named: c.name) }
-                }
+            Button {
+                showCreateSheet = true
+            } label: {
+                Label("New Collection…", systemImage: "plus")
+            }
+            ForEach(model.collectionsStore.collections) { c in
+                Button(c.name) { addToSelection(c.id, named: c.name) }
             }
         } label: {
             Label("Add to", systemImage: "plus.rectangle.on.rectangle")
         }
-        .help("Add the selection to an existing collection")
+        .help("Add the selection to an existing collection, or create a new one for it")
     }
 
     /// Create a new collection from the current selection (deterministic order:
