@@ -11,12 +11,31 @@ build:        ## Build (debug)
 release:      ## Build (release)
 	$(SWIFT) build -c release
 
-dist: release ## Build a release product into ./dist (GUI + CLI + their resource bundles). Gitignored — reproducible via this target.
-	@rm -rf dist && mkdir -p dist
-	cp .build/release/emberweft .build/release/emberweft-gui dist/
-	cp -R .build/release/emberweft_FlameRenderer.bundle .build/release/emberweft_EmberweftGUI.bundle dist/
-	@echo "Release built into dist/. Run from that folder so the resource bundles resolve:"
-	@echo "  cd dist && ./emberweft-gui &"
+# Version stamped into Emberweft.app's Info.plist (CFBundleShortVersionString /
+# CFBundleVersion): the nearest git tag with its leading "v" stripped (e.g. 0.5.7),
+# or 0.0.0 on a tag-less checkout. Override for a bespoke build: make dist APP_VERSION=1.2.3
+GIT_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0)
+APP_VERSION ?= $(patsubst v%,%,$(GIT_TAG))
+
+APP_BUNDLE := dist/Emberweft.app
+
+dist: release ## Build a distributable into ./dist: Emberweft.app (double-clickable GUI) + the emberweft CLI beside its Metal bundle. Gitignored — reproducible via this target.
+	@rm -rf dist
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
+	@sed 's/__APP_VERSION__/$(APP_VERSION)/' Tools/dist/Emberweft-Info.plist > $(APP_BUNDLE)/Contents/Info.plist
+	cp .build/release/emberweft dist/
+	cp -R .build/release/emberweft_FlameRenderer.bundle dist/
+	cp .build/release/emberweft-gui $(APP_BUNDLE)/Contents/MacOS/
+	# Standard Contents/Resources placement (Bundle.main.resourceURL). SwiftPM 6's generated
+	# Bundle.module accessor does NOT search it (only the .app root — where codesign rejects
+	# foreign entries — and the build machine's .build path), which is why the sources resolve
+	# it explicitly: FlameRenderer/ModuleResources.swift + EmberweftGUI/AppModel.moduleBundle.
+	cp -R .build/release/emberweft_FlameRenderer.bundle .build/release/emberweft_EmberweftGUI.bundle $(APP_BUNDLE)/Contents/Resources/
+	@xattr -cr $(APP_BUNDLE)
+	@codesign --force --deep --sign - $(APP_BUNDLE)
+	@echo "Release built into dist/:"
+	@echo "  Emberweft.app — double-click it, or: open dist/Emberweft.app   (no Terminal window)"
+	@echo "  emberweft     — CLI; run it from dist/ so the sibling emberweft_FlameRenderer.bundle resolves (--backend metal)"
 
 test:         ## Run the full pre-merge suite (fast + parity; ~12 min). Excludes the opt-in perf gate — use `make test-perf`.
 	$(SWIFT) test --filter FlameKitTests --filter EmberweftCLITests --filter FlamePlayerTests --filter FlameReferenceTests --filter FlameRendererTests

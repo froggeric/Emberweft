@@ -28,9 +28,11 @@ final class MetalOffMainCache {
         if let d = device, let l = library, let q = queue { return (d, l, q) }
         guard let d = MTLCreateSystemDefaultDevice() else { return nil }
         // The `.metal` sources are bundled as SwiftPM resources (.copy("Metal")).
-        guard let url = Bundle.module.url(
+        // ModuleResources resolves Contents/Resources for the bundled .app (see its doc
+        // comment); everywhere else it is the same bundle Bundle.module finds.
+        guard let url = ModuleResources.bundle.url(
                 forResource: "Kernels", withExtension: "metal", subdirectory: "Metal")
-                ?? Bundle.module.url(forResource: "Kernels", withExtension: "metal"),
+                ?? ModuleResources.bundle.url(forResource: "Kernels", withExtension: "metal"),
               let source = try? String(contentsOf: url, encoding: .utf8),
               let lib = try? d.makeLibrary(source: source, options: nil),
               let q = d.makeCommandQueue()

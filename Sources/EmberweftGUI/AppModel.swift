@@ -134,10 +134,24 @@ final class AppModel {
         thumbTotal = n
     }
 
+    /// SwiftPM 6's `Bundle.module` accessor doesn't search an .app's `Contents/Resources`
+    /// (only the .app root — where codesign rejects foreign entries — and the build
+    /// machine's `.build` path); see `FlameRenderer/ModuleResources.swift` for the full
+    /// story. Resolve `Bundle.main.resourceURL` first, else `Bundle.module` (bare/dev
+    /// launches, where both find the same sibling bundle).
+    private static let moduleBundle: Bundle = {
+        if let resourceURL = Bundle.main.resourceURL,
+            let bundled = Bundle(url: resourceURL.appendingPathComponent("emberweft_EmberweftGUI.bundle"))
+        {
+            return bundled
+        }
+        return Bundle.module
+    }()
+
     init() {
         let (loaded, _) = AppPreferences.loadResilient()
         self.prefs = loaded
-        self.bundleRoot = Bundle.module.url(forResource: "CuratedLibrary", withExtension: nil)
+        self.bundleRoot = Self.moduleBundle.url(forResource: "CuratedLibrary", withExtension: nil)
         let thumbs = AppPreferences.defaultDirectory.appendingPathComponent("thumbs", isDirectory: true)
         self.thumbnailService = ThumbnailService(cacheDirectory: thumbs)
         let (mdStore, _) = MetadataStore.loadResilient()
