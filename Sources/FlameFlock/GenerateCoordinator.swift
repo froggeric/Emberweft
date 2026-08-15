@@ -9,7 +9,13 @@ import FlameExport
 ///
 /// Concurrency: an `actor` — the single in-process driver. `FlockCatalog` (also
 /// an actor) serializes the row writes. The per-unit render hops off this actor
-/// (`await renderer.renderLoop/renderEdge`), so `cancel()` lands between units.
+/// (`await renderer.renderLoop/renderEdge`), so `cancel()` lands between units —
+/// AND, since v0.5.11, `cancel()` ALSO cancels the run's `ExportCoordinator`, so
+/// the in-flight unit's per-frame guards (`renderFrames` OFF path /
+/// `feedEmitSmoothed` ON path) throw `ExportError.cancelled` within ~one frame
+/// instead of at the next unit boundary (a High-quality 450-frame unit is many
+/// minutes — the "cancel takes forever" defect). `generateBody` maps that throw
+/// to `.cancelled` (plan persisted), NOT `.failed`.
 ///
 /// Determinism (rule #2): the resume key is a pure SHA-canonical string
 /// `shard|aGen|aId|bGen|bId` (same fixed order as `FlockSeed`); the plan file is
@@ -121,6 +127,14 @@ public actor GenerateCoordinator {
     private let backend: ExportCoordinator.Backend
     private let useOffMainMetal: Bool
     private var cancelled = false
+    /// The `ExportCoordinator` driving the CURRENT run's per-unit renders.
+    /// Stored by `generate(...)` (actor-isolated, before the stream Task starts)
+    /// and cleared when `generateBody` exits, so `cancel()` can propagate into
+    /// the in-flight unit's per-frame loop. Strong only for the run's duration —
+    /// no cycle: GenerateCoordinator → ExportCoordinator is one-directional and
+    /// transient (the caller's consume Task is what keeps both alive until the
+    /// stream finishes). Nil at rest ⇒ cancel-when-idle is a flag-only no-op.
+    private var activeExportCoordinator: ExportCoordinator?
 
     public init(catalog: FlockCatalog, renderer: ArchiveRenderer,
                 backend: ExportCoordinator.Backend, useOffMainMetal: Bool) {
@@ -128,7 +142,17 @@ public actor GenerateCoordinator {
         self.backend = backend; self.useOffMainMetal = useOffMainMetal
     }
 
-    public func cancel() async { cancelled = true }
+    /// Cancel the run: set this actor's flag (checked at unit boundaries) AND
+    /// cancel the in-flight `ExportCoordinator` (checked per frame inside
+    /// `renderFrames`/`feedEmitSmoothed`). Without the second hop the guards in
+    /// the shared export actor never fire — its `cancelled` flag is private, and
+    /// `Task.isCancelled` cannot fire either (the stream's inner `Task { }` is
+    /// unstructured and inherits no cancellation) — so the in-flight unit ran to
+    /// completion before the boundary check yielded `.cancelled`.
+    public func cancel() async {
+        cancelled = true
+        await activeExportCoordinator?.cancel()
+    }
 
     /// `<flockRoot>/flock-generate-plan.json` — sibling of `flock.sqlite`. Holds
     /// the sorted completed-key list consumed on resume.
@@ -142,7 +166,12 @@ public actor GenerateCoordinator {
     /// memoization lives inside it).
     public func generate(_ request: GenerateRequest,
                          coordinator: ExportCoordinator) -> AsyncThrowingStream<GenerateUIProgress, Error> {
-        AsyncThrowingStream { continuation in
+        // Store the render engine for THIS run so `cancel()` can reach into the
+        // in-flight unit (see `cancel()`). Actor-isolated + synchronous, and
+        // `cancel()` is also actor-isolated ⇒ the store always lands before any
+        // later cancel can observe the slot.
+        activeExportCoordinator = coordinator
+        return AsyncThrowingStream { continuation in
             // Unstructured Task captures `self` (the Sendable actor) + the
             // Sendable continuation; `await self.generateBody(...)` hops onto
             // the actor for the whole run, so `cancelled` reads are direct.
@@ -159,6 +188,10 @@ public actor GenerateCoordinator {
         coordinator: ExportCoordinator,
         continuation: AsyncThrowingStream<GenerateUIProgress, Error>.Continuation
     ) async {
+        // Release the run's export coordinator on EVERY exit (success, cancel,
+        // failure) — `cancel()` after the run is a flag-only no-op, and the
+        // strong reference does not outlive the run.
+        defer { activeExportCoordinator = nil }
         continuation.yield(.resolving)
         let planURL = Self.planFileURL(flockRoot: request.flockRoot)
 
@@ -171,9 +204,11 @@ public actor GenerateCoordinator {
         continuation.yield(.running(skip: skip, render: render, total: total))
 
         for unit in scopedUnits {
-            // Cooperative cancel — checked at the top of every unit (the render
-            // itself is atomic; cancel lands between units). Persist whatever
-            // has completed so resume picks up here.
+            // Cooperative cancel — checked at the top of every unit. (A cancel
+            // that lands MID-unit is caught faster: `cancel()` also cancels the
+            // export coordinator, whose per-frame guard throws
+            // `ExportError.cancelled` → the catch below maps it to `.cancelled`.)
+            // Persist whatever has completed so resume picks up here.
             if cancelled {
                 persistPlan(planURL: planURL, done: done)
                 continuation.yield(.cancelled)
@@ -250,6 +285,21 @@ public actor GenerateCoordinator {
                 done.insert(key)
                 persistPlan(planURL: planURL, done: done)
                 continuation.yield(.running(skip: skip, render: render, total: total))
+            } catch is CancellationError {
+                // A mid-unit cancel: `cancel()` propagated into the export
+                // coordinator, whose per-frame guard threw. Treat as CANCEL
+                // (persist the plan, yield `.cancelled`) — NOT a failure.
+                persistPlan(planURL: planURL, done: done)
+                continuation.yield(.cancelled)
+                continuation.finish()
+                return
+            } catch let error as ExportError where error == .cancelled {
+                // Same mapping for the concrete `ExportError.cancelled` (the
+                // actual case the per-frame guard throws).
+                persistPlan(planURL: planURL, done: done)
+                continuation.yield(.cancelled)
+                continuation.finish()
+                return
             } catch {
                 // Persist completions so resume picks up before the failure.
                 persistPlan(planURL: planURL, done: done)

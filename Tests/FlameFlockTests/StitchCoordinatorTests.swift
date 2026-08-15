@@ -731,6 +731,79 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertEqual(appendedBefore, appendedAfter, "the HIT must not re-render any frame")
     }
 
+    // MARK: - (v0.5.11): mid-MISS cancel propagates into the render loop
+
+    /// All `.partial` temps anywhere under `root` (mirrors the generate-side
+    /// helper; a mid-MISS cancel must leave NONE).
+    private func partialFiles(under root: URL) -> [URL] {
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        else { return [] }
+        return (en.compactMap { $0 as? URL }).filter { $0.lastPathComponent.contains(".partial") }
+    }
+
+    /// A single-genome stitch (one MISS loop segment) cancelled on the first
+    /// ENCODED frame must: terminate with `.cancelled` (NOT `.failed`), stop
+    /// the render far short of the 150-frame unit, leave no artifact file, no
+    /// catalog row, no `.partial` remnant, and no output file. This pins the
+    /// `StitchCoordinator.cancel() → ExportCoordinator.cancel()` propagation
+    /// (the same fast-unwind fix as generate).
+    func testMidMissCancelYieldsCancelledAndCleansUp() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        // Long shard: a 150-frame loop unit (core 140 + wrap 10) — the cancel
+        // (a couple of actor hops) lands far before the unit finishes.
+        let shard = ShardSpec(name: "48x32_30fps", width: 48, height: 32, fps: 30,
+                              loopSeconds: 5.0, transSeconds: 4.0,
+                              loopFrames: 150, transFrames: 120,
+                              isCanonical: false, codec: .h264)
+        try await catalog.upsertShard(shard)
+        let settings = archiveSettings(matching: shard)
+        let A = try parseSierpinski()
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let request = StitchRequest(shard: shard, orderedFlames: [("248", "00628", A)],
+                                    settings: settings, flockRoot: root,
+                                    out: outURL(root: root), loopRepetitions: 1)
+        let exportCoord = ExportCoordinator(backend: .cpu)
+
+        var events: [StitchUIProgress] = []
+        var cancelledOnce = false
+        let stream = await stitcher.stitch(request, coordinator: exportCoord)
+        for try await p in stream {
+            events.append(p)
+            if case .rendering(_, _, _, let frame, _) = p, frame == 1, !cancelledOnce {
+                cancelledOnce = true
+                await stitcher.cancel()   // propagates into exportCoord's per-frame guard
+            }
+        }
+
+        XCTAssertTrue(cancelledOnce, "the cancel hook must have fired (frame 1)")
+        XCTAssertEqual(events.last, .cancelled, "mid-MISS cancel must terminate with .cancelled")
+        XCTAssertFalse(events.contains {
+            if case .failed = $0 { return true } else { return false }
+        }, "cancel must not surface as .failed")
+        // Promptness: far fewer than the unit's 150 frames rendered.
+        let frames = events.filter {
+            if case .rendering(_, _, _, let frame, _) = $0 { return frame >= 1 } else { return false }
+        }.count
+        XCTAssertGreaterThanOrEqual(frames, 1)
+        XCTAssertLessThan(frames, 150, "cancel must stop the in-flight MISS well before it completes")
+
+        // No artifact / row for the aborted segment; no output; no temps.
+        let loopFile = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                      aGen: "248", aId: "00628", bGen: "248", bId: "00628", ext: "mov")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: loopFile.path),
+                       "aborted MISS must leave no archive file")
+        let row = try await catalog.lookup(aGen: "248", aId: "00628", bGen: "248",
+                                           bId: "00628", shard: shard.name)
+        XCTAssertNil(row, "aborted MISS must not be cataloged")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outURL(root: root).path),
+                       "a cancelled stitch must not produce an output file")
+        let partials = partialFiles(under: root)
+        XCTAssertTrue(partials.isEmpty, "mid-MISS cancel must leave no temp remnant: \(partials)")
+    }
+
     // MARK: - fixtures
 
     /// Synthesize an `ArtifactRow` with default fields for the spy-only tests

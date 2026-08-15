@@ -21,11 +21,20 @@ import FlameFlock
 /// `GenerateCoordinator` (v0.5.8 — the per-video-file progress the owner wants).
 /// `completed` carries the final tally. `failed` carries a user-facing message;
 /// `cancelled` is terminal.
+///
+/// `cancelling` (v0.5.11) is the transient IMMEDIATE-feedback state: set
+/// SYNCHRONOUSLY by `FlockModel.cancelGenerate()` the moment Cancel is pressed
+/// — BEFORE the async unwind finishes — so the UI shows an indeterminate
+/// "Cancelling…" (and disables Cancel) rather than stale render progress. A
+/// terminal state (`.cancelled`, or `.completed` if the run raced completion)
+/// replaces it. While cancelling, non-terminal progress events are ignored.
 public enum GenerateUIState: Sendable, Equatable {
     case idle
     case resolving
     case running(skip: Int, render: Int, total: Int, etaSeconds: Double?)
     case rendering(skip: Int, render: Int, total: Int, frame: Int, frameTotal: Int, etaSeconds: Double?)
+    /// Transient cancel-pending state (set synchronously on Cancel press).
+    case cancelling
     case completed(rendered: Int, skipped: Int)
     case failed(String)
     case cancelled
@@ -100,6 +109,8 @@ public struct GenerateETAEstimator: Equatable, Sendable {
 /// per-frame within-MISS progress (v0.5.9 — the blackout fix; `frame == 0` is
 /// the pre-render yield); `concatenating` is the remux/copy tail phase
 /// (indeterminate). `completed` carries the assembled output URL.
+/// `cancelling` (v0.5.11) is the transient immediate-feedback twin of
+/// `GenerateUIState.cancelling` (set synchronously by `cancelStitch()`).
 public enum StitchUIState: Sendable, Equatable {
     case idle
     case resolving
@@ -107,6 +118,8 @@ public enum StitchUIState: Sendable, Equatable {
     case running(hit: Int, generated: Int, total: Int, etaSeconds: Double?)
     case rendering(segment: Int, total: Int, isLoop: Bool, frame: Int, frameTotal: Int, etaSeconds: Double?)
     case concatenating(segments: Int)
+    /// Transient cancel-pending state (set synchronously on Cancel press).
+    case cancelling
     case completed(URL)
     case failed(String)
     case cancelled

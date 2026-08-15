@@ -151,8 +151,11 @@ extension EmberweftCLI {
 
         // SIGINT → cooperative cancel (DispatchSourceSignal — async-signal-safe;
         // the handler runs on a dispatch queue, not the signal context. Mirrors
-        // ExportCommand.swift's proven pattern. The cancel flag is checked between
-        // units; the plan file persists completions for resume.)
+        // ExportCommand.swift's proven pattern). `gen.cancel()` sets the
+        // coordinator flag AND cancels the shared `ExportCoordinator` (v0.5.11),
+        // so the in-flight unit's per-frame guard throws within ~one frame —
+        // the same fast unwind as the GUI Cancel button. The plan file persists
+        // completions for resume.)
         signal(SIGINT, SIG_IGN)
         let sig = DispatchSource.makeSignalSource(signal: SIGINT)
         sig.setEventHandler { Task { await gen.cancel() } }
@@ -290,6 +293,11 @@ extension EmberweftCLI {
         let stitcher = StitchCoordinator(catalog: cat, renderer: ArchiveRenderer(),
                                          backend: coordBackend, useOffMainMetal: false)
 
+        // SIGINT → cooperative cancel (same DispatchSourceSignal pattern as
+        // generate). `stitcher.cancel()` also cancels the shared
+        // `ExportCoordinator` (v0.5.11), so an in-flight MISS render unwinds
+        // within ~one frame; the `.concatenating` remux tail is not
+        // cancellable (seconds-bounded, completes the stitch).
         signal(SIGINT, SIG_IGN)
         let sig = DispatchSource.makeSignalSource(signal: SIGINT)
         sig.setEventHandler { Task { await stitcher.cancel() } }

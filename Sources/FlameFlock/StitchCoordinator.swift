@@ -107,6 +107,13 @@ public actor StitchCoordinator {
     private let backend: ExportCoordinator.Backend
     private let useOffMainMetal: Bool
     private var cancelled = false
+    /// The `ExportCoordinator` driving the CURRENT run's MISS renders — stored
+    /// by `stitch(...)` (actor-isolated, before the stream Task starts) and
+    /// cleared when `stitchBody` exits, so `cancel()` propagates into the
+    /// in-flight MISS's per-frame loop (same shape as `GenerateCoordinator`;
+    /// see its `activeExportCoordinator` doc). Strong only for the run's
+    /// duration; nil at rest ⇒ cancel-when-idle is a flag-only no-op.
+    private var activeExportCoordinator: ExportCoordinator?
 
     public init(catalog: any FlockCatalogStitching, renderer: ArchiveRenderer,
                 backend: ExportCoordinator.Backend, useOffMainMetal: Bool) {
@@ -114,11 +121,25 @@ public actor StitchCoordinator {
         self.backend = backend; self.useOffMainMetal = useOffMainMetal
     }
 
-    public func cancel() async { cancelled = true }
+    /// Cancel the run: set this actor's flag AND cancel the in-flight
+    /// `ExportCoordinator` (per-frame guards inside `renderFrames` /
+    /// `feedEmitSmoothed` then throw `ExportError.cancelled` mid-MISS — mapped
+    /// by `stitchBody` to `.cancelled`, not `.failed`). NOT cancellable: the
+    /// `.concatenating` tail phase (`coordinator.concat` → `AVAssetExportSession`
+    /// passthrough) runs to completion by design — it is seconds-bounded, has no
+    /// cancel plumbing, and a cancel there simply completes the stitch (the
+    /// flag is honored before it and never after — `.completed` is yielded).
+    public func cancel() async {
+        cancelled = true
+        await activeExportCoordinator?.cancel()
+    }
 
     public func stitch(_ request: StitchRequest,
                        coordinator: ExportCoordinator) -> AsyncThrowingStream<StitchUIProgress, Error> {
-        AsyncThrowingStream { continuation in
+        // Store the render engine for THIS run so `cancel()` can reach into the
+        // in-flight MISS (see `cancel()`).
+        activeExportCoordinator = coordinator
+        return AsyncThrowingStream { continuation in
             // Unstructured Task captures `self` (the Sendable actor) + the Sendable
             // continuation; `await self.stitchBody(...)` runs the whole flow on the
             // actor so `cancelled` reads are direct isolated reads.
@@ -135,6 +156,9 @@ public actor StitchCoordinator {
         coordinator: ExportCoordinator,
         continuation: AsyncThrowingStream<StitchUIProgress, Error>.Continuation
     ) async {
+        // Release the run's export coordinator on EVERY exit (success, cancel,
+        // failure) — `cancel()` after the run is a flag-only no-op.
+        defer { activeExportCoordinator = nil }
         if request.orderedFlames.isEmpty {
             continuation.yield(.failed("Sequence is empty.")); continuation.finish(); return
         }
@@ -250,6 +274,16 @@ public actor StitchCoordinator {
                     byPK[pk] = row
                     urls.append(contentsOf: unitURLs(for: row, idx: idx, keys: keys,
                                                      flockRoot: request.flockRoot))
+                } catch is CancellationError {
+                    // A mid-MISS cancel: `cancel()` propagated into the export
+                    // coordinator, whose per-frame guard threw. CANCEL, not
+                    // failure (mirrors `GenerateCoordinator.generateBody`).
+                    continuation.yield(.cancelled)
+                    continuation.finish(); return
+                } catch let error as ExportError where error == .cancelled {
+                    // Same mapping for the concrete per-frame cancel case.
+                    continuation.yield(.cancelled)
+                    continuation.finish(); return
                 } catch {
                     continuation.yield(.failed(String(describing: error)))
                     continuation.finish(throwing: error); return
