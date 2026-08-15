@@ -7,90 +7,94 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
-## [Unreleased] — M6.5 flock archive + stitching
+## [0.6.0] - 2026-08-16
 
-A local "flock archive" of pre-rendered loop/edge videos plus two paths to work
-with it: **Generate** (Path A) pre-bakes loops and edges into the archive, and
-**Stitch** (Path B) composes a long video from the archive, rendering any missing
-segment into the archive first and then concatenating with a no-reencode remux.
-The win is that once a segment is rendered it is reused forever: a fully cached
-sequence stitches in seconds instead of the hours a one-shot export took. Engine
-parity is unchanged (no renderer math touched), and the animate-to-export
-byte-identity pins stay green.
+The flock archive: pre-render your loops and edges once, then compose long
+videos from them in seconds. This release solves the long-export problem (a
+5-genome sequence at genome-default quality took over 3 hours as a one-shot
+export; the same sequence stitched from cached material is a lossless remux).
+It also ships the app as a proper double-clickable macOS app bundle with an
+icon, and moves one-shot export out of the playback windows.
 
 ### Added
-- **The flock archive (new `FlameFlock` module).** A user-configurable directory
-  (default `<app-support>/Flock/`, set via `AppPreferences.flockDir`) holding
-  pre-rendered loop and edge videos, organized into shards by resolution, frame
-  rate, and pace. Naming is ES-inspired but not byte-identical:
-  `<a_gen>=<a_id>=<b_gen>=<b_id>.<ext>`, where a loop is the self-edge (`a==b`),
-  there is no `edge_id` (the ordered pair is the key), and cross-generation edges
-  are first-class. ES-sourced sheep keep their real `(gen,id)`; user and curated
-  genomes get stable ids minted in a reserved flock `900000`, deduped on the
-  source SHA-256.
-- **`flock.sqlite` catalog** (`FlockCatalog`, an actor with one serialized writer,
-  WAL, and `busy_timeout` so there is no `SQLITE_BUSY`). It is the source of truth
-  and is fully rebuildable from the `mpeg/` filenames plus the tags embedded in
-  each video. Stitch does one batched `IN(...)` catalog lookup up front (no N+1),
-  so the progress banner can show the hit-vs-will-generate count immediately. A
-  corrupt catalog is backed up to `.bak` and rebuilt.
-- **Archive codec: HEVC (H.265) Main10, `.mov`.** Decided empirically: about 40%
-  smaller than H.264 at equal visual quality, 10-bit (an HDR on-ramp), with
-  Apple-Silicon hardware encode/decode. Lossless passthrough concat
-  (`AVMutableComposition` + passthrough) was verified decode-clean on
-  independently encoded HEVC segments. H.264 remains a one-pass deliverable
-  transcode; ProRes is out at archive scale.
-- **Each segment is a fresh independent encode** (IDR keyframe at frame 0). Segments
-  must NOT be sliced from a longer render with `ffmpeg -c copy`: slicing breaks
-  HEVC picture-order-count / reference-picture-set continuity at the cut (decoder
-  errors `Duplicate POC`, `Could not find ref with POC`). Independent per-segment
-  encodes concatenate cleanly.
-- **Path A, Generate** (`emberweft flock generate`): pre-bake loops and/or edges
-  into a shard. Default scope is edges (loops are generated on demand at stitch
-  time). Per unit, by `(shard, pair)`: a hit at equal-or-higher quality skips,
-  otherwise it renders one segment through the existing deterministic render
-  primitives, writes the archive-named file plus a thumbnail and tags, then upserts
-  the catalog row (never a row without its file). A higher `quality_rank`
-  overwrites a lower one at the same path, so the archive self-improves.
-- **Path B, Stitch** (`emberweft flock stitch`): compose a long video from the
-  archive. Per segment, a hit reuses the cached file and a miss renders into the
-  archive first, then the collected files are passthrough-concatenated into the
-  output with no re-encode. A codec-mismatched shard (a leftover from a codec
-  change) is refused and points at `flock rebuild`; a cross-shard stitch is refused
-  (a uniform format is required).
-- **`emberweft flock` CLI:** `generate | stitch | browse | rebuild | export-list`.
-  `flock export-list` writes the ES `<list>` XML interchange (recovering real ES
-  `edge_id`s for ES-sourced pairs from `edges.sqlite`, taking the lowest on the
-  duplicate pairs; synthesizing ids for non-ES and cross-gen edges).
-- **Flock sidebar area in the GUI** (Generate / Stitch / Browse tabs) and a
-  Settings, Flock panel (archive location, default shard and quality, a size
-  readout, and a "Rebuild catalog" action). Browse shows per-shard counts, size,
-  and thumbnails, paged (no mass parse).
-- **Decoupled one-shot export from the playback windows.** The single-genome and
-  collection playback windows are now play-only. One-shot Export is a library-
-  selection action (the proven `SelectionBar` batch shape extended to single and
-  sequence).
-- **Per-artifact video metadata tags** (`emberweft.spp`, `.ts`, `.seed`,
-  `.quality_rank`, `.source_sha`, etc., plus title/artist/software) embedded via
-  `VideoEncoder`, so `flock rebuild` can regenerate the catalog from files alone.
+- **The flock archive** (new `FlameFlock` module). A user-configurable directory
+  (default `<app-support>/Flock/`, set in Settings) holding pre-rendered loop
+  and edge videos, organized into shards by resolution, frame rate, and pace.
+  Standard shards (720p / 1080p / 1440p / 4K, 30 fps, 15 s loops, 12 s edges)
+  are one click away; custom paces create their own shard. Naming is
+  ES-inspired: `<a_gen>=<a_id>=<b_gen>=<b_id>.mov`, where a loop is the
+  self-edge, the ordered pair is the key, and cross-generation edges are
+  first-class. ES-sourced sheep keep their real generation and id; user genomes
+  get stable ids in a reserved flock. The archive self-improves: re-rendering a
+  segment at higher quality overwrites the lower one, never duplicates it.
+- **Two paths.** *Generate* pre-bakes loops and/or edges into a shard (edges
+  only by default; loops plus edges or loops only via the scope picker), in
+  timeline order matching your collection. *Stitch* composes a long video from
+  the archive: cached segments are reused as files, missing ones are rendered
+  into the archive first, then everything is concatenated with a no-reencode
+  passthrough remux. Stitch picks its quality (a stored lower-quality segment
+  is upgraded, not treated as a hit) and how many times each loop plays
+  (default 2, a stitch-time timeline choice that costs no extra rendering).
+- **The Flock workspace in the app** (Generate / Stitch / Browse tabs), sourced
+  from your library: Favorites, any collection, or the current selection. No
+  file pickers. Live progress everywhere: per-video frame counters, ETA, a
+  concatenating phase, a running indicator in the sidebar visible from any
+  pane, and a Cancel that takes effect within about two frames and shows a
+  Cancelling state while it lands. Browse shows per-shard counts, sizes, and
+  thumbnails; the catalog rebuilds from files plus embedded tags if lost.
+- **A real Mac app.** `make dist` now produces `Emberweft.app`: double-click it
+  (or `open dist/Emberweft.app`) and it launches directly, with no Terminal
+  window hosting it. It carries a designed app icon (a ring braided from three
+  ember threads; deterministic generator and rationale under `Tools/AppIcon/`).
+- **The `emberweft flock` CLI:** `generate | stitch | browse | rebuild |
+  export-list`, including the ES `<list>` XML interchange export for ES-sourced
+  pairs (real edge ids recovered from the genome archive's pair database).
+- **Collection creation.** New Collection in the Add-to-Collection menu, the
+  sidebar, and the selection bar: create a collection and add the selection in
+  one step, or start an empty one.
+- **Export quality default in Settings** (Genome default / Low / Medium /
+  High). The export sheet opens at the configured tier; an in-sheet change
+  affects that run only.
+
+### Changed
+- One-shot export is a library-selection action. The playback windows are
+  play-only.
+- Archive renders default to Standard quality (samples-per-pixel 30 with the
+  tier's temporal samples and smoothing), with a picker for genome-default
+  mastering.
+- Generation runs in timeline order (loop, edge, loop), matching the collection,
+  so a partial generate covers the earliest part of the timeline first.
+
+### Fixed
+- **Stitch seams.** Segment boundaries could jump (measured up to 36x the
+  normal frame-to-frame difference; the smoothing window clipped at each
+  file's edges). Artifact geometry now keeps every boundary frame's window
+  inside its own unit: loops ship a core plus a wrap file (a loop's neighbor is
+  itself), edges render with neighbor context baked in. Seams now measure at
+  the inline one-shot reference (1 to 3x).
+- **Generation speed.** Archive renders were using the genome's temporal
+  samples (~1000) instead of the chosen tier's, wasting the bulk of the
+  compute. Fixed; generation at Standard is dramatically faster.
+- **ES identity.** ES-sourced genomes were being minted into the reserved
+  flock (wrong filenames); they now keep their real generation and id.
+- **Cancel.** Cancelling waited for the current unit to finish (minutes at
+  high quality), and could leave the UI stuck on Cancelling. Cancel now
+  propagates to the in-flight render (about two frames) and the terminal
+  state always lands. No leftover processes, temp files, or catalog rows.
+- **Progress.** Generate showed nothing during a long first unit and Stitch
+  showed nothing during regeneration; both now report per-frame progress,
+  ETA, and every phase. The Cancel button was not visible while running.
 
 ### Notes
-- **Parity gate untouched.** No edit under `Sources/FlameKit|FlameReference|
-  FlameRenderer`. The archive builds per-unit `FramePlan`s and reuses the existing
-  render primitives through two small additive `public` surfaces on
-  `ExportCoordinator` (`renderSegmentRange`, `concat`) and a metadata parameter on
-  `VideoEncoder`, all default-byte-identical.
-- **animate-to-export byte-identity is preserved.** The archive is a new path; the
-  existing one-shot export (`ExportSheet` to `runResumable`) still pins to
-  `animate`. The archive's smoothing-OFF path is the same `renderImage` primitive.
-- **Determinism is frame/seed-level, not `.mov`-byte-level.** Same
-  `(shard, key, RenderSpec)` produces the same SHA-256-derived seed, the same
-  `RenderParams`, and therefore the same frames. The `.mov` container is not
-  byte-stable run-to-run (an intentional `emberweft.rendered` timestamp tag plus
-  VideoToolbox encode nondeterminism). Determinism pins assert the deterministic
-  input chain, not the container shasum.
-- The M5 screensaver (still next) will consume this archive: play pre-rendered
-  loops and edges instead of live-rendering.
+- Archive codec: HEVC Main10 in `.mov`, chosen empirically (about 40% smaller
+  than H.264 at equal quality, 10-bit, hardware encode). Each segment is a
+  fresh independent encode; never slice segments from a longer render.
+- Engine parity is untouched (no renderer math changed), and the
+  animate-to-export byte-identity pins stay green. The archive's determinism
+  is frame/seed-level: same shard, key, and settings produce the same frames;
+  the `.mov` container itself is not byte-stable run to run.
+- The M5 screensaver (next) consumes this archive: play pre-rendered loops
+  and edges instead of live-rendering.
 
 ## [v0.5.7] — remove loop-repeat (fix jerky half-speed motion)
 

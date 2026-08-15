@@ -2,17 +2,17 @@
 
 *Development milestones from initial documentation through post-MVP features and enhancements.*
 
-> **Status:** preliminary — for review · Emberweft
+> **Status:** preliminary, for review · Emberweft
 
 ## Current Status
 
-**Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete; M6 complete (v0.5.0); M6.1 pause/resume (v0.5.1); M6.1 slice 2 temporal smoothing (v0.5.2–v0.5.7); M6.5 flock archive + stitching (Unreleased/v0.6.0)** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries), **v0.3.1** (M4 polish: configurable preview presets + live FPS readout in both playback windows; `testFiniteDeterministicRenders` crash fix via a nontrapping `intTrunc` guard on `Int(Double)`), **v0.3.2** (M4 polish: distinct preview vs. export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target), **v0.4.0** (M6 engine + CLI: `emberweft export` to MP4/MOV, `FramePlan`, `ThreadSeedBudget`). **v0.5.0** (M6 GUI export: export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing). **v0.5.1** (M6.1 pause/resume: Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard`). M6.1 slice 2 (temporal smoothing — centered box window + retuned quality tiers + tier-aware temporal samples; export-only; animate/export byte-identity preserved) shipped v0.5.2–v0.5.7 (v0.5.7 removed loop-repeat, whose render-once-repeat caused half-speed motion) (see [CHANGELOG.md](../../CHANGELOG.md)). **M6.5 — flock archive + stitching** (standalone milestone between M6 and M7, Unreleased/v0.6.0): a local archive of pre-rendered loop/edge videos (HEVC Main10 `.mov`, ES-inspired 4-field naming) plus Path A (Generate) to pre-bake material and Path B (Stitch) to compose a long video from the archive (cached segments stitch in seconds via passthrough concat; misses render into the archive first), a `flock.sqlite` catalog (rebuildable from files + tags), the `emberweft flock generate|stitch|browse|rebuild|export-list` CLI, a Flock GUI area, a decoupled one-shot export (moved off the playback windows to a library-selection action), and a new `FlameFlock` module. Engine parity is unchanged (no edit under `Sources/FlameKit|FlameReference|FlameRenderer`) and animate-to-export byte-identity is preserved (see [CHANGELOG.md](../../CHANGELOG.md)). M5 next.
+**Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete; M6 complete (v0.5.0); M6.1 pause/resume (v0.5.1); M6.1 slice 2 temporal smoothing (v0.5.2–v0.5.7); M6.5 flock archive + stitching (v0.6.0)** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries), **v0.3.1** (M4 polish: configurable preview presets + live FPS readout in both playback windows; `testFiniteDeterministicRenders` crash fix via a nontrapping `intTrunc` guard on `Int(Double)`), **v0.3.2** (M4 polish: distinct preview vs. export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target), **v0.4.0** (M6 engine + CLI: `emberweft export` to MP4/MOV, `FramePlan`, `ThreadSeedBudget`). **v0.5.0** (M6 GUI export: export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing). **v0.5.1** (M6.1 pause/resume: Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard`). M6.1 slice 2 (temporal smoothing: centered box window + retuned quality tiers + tier-aware temporal samples; export-only; animate/export byte-identity preserved) shipped v0.5.2–v0.5.7 (v0.5.7 removed loop-repeat, whose render-once-repeat caused half-speed motion) (see [CHANGELOG.md](../../CHANGELOG.md)). **M6.5, flock archive + stitching** (standalone milestone between M6 and M7; complete in v0.6.0): a local archive of pre-rendered loop/edge videos (HEVC Main10 `.mov`, ES-inspired 4-field naming) plus Path A (Generate) to pre-bake material and Path B (Stitch) to compose a long video from the archive (cached segments stitch in seconds via passthrough concat; misses render into the archive first), a `flock.sqlite` catalog (rebuildable from files + tags), the `emberweft flock generate|stitch|browse|rebuild|export-list` CLI, a Flock GUI area, a decoupled one-shot export (moved off the playback windows to a library-selection action), and a new `FlameFlock` module. Engine parity is unchanged (no edit under `Sources/FlameKit|FlameReference|FlameRenderer`) and animate-to-export byte-identity is preserved (see [CHANGELOG.md](../../CHANGELOG.md)). M5 next.
 
 > **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M6.5→S10.5, M7→S11, M8→S12.**
 
 ## Milestones
 
-### M0 — Docs + Repo Scaffold ✅
+### M0: Docs + Repo Scaffold ✅
 
 **Goal:** Establish project foundation with comprehensive documentation and repository structure. (Slice S0.)
 
@@ -35,33 +35,33 @@
 - README provides clear build/run instructions
 - Documentation cross-references are complete and accurate
 
-### M1 — CPU Reference Renderer + CLI ✅
+### M1: CPU Reference Renderer + CLI ✅
 
 **Goal:** A correct, usable CPU renderer and CLI that produces a single still image from a `.flam3` file, validated against `flam3`. (Slices S1–S4.) This is a complete, shippable product slice on its own.
 
 **Key deliverables:**
-- **FlameKit** — genome model, `.flam3` parse/serialize, validation, temporal interpolation (S1)
-- **FlameReference** — CPU renderer: chaos game → histogram → log-density → density-estimation filter → palette/gamma (S2)
-- **Golden oracle harness** — dev-only `flam3` (built from source — no Homebrew formula); frozen genome set; PSNR/SSIM comparison (S3)
-- **`emberweft` CLI** — `render` / `validate` / `info`, CPU backend (S4)
+- **FlameKit**: genome model, `.flam3` parse/serialize, validation, temporal interpolation (S1)
+- **FlameReference**: CPU renderer: chaos game → histogram → log-density → density-estimation filter → palette/gamma (S2)
+- **Golden oracle harness**: dev-only `flam3` (built from source, no Homebrew formula); frozen genome set; PSNR/SSIM comparison (S3)
+- **`emberweft` CLI**: `render` / `validate` / `info`, CPU backend (S4)
 
 **Dependencies:** M0 complete
 
 **Definition of done:**
 - Parses `.flam3` files; rejects malformed input
-- CPU renderer matches `flam3` goldens within thresholds (PSNR/SSIM — see [testing.md](testing.md))
+- CPU renderer matches `flam3` goldens within thresholds (PSNR/SSIM: see [testing.md](testing.md))
 - `emberweft render` works end-to-end on the CPU backend
 - Same seed → identical frame (determinism)
 - Single-frame CPU performance baseline recorded
 
-### M2 — Metal Renderer + Parity ✅
+### M2: Metal Renderer + Parity ✅
 
 **Goal:** Port the renderer to Metal compute and prove it matches the CPU reference. (Slice S5.)
 
 **Key deliverables:**
-- **FlameRenderer (Metal compute)** — chaos-game/histogram kernel, density-estimation filter, palette/gamma
+- **FlameRenderer (Metal compute)**: chaos-game/histogram kernel, density-estimation filter, palette/gamma
 - `--backend cpu|metal` switch in the CLI
-- **Parity tests** — Metal output vs FlameReference (statistical + PSNR)
+- **Parity tests**: Metal output vs FlameReference (statistical + PSNR)
 
 **Dependencies:** M1 complete
 
@@ -71,19 +71,19 @@
 - Same seed → identical frame on Metal
 - Metal single-frame performance baseline recorded; Metal-vs-CPU speedup measured
 
-### M3 — Animation and Realtime Pipeline ✅
+### M3: Animation and Realtime Pipeline ✅
 
 **Goal:** Seamless looping sheep, smooth transitions between them, and realtime Metal playback with adaptive quality. (Slices S6–S7.)
 
 **Two segment kinds (mirrors the original Electric Sheep):**
-- **Loop** — animate a single sheep by **purely rotating the 2×2 linear part of each xform's pre-affine matrix through a full 360°** as a left-multiply `R(θ)·M`, θ = `blend·360°` (flam3 `sheep_loop`). The **palette is static** during a loop — seamless because `R(360°)·M = R(0°)·M` (not because of a palette wrap; palette motion exists only in transitions). Translation, post-affine, and camera are untouched; final xforms are skipped; non-final xforms rotate iff `animate ≠ 0`. This is structural motion of one genome via the same blend pipeline transitions use, and it animates still (single-keyframe) sheep. Frame budget (applied uniformly to all sheep since loops are generated live): **160 (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium** — following the ES evolution 128→160→320→900; played once then transitioned.
-- **Transition** — a morph from genome A's parameters to genome B's over a short segment.
+- **Loop**: animate a single sheep by **purely rotating the 2×2 linear part of each xform's pre-affine matrix through a full 360°** as a left-multiply `R(θ)·M`, θ = `blend·360°` (flam3 `sheep_loop`). The **palette is static** during a loop, seamless because `R(360°)·M = R(0°)·M` (not because of a palette wrap; palette motion exists only in transitions). Translation, post-affine, and camera are untouched; final xforms are skipped; non-final xforms rotate iff `animate ≠ 0`. This is structural motion of one genome via the same blend pipeline transitions use, and it animates still (single-keyframe) sheep. Frame budget (applied uniformly to all sheep since loops are generated live): **160 (~5.5–7 s) realtime**, **320 (~11–14 s) standard**, **900 (~15–39 s) premium**, following the ES evolution 128→160→320→900; played once then transitioned.
+- **Transition**: a morph from genome A's parameters to genome B's over a short segment.
 
-**Sequencing rule:** loops and transitions **alternate** — `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
+**Sequencing rule:** loops and transitions **alternate**: `loop(A) → transition(A→B) → loop(B) → transition(B→C) → …`. Transitions are always bracketed by loops; **never two transitions in a row**. This matches how the original Electric Sheep sequences its videos.
 
 **Key deliverables:**
-- **Loop playback** — animate each (still) sheep via flam3 `sheep_loop`: **purely rotate** each xform's pre-affine 2×2 0→360° (`R(θ)·M`) over `nframes` (seamless; palette static). Same blend pipeline as transitions.
-- Genome interpolation for smooth **transitions** between genomes, **generated on the fly** from two still sheep (`sheep_edge(A, B)`); a similarity metric picks coherent pairs (stored ES edges are an optional curation oracle / classic-flock mode, not a render requirement — an edge is just its two endpoint stills) ([transitions.md](../rendering/transitions.md))
+- **Loop playback**: animate each (still) sheep via flam3 `sheep_loop`: **purely rotate** each xform's pre-affine 2×2 0→360° (`R(θ)·M`) over `nframes` (seamless; palette static). Same blend pipeline as transitions.
+- Genome interpolation for smooth **transitions** between genomes, **generated on the fly** from two still sheep (`sheep_edge(A, B)`); a similarity metric picks coherent pairs (stored ES edges are an optional curation oracle / classic-flock mode, not a render requirement: an edge is just its two endpoint stills) ([transitions.md](../rendering/transitions.md))
 - `emberweft animate` (CLI) producing alternating loop/transition segments (S6)
 - **FlamePlayer** realtime adaptive engine (S7)
 - **FlameUI** Metal-layer wrapper (`CAMetalLayer`)
@@ -97,11 +97,11 @@
 - Can play a sequence of genomes where loops and transitions alternate, with no two transitions consecutive
 - Realtime **engine capability**: `FlamePlayer` sustains ≥ target fps for a bounded window under nominal thermal state (capability gate, baseline-recorded); absolute fps under real UI load is deferred to M4
 - Adaptive-quality **controller logic** verified against simulated fps/thermal signals (deterministic gate); real thermal-throttle behavior verified manually (deferred to M4 as a hard gate)
-- Transitions are visually smooth (no popping or discontinuities) — objective continuity gate: genome-space `‖Δ‖` bounded + consecutive-frame PSNR ≥ 40 dB
+- Transitions are visually smooth (no popping or discontinuities): objective continuity gate: genome-space `‖Δ‖` bounded + consecutive-frame PSNR ≥ 40 dB
 - Unit tests for interpolation math (both within-genome loops and between-genome transitions); animated-frame parity (vs-flam3 ≥ 30 dB; Metal↔CPU ≥ 38 dB)
 
-#### Post-M3 (v0.1.0) — real-genome parity + motion blur
-A post-M3 patch on `main` (not a new milestone — no new slices): closed the
+#### Post-M3 (v0.1.0): real-genome parity + motion blur
+A post-M3 patch on `main` (not a new milestone: no new slices): closed the
 real-genome vs-`flam3` density gap by parsing `highlight_power` and the spatial
 filter radius from the genome (real still PSNR ~20 dB → **49–52 dB**), ported
 motion blur as a faithful `temporal_samples` port on both backends
@@ -109,7 +109,7 @@ motion blur as a faithful `temporal_samples` port on both backends
 `pie`, `radial_blur`). M3's synthetic goldens stay byte-identical and the
 animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGELOG.md).
 
-### M4 — SwiftUI App and Library Browser ✅
+### M4: SwiftUI App and Library Browser ✅
 
 **Goal:** Build the main application UI with library browsing, search, and playback controls. (Slice S8.)
 
@@ -150,7 +150,7 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 - Basic accessibility support (VoiceOver labels)
 - **Hard realtime gate (inherited from M3):** playback sustains target fps *(preliminary: 60 fps @ 1080p on M2 Max)* under real app UI/compositing load, and real thermal-throttle behavior is verified (the absolute-fps-under-UI-load and real-thermal items deferred from M3)
 
-### M5 — macOS Screensaver Bundle
+### M5: macOS Screensaver Bundle
 
 **Goal:** Complete the screensaver bundle with settings and performance optimization. (Slice S9.)
 
@@ -174,7 +174,7 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 - Respects screen sleep and system power events
 - Tested on at least two displays (if available)
 
-### M6 — Export Pipeline ✅
+### M6: Export Pipeline ✅
 
 > **Complete (v0.5.0).** v0.4.0 shipped the export **engine + `emberweft export`
 > CLI** (H.264 + HEVC to MP4/MOV, long-form segment+concat, batch; frames
@@ -184,7 +184,7 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 > (`renderTemporalOffMain`), **separate loop/transition durations + rotation
 > velocity-matched easing**. Engine parity is
 > unchanged (no renderer math touched; the export↔animate byte-identity pins
-> hold). The vs-flam3 transition parity pin is `XCTSkip`'d — the owner decided
+> hold). The vs-flam3 transition parity pin is `XCTSkip`'d: the owner decided
 > the animation may improve on flam3's motion (renderer/determinism/Metal↔CPU
 > parity unchanged). **M6.1 slice 1 (pause/resume) shipped v0.5.1:** export
 > pause/resume + crash recovery (frame-count checkpointing + chunked-encode +
@@ -194,11 +194,11 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 > `docs/superpowers/specs|plans/2026-08-08-m6.1-export-pause-resume*`. **M6.1
 > slice 2 (temporal smoothing) shipped v0.5.2–v0.5.5:** export-only across-frame
 > smoothing before the display pipeline kills the low-spp "tiny dots" flicker.
-> v0.5.2: a CENTERED BOX window (revised from the original causal EMA — smooth
+> v0.5.2: a CENTERED BOX window (revised from the original causal EMA: smooth
 > from frame 1, no startup ramp, no lag), Metal via fused-chaos + atomicBuf
 > readback (no new shader; existing fused cores byte-unchanged), per-chunk window
 > + trivial resume (early-pause checkpoint fix). v0.5.3: quality tiers retuned
-> (Draft/Standard/High = spp 8/30/100; uniform window h=5 — free supersampling;
+> (Draft/Standard/High = spp 8/30/100; uniform window h=5: free supersampling;
 > Standard ≈ genome-default clean at ~33× the speed). v0.5.4–v0.5.5: temporal-
 > samples defaults (named tiers default to single-pass; the quality tier auto-sets
 > ts to 1/4/16/genome-default). OFF at genome-default + the mastering path.
@@ -227,9 +227,9 @@ animation parity band (43–58 dB) is unchanged; see [CHANGELOG.md](../../CHANGE
 - Exported video matches realtime rendering quality (determinism)
 - At least 3 export presets (720p/1080p/4K)
 
-### M6.5 — Flock Archive + Stitching
+### M6.5: Flock Archive + Stitching
 
-> **Complete (Unreleased / v0.6.0).** A local archive of pre-rendered loop/edge
+> **Complete (v0.6.0, 2026-08-16).** A local archive of pre-rendered loop/edge
 > videos plus Path A (Generate) and Path B (Stitch), so a long video composes in
 > seconds once material is cached instead of the hours a one-shot export took.
 > Engine parity is unchanged (no renderer math touched); animate-to-export
@@ -300,7 +300,7 @@ archive.
   path matches the export smoothing-OFF path frame-for-frame at the same
   `RenderSpec`.
 
-### M7 — Music Video and Audio-Reactive Features
+### M7: Music Video and Audio-Reactive Features
 
 **Goal:** Add audio analysis and audio-reactive parameter modulation for music-video generation. (Slice S11.)
 
@@ -323,7 +323,7 @@ archive.
 - UI for customizing parameter mapping
 - Example music-video exports for demo
 
-### M8 — Advanced Features
+### M8: Advanced Features
 
 **Goal:** Add polish, advanced formats, and exploratory features. (Slice S12.)
 
@@ -380,7 +380,7 @@ M8 (Advanced features)
 **No timeline commitment:** This roadmap defines milestone order and dependencies, but not specific dates or durations. Each milestone will be estimated based on progress and resources available.
 
 **Prioritization principles:**
-1. **Core rendering first:** M1 (CPU reference) and M2 (Metal) are the foundation — proven correct before anything else
+1. **Core rendering first:** M1 (CPU reference) and M2 (Metal) are the foundation: proven correct before anything else
 2. **Realtime next:** M3 makes it move
 3. **App before screensaver:** M4 before M5 for easier debugging
 4. **Export before audio:** M6 before M7 for a simpler dependency chain
@@ -395,7 +395,7 @@ M8 (Advanced features)
 
 ## Future / Exploratory
 
-Features that may be explored after the core product is complete. These are **not committed** and may never be implemented — they represent potential directions if there is user interest and developer capacity.
+Features that may be explored after the core product is complete. These are **not committed** and may never be implemented: they represent potential directions if there is user interest and developer capacity.
 
 **Community and sharing:**
 - Import/export of curated genome packs
@@ -408,7 +408,7 @@ Features that may be explored after the core product is complete. These are **no
 - Multi-screen gallery installations
 - Projection mapping support
 
-**Generative / exploratory:** *(non-neural — these are search, curation, and heuristic tools, not AI models)*
+**Generative / exploratory:** *(non-neural: these are search, curation, and heuristic tools, not AI models)*
 - Assisted genome generation and curation tools
 - Style transfer / palette matching between genomes
 - Fitness heuristics for the local genetics system
@@ -425,12 +425,12 @@ Features that may be explored after the core product is complete. These are **no
 
 ## Related Documentation
 
-- [`development-approach.md`](development-approach.md) — Methodology, build order (S0–S12), GPU strategy
-- [`testing.md`](testing.md) — Test methodology, oracles, CI gates
-- [`../architecture.md`](../architecture.md) — System architecture and module organization
-- [`tech-stack.md`](tech-stack.md) — Technology choices supporting the roadmap
-- [`project-layout.md`](project-layout.md) — Repository structure for milestone work
-- [`performance.md`](performance.md) — Performance targets for each milestone
+- [`development-approach.md`](development-approach.md): Methodology, build order (S0–S12), GPU strategy
+- [`testing.md`](testing.md): Test methodology, oracles, CI gates
+- [`../architecture.md`](../architecture.md): System architecture and module organization
+- [`tech-stack.md`](tech-stack.md): Technology choices supporting the roadmap
+- [`project-layout.md`](project-layout.md): Repository structure for milestone work
+- [`performance.md`](performance.md): Performance targets for each milestone
 
 ---
 
