@@ -2,9 +2,10 @@
 
 *A native macOS, Apple-Silicon-GPU fractal-flame dream machine.*
 
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm--NC-1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
-![Status](https://img.shields.io/badge/status-pre--alpha-orange)
-![Platform](https://img.shields.io/badge/platform-macOS%2026%20·%20Apple%20Silicon-lightgrey)
+[![Release](https://img.shields.io/github/v/release/froggeric/Emberweft)](https://github.com/froggeric/Emberweft/releases)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue)](https://polyformproject.org/licenses/noncommercial/1.0.0)
+![Platform](https://img.shields.io/badge/platform-macOS%2026%20%C2%B7%20Apple%20Silicon-lightgrey)
+![Swift](https://img.shields.io/badge/Swift-6-orange)
 
 **Status:** pre-alpha · v0.6.0: CPU + Metal renderers, animation + realtime playback, motion-blurred real-genome parity, seamless boundaries, a full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS, distinct preview/export quality settings), and the full video-export studio (a GUI export sheet, single/sequence/batch, with non-blocking progress + ETA + cancel, plus the `emberweft export` CLI, mastering-quality ProRes 422 HQ (and H.264/HEVC), calmer loop/transition pacing with eased boundaries, plus export pause/resume + crash recovery, and temporal smoothing (centered box window, retuned quality tiers, tier-aware temporal samples; loop-repeat removed for smooth full-speed motion; v0.5.2–v0.5.7), plus a pre-rendered flock archive with Generate (pre-bake) and Stitch (no-reencode concat) paths and the `emberweft flock` CLI, v0.6.0) are working · source-available (PolyForm Noncommercial)
 
