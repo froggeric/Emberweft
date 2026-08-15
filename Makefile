@@ -31,6 +31,8 @@ dist: release ## Build a distributable into ./dist: Emberweft.app (double-clicka
 	# foreign entries — and the build machine's .build path), which is why the sources resolve
 	# it explicitly: FlameRenderer/ModuleResources.swift + EmberweftGUI/AppModel.moduleBundle.
 	cp -R .build/release/emberweft_FlameRenderer.bundle .build/release/emberweft_EmberweftGUI.bundle $(APP_BUNDLE)/Contents/Resources/
+	# App icon (Tools/AppIcon/generate_icon.swift renders it; Assets/AppIcon.icns is committed).
+	cp Assets/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
 	@xattr -cr $(APP_BUNDLE)
 	@codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "Release built into dist/:"
