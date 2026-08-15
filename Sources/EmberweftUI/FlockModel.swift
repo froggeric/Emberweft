@@ -168,6 +168,16 @@ public final class FlockModel {
                 for try await p in stream {
                     self.applyGenerate(p)
                 }
+                // The loop can end WITHOUT a terminal event being consumed:
+                // `cancelGenerate()` cancels this task, and a cancelled
+                // AsyncThrowingStream iteration terminates early — discarding
+                // the producer's subsequent `.cancelled` event (the producer
+                // unwinds ~2 frames later and yields into a consumer that has
+                // already left). When that race is lost, land the terminal
+                // HERE. (If a terminal WAS consumed — e.g. the run completed
+                // right at the cancel — the state is already terminal and the
+                // guard leaves it untouched.)
+                self.landCancelledGenerateIfNeeded()
             } catch is CancellationError {
                 self.generateState = .cancelled
             } catch {
@@ -216,6 +226,23 @@ public final class FlockModel {
 
     /// True iff a generate run is currently in flight (a non-terminal,
     /// non-cancel-pending state) — gates `cancelGenerate()`'s state write.
+    /// Land `.cancelled` if a cancel was requested and no terminal state was
+    /// consumed (the cancelled-iteration race — see `generate(_:)`).
+    private func landCancelledGenerateIfNeeded() {
+        guard generateCancelRequested, !Self.isTerminalGenerate(generateState) else { return }
+        generateState = .cancelled
+    }
+    private func landCancelledStitchIfNeeded() {
+        guard stitchCancelRequested, !Self.isTerminalStitch(stitchState) else { return }
+        stitchState = .cancelled
+    }
+    private static func isTerminalGenerate(_ s: GenerateUIState) -> Bool {
+        switch s { case .completed, .failed, .cancelled: return true; default: return false }
+    }
+    private static func isTerminalStitch(_ s: StitchUIState) -> Bool {
+        switch s { case .completed, .failed, .cancelled: return true; default: return false }
+    }
+
     private var generateRunInFlight: Bool {
         switch generateState {
         case .resolving, .running, .rendering: return true
@@ -249,6 +276,9 @@ public final class FlockModel {
                 for try await p in stream {
                     self.applyStitch(p)
                 }
+                // Same cancelled-iteration race as the generate path (see the
+                // comment there): land the terminal here when it was lost.
+                self.landCancelledStitchIfNeeded()
             } catch is CancellationError {
                 self.stitchState = .cancelled
             } catch {
