@@ -246,6 +246,16 @@ public struct ArchiveRenderer: Sendable {
         // `[AVMetadataItem]` is not Sendable, so a FRESH array is built per
         // renderSegmentRange call (core + wrap) instead of reusing one across
         // actor hops.
+        // The encoder (`VideoEncoder`) sizes its `PixelBufferPool` + the output
+        // track from `settings.resolution`, while `makeParams` renders at the
+        // SHARD's width/height — a caller leaving `resolution` at its default
+        // (the GUI's `archiveSettings` used to) traps in `PixelBufferPool.fill`
+        // for any shard ≠ 1080p (v0.6.0 crash). Force the two to agree here, at
+        // the single choke point every flock caller (GUI Generate/Stitch, CLI)
+        // funnels through.
+        var aligned = settings
+        aligned.resolution = .custom(width: shard.width, height: shard.height)
+        let settings = aligned
         let (spp, _) = settings.quality.resolvedSamplesPerPixel(for: A)
         let stem = out.deletingPathExtension().lastPathComponent
         func makeMeta() -> [AVMetadataItem] {

@@ -366,6 +366,37 @@ final class ArchiveRendererTests: XCTestCase {
 
     // MARK: - renderEdge: transition artifact (real render, fast)
 
+    /// Regression pin for the v0.6.0 GUI crash: a caller whose `settings`
+    /// `resolution` DISAGREES with the shard (the GUI's `archiveSettings` used
+    /// to leave it at the `.p1080` default) must not trap in
+    /// `PixelBufferPool.fill` — `renderIntoArchive` force-aligns
+    /// `settings.resolution` to the shard dims, and the ENCODED track must come
+    /// out at the shard dims (48×32 here), not the stale settings resolution.
+    func testRenderLoopAlignsEncoderResolutionToShardWhenSettingsDisagree() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = shardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.resolution = .p1080          // deliberately mismatched (GUI bug shape)
+        let A = try parseSierpinski()
+        let coord = ExportCoordinator(backend: .cpu)
+        let renderer = ArchiveRenderer()
+        try await renderer.renderLoop(A: A, aGen: "248", aId: "00628", shard: shard,
+                                      settings: settings, coordinator: coord, catalog: catalog,
+                                      backend: .cpu, useOffMainMetal: false,
+                                      flockRoot: root, sourceSha: nil)
+        let out = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                 aGen: "248", aId: "00628",
+                                                 bGen: "248", bId: "00628", ext: "mov")
+        let track = try await AVURLAsset(url: out).load(.tracks).first
+        let size = try await track?.load(.naturalSize)
+        XCTAssertEqual(size?.width, 48, "encoded width must be the SHARD's, not settings.resolution's")
+        XCTAssertEqual(size?.height, 32, "encoded height must be the SHARD's, not settings.resolution's")
+    }
+
+
     /// A successful edge render produces a `.mov` + row with `kind == .edge`.
     /// The plan is the 2-segment lone-edge; only the transition frames are
     /// encoded. (A==B genome data is fine here — Transition.blend still runs and

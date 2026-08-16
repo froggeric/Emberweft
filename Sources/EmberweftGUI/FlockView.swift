@@ -288,9 +288,11 @@ private struct FlockSourceMenu: View {
 }
 
 
-/// `ExportSettings` matched to a shard + a quality choice. The archive path
-/// renders at the SHARD's width/height (not `settings.resolution`), so resolution
-/// is left at default. v0.5.8: the Generate default is now **Standard**
+/// `ExportSettings` matched to a shard + a quality choice. Resolution is set to
+/// the SHARD's width/height (the encoder sizes its pool + output track from
+/// `settings.resolution` — the v0.6.0 crash left it at the 1080p default, so any
+/// other shard trapped in `PixelBufferPool.fill`; `ArchiveRenderer` now also
+/// enforces this as a belt-and-suspenders override). v0.5.8: the Generate default is now **Standard**
 /// (`.medium`, spp 30, the tier's recommended ts, smoothing ON as the tier
 /// resolves) — genome-default was impractically slow (~1000 spp ⇒ hours per 1080p
 /// edge, which with the old per-unit-only progress read as "0 rendered for
@@ -303,6 +305,7 @@ private struct FlockSourceMenu: View {
 /// `ExportSettings.resolve` (single-baseFlame) is NOT used here.
 private func archiveSettings(for shard: ShardSpec, quality: ExportQualityChoice) -> ExportSettings {
     var s = ExportSettings()
+    s.resolution = .custom(width: shard.width, height: shard.height)
     s.codec = shard.codec
     s.fps = shard.fps
     s.container = shard.codec.requiresMOVContainer ? .mov : .mp4
