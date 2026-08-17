@@ -8,7 +8,7 @@
 
 **Current milestone:** M5, macOS Screensaver Bundle · **M0, M1, M2, M3, and M4 complete; M6 complete (v0.5.0); M6.1 pause/resume (v0.5.1); M6.1 slice 2 temporal smoothing (v0.5.2–v0.5.7); M6.5 flock archive + stitching (v0.6.0)** (see [CHANGELOG.md](../../CHANGELOG.md)). M4 shipped in two slices: **v0.2.0** (the SwiftUI app first slice: library browser + click-to-play, off-main Metal thumbnails, the `curate` CLI) and **v0.3.0** (M4 complete: a `NavigationSplitView` sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections/playlists with drag reorder, and a non-modal playback window). Post-M3 patches on `main`: **v0.1.0** (real-genome faithfulness `highlight_power`/spatial-filter, motion blur, +4 variations), **v0.1.1** (corpus-variation coverage → 57/99), **v0.1.2** (the remaining 42 variations → **99/99 flam3 variation coverage**), **v0.1.3** (fix: the Metal empty-frame regression, `GPUXform` by const-ref in the Metal kernels), **v0.1.4** (fix: Metal Float-overflow collapses in 15 hyperbolic/trig/exp variations, clamp args to ±88), **v0.1.5** (fix: transition endpoint faithfulness, `Transition(A,B,1.0)` now reaches B), **v0.1.6** (fix: transition smoothness, Quality field interpolation + `.log` det guard + endpoint padding-final drop), **v0.1.7** (transition-faithfulness audit + Camera.scale log-space divergence formalized), **v0.1.8–v0.1.9** (loop→transition boundary: port flam3's seqflag shortcut, then revert the offline sharp-frame regression), **v0.1.10** (fix: clip one-sided variation leaks for seamless boundaries), **v0.3.1** (M4 polish: configurable preview presets + live FPS readout in both playback windows; `testFiniteDeterministicRenders` crash fix via a nontrapping `intTrunc` guard on `Int(Double)`), **v0.3.2** (M4 polish: distinct preview vs. export quality in Settings, per-parameter help tooltips, `⌘,` shortcut-collision fix, `make dist` target), **v0.4.0** (M6 engine + CLI: `emberweft export` to MP4/MOV, `FramePlan`, `ThreadSeedBudget`). **v0.5.0** (M6 GUI export: export sheet + non-blocking progress/ETA/cancel, ProRes 422 HQ mastering default, off-main temporal Metal, separate loop/transition durations + rotation easing). **v0.5.1** (M6.1 pause/resume: Pause/Resume/Discard + crash recovery, interleaved byte-identical render loop, CLI `--checkpoint-frames`/`--resume`/`--discard`). M6.1 slice 2 (temporal smoothing: centered box window + retuned quality tiers + tier-aware temporal samples; export-only; animate/export byte-identity preserved) shipped v0.5.2–v0.5.7 (v0.5.7 removed loop-repeat, whose render-once-repeat caused half-speed motion) (see [CHANGELOG.md](../../CHANGELOG.md)). **M6.5, flock archive + stitching** (standalone milestone between M6 and M7; complete in v0.6.0): a local archive of pre-rendered loop/edge videos (HEVC Main10 `.mov`, ES-inspired 4-field naming) plus Path A (Generate) to pre-bake material and Path B (Stitch) to compose a long video from the archive (cached segments stitch in seconds via passthrough concat; misses render into the archive first), a `flock.sqlite` catalog (rebuildable from files + tags), the `emberweft flock generate|stitch|browse|rebuild|export-list` CLI, a Flock GUI area, a decoupled one-shot export (moved off the playback windows to a library-selection action), and a new `FlameFlock` module. Engine parity is unchanged (no edit under `Sources/FlameKit|FlameReference|FlameRenderer`) and animate-to-export byte-identity is preserved (see [CHANGELOG.md](../../CHANGELOG.md)). M5 next.
 
-> **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M6.5→S10.5, M7→S11, M8→S12.**
+> **How we build:** milestones describe *what* ships; the slice-by-slice build order, TDD methodology, GPU strategy, and oracle validation live in [development-approach.md](development-approach.md), and the test gates in [testing.md](testing.md). Milestones map to development slices as **M0→S0, M1→S1–S4, M2→S5, M3→S6–S7, M4→S8, M5→S9, M6→S10, M6.5→S10.5, M6.6→S10.6, M7→S11, M8→S12.**
 
 ## Milestones
 
@@ -300,6 +300,23 @@ archive.
   path matches the export smoothing-OFF path frame-for-frame at the same
   `RenderSpec`.
 
+### M6.6: Resolution-Independent Framing (Scale Normalization)
+
+**Goal:** Render ES genomes at the same *authored framing* regardless of output resolution. A `.flam3` genome's `scale` is absolute pixels-per-unit, tuned for its authored `size` (gen-248: 800×592 / 1280×720 / 1920×1080 populations), so today the shard resolution *is* a 3× zoom — 720p reads "zoomed in", 4K "zoomed out". Data analysis of all 9,463 gen-248 sheep shows the authoring anchor is **width**: median `scale/width` is 0.326/0.333/0.330 across the three populations (2% spread) while `scale/height` differs 34%. M6.6 adds a pure width normalization (`effectiveScale = scale × renderWidth / authoredWidth`) applied to the flock archive and one-shot export (default on; `faithful` opt-out; `animate` and the engine stay untouched — parity gates and animate↔export byte-identity preserved via an explicit `framing` mode on `ExportSettings`). A `framing` exact-gate column + `emberweft.framing` tag keep normalized and legacy artifacts from mixing in stitches. (Slice S10.6, standalone between M6.5 and M7.)
+
+**Key deliverables:**
+- `FlameKit.Framing` — pure, deterministic width normalization helper (no renderer change; parity gate untouched).
+- `ExportSettings.FramingMode` (`faithful` type-default / `normalized` product-default) threaded through one-shot export (`buildRenderContext`) and the flock archive (`ArchiveRenderer`), GUI + CLI.
+- Catalog schema v3: `artifacts.framing` exact hit-gate + `emberweft.framing` mdta tag + rebuild parsing; legacy rows MISS and re-render.
+- GUI: export sheet framing picker (Normalized default / Authored); Flock tabs always normalized.
+
+**Dependencies:** M6.5 complete.
+
+**Definition of done:**
+- Same genome rendered at 720p/1080p/1440p/4K shows the same framing (identical subject fraction of frame)
+- `animate` ↔ `export --framing faithful` byte-identity pins stay green; engine dirs (`FlameKit` renderer math, `FlameReference`, `FlameRenderer`) behaviorally unchanged
+- Stitch never mixes framing generations (gate enforced, migration-tested)
+
 ### M7: Music Video and Audio-Reactive Features
 
 **Goal:** Add audio analysis and audio-reactive parameter modulation for music-video generation. (Slice S11.)
@@ -364,6 +381,8 @@ M6 (Export)
   ↓
 M6.5 (Flock archive + stitching)
   ↓
+M6.6 (Resolution-independent framing)
+  ↓
 M7 (Audio-reactive)
   ↓
 M8 (Advanced features)
@@ -373,6 +392,7 @@ M8 (Advanced features)
 - M4 (app) and M5 (screensaver) can be developed in parallel after M3
 - M6 (export) can proceed in parallel with M5
 - M6.5 (flock archive) builds on M6 and can proceed in parallel with M5; M5 later consumes the archive
+- M6.6 (framing normalization) builds on M6.5; the screensaver (M5) inherits normalized framing through the archive
 - M7 and M8 are sequential and depend on all previous milestones
 
 ## Timeline and Prioritization
