@@ -163,4 +163,74 @@ final class ExportPresetsTests: XCTestCase {
         try? FileManager.default.removeItem(at: outLo)
         try? FileManager.default.removeItem(at: outHi)
     }
+
+    // MARK: - M6.6 framing normalization (one-shot export path)
+
+    /// Framing is ACTIVE by CLI default at a non-native resolution: the 320×200
+    /// fixture normalized to 1080p must differ from the faithful render.
+    func testExportNormalizedDiffersFromFaithfulAtNonNativeResolution() async throws {
+        let a = tmp("a.png"), b = tmp("b.png")
+        let rcA = await EmberweftCLI.export([sierpinski(), "--segments", "1", "--frames", "4",
+                                             "--frame", "2", "--png", "--resolution", "1080p",
+                                             "--framing", "faithful", "--out", a.path])
+        let rcB = await EmberweftCLI.export([sierpinski(), "--segments", "1", "--frames", "4",
+                                             "--frame", "2", "--png", "--resolution", "1080p",
+                                             "--framing", "normalized", "--out", b.path])
+        XCTAssertEqual(rcA, 0); XCTAssertEqual(rcB, 0)
+        let faithful = try RGBA8Image.readPNG(from: a)
+        let normalized = try RGBA8Image.readPNG(from: b)
+        XCTAssertNotEqual(faithful, normalized,
+                          "320×200-authored genome at 1080p: factor 6 must change the frame")
+        try? FileManager.default.removeItem(at: a)
+        try? FileManager.default.removeItem(at: b)
+    }
+
+    /// The AC that MATTERS (spec §1): same genome, two resolutions, normalized —
+    /// identical framing. Metric: the column luma-mass profile (sum of R+G+B per
+    /// column), reduced to its CENTROID and RMS half-width, each as a fraction of
+    /// image width. Alpha is useless here — ToneMapping sets alpha 255 on every
+    /// pixel (opaque output), so a nonzero-alpha bounding box is the full frame
+    /// at any framing (vacuous). Luma MASS (vs a nonzero-luma bounding box) is
+    /// robust to stray Monte-Carlo samples: one bright pixel shifts the RMS width
+    /// negligibly while inflating a bounding box outright. Background is black
+    /// (flam3 default `background 0 0 0`), so unsampled columns carry no mass.
+    func testNormalizedFramingIsResolutionInvariant() async throws {
+        func framingProfile(_ url: URL) throws -> (centroid: Double, rmsHalfWidth: Double) {
+            let img = try RGBA8Image.readPNG(from: url)
+            var cols = [Double](repeating: 0, count: img.width)
+            for y in 0..<img.height {
+                let row = y * img.width
+                for x in 0..<img.width {
+                    let i = (row + x) * 4
+                    // Widen BEFORE summing: pixels are UInt8 and 3×255 overflows
+                    // (the brief's verbatim `Double(a + b + c)` traps with
+                    // "arithmetic overflow" on bright columns).
+                    cols[x] += Double(img.pixels[i]) + Double(img.pixels[i + 1]) + Double(img.pixels[i + 2])
+                }
+            }
+            let total = cols.reduce(0, +)
+            precondition(total > 0, "fixture must render nonzero content")
+            let centroid = zip(cols.indices, cols).reduce(0.0) { $0 + Double($1.0) * $1.1 } / total
+            let varX = zip(cols.indices, cols).reduce(0.0) {
+                let d = Double($1.0) - centroid
+                return $0 + d * d * $1.1
+            } / total
+            return (centroid / Double(img.width), sqrt(varX) / Double(img.width))
+        }
+        let small = tmp("s.png"), big = tmp("b.png")
+        let rcS = await EmberweftCLI.export([sierpinski(), "--segments", "1", "--frames", "4",
+                                             "--frame", "2", "--png", "--resolution", "720p",
+                                             "--framing", "normalized", "--out", small.path])
+        let rcB = await EmberweftCLI.export([sierpinski(), "--segments", "1", "--frames", "4",
+                                             "--frame", "2", "--png", "--resolution", "1440p",
+                                             "--framing", "normalized", "--out", big.path])
+        XCTAssertEqual(rcS, 0); XCTAssertEqual(rcB, 0)
+        let ps = try framingProfile(small), pb = try framingProfile(big)
+        XCTAssertEqual(ps.centroid, pb.centroid, accuracy: 0.02,
+                       "normalized framing must place the subject identically (720p=\(ps.centroid) 1440p=\(pb.centroid))")
+        XCTAssertEqual(ps.rmsHalfWidth, pb.rmsHalfWidth, accuracy: 0.02,
+                       "normalized framing must size the subject identically (720p=\(ps.rmsHalfWidth) 1440p=\(pb.rmsHalfWidth))")
+        try? FileManager.default.removeItem(at: small)
+        try? FileManager.default.removeItem(at: big)
+    }
 }

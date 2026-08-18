@@ -51,6 +51,12 @@ extension EmberweftCLI {
         // resume gate rejects `--resume --temporal-smoothing …` (the checkpoint's
         // stored `settings.smoothingAlpha` is authoritative on resume).
         var temporalSmoothing: TemporalSmoothing = .auto
+        // M6.6 (T4): `--framing faithful|normalized`. CLI default `normalized`
+        // (the product default; the TYPE default on ExportSettings stays
+        // `.faithful` so animate/GUI are unchanged). RECIPE flag → sets
+        // `anyRecipeFlagExplicit` so `--resume` rejects it (D11; the
+        // checkpoint's stored framing is authoritative on resume).
+        var framing = "normalized"
         // `--resume <out>`: read the checkpoint beside `<out>` and complete the run.
         // `--discard <out>`: delete the checkpoint + chunk temps beside `<out>`.
         // Both are standalone MODE flags (handled before genome loading); exactly
@@ -164,6 +170,13 @@ extension EmberweftCLI {
                     // `anyRecipeFlagExplicit` so `--resume` rejects it (D11).
                     guard let v = value() else { return missing("--temporal-smoothing") }
                     temporalSmoothing = (v.lowercased() == "off") ? .off : .auto
+                    anyRecipeFlagExplicit = true; i += 2
+                case "--framing":
+                    guard let v = value() else { return missing("--framing") }
+                    guard v == "faithful" || v == "normalized" else {
+                        EmberweftCLI.err("error: --framing must be faithful|normalized\n"); return 2
+                    }
+                    framing = v
                     anyRecipeFlagExplicit = true; i += 2
                 case "--resume":
                     // Task 9 (M6.1): complete a previously-checkpointed run beside
@@ -389,6 +402,11 @@ extension EmberweftCLI {
             temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
             segmentFrames: segmentFrames, renderable: renderable, fallbackFlame: flames[0], backend: backend,
             temporalSmoothing: temporalSmoothing)
+        // M6.6 (T4): framing is a CLI-level concern (the shared resolver has no
+        // framing parameter by design — the GUI builds it from its own pickers;
+        // keeping `ExportSettings.resolve`'s signature stable avoids drift).
+        // The TYPE default is `.faithful`, so this only overrides on export.
+        settings.framing = framing == "normalized" ? .normalized : .faithful
 
         // --- HEVC availability probe + fallback (Task 5 AC3) ---
         // H.264 is universally available on the target, so we only probe when
@@ -471,17 +489,6 @@ extension EmberweftCLI {
             // the intent explicit (P2.2). The params built below carry no smoothing
             // state either way; this is belt-and-suspenders.
             temporalSmoothing = .off
-            var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
-                                    transitionFramesPerSegment: transitionFramesPerSegment,
-                                    selector: Sequential(seed: seed), seed: seed)
-            let plan = FramePlan(schedule: &schedule, segmentCount: segmentCount, flames: renderable,
-                                 loopCycles: loopCycles, stagger: stagger,
-                                 temporalSamples: max(1, settings.temporalSamples))
-            guard onlyFrame >= 0, onlyFrame < plan.totalFrames else {
-                EmberweftCLI.err("error: --frame \(onlyFrame) out of range (0..\(plan.totalFrames - 1))\n")
-                return 2
-            }
-            let d = plan.descriptor(for: onlyFrame)
             // Genome-native size unless --resolution was explicit (byte-identity
             // with `animate`, which has no resolution tiers).
             let pw: Int, ph: Int
@@ -490,6 +497,26 @@ extension EmberweftCLI {
             } else {
                 pw = max(1, renderable[0].size.x); ph = max(1, renderable[0].size.y)
             }
+            // M6.6: this path bypasses buildRenderContext, so it applies the
+            // framing normalization itself. At the default (no --resolution)
+            // pw == renderable[0].size.x, so the first genome's factor is 1
+            // (identity) — the single-genome animate byte-identity pins hold.
+            // With an explicit --resolution the factors are non-identity,
+            // matching the coordinator paths exactly.
+            let planFlames = settings.framing == .normalized
+                ? renderable.map { Framing.normalize(flame: $0, renderWidth: pw) }
+                : renderable
+            var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
+                                    transitionFramesPerSegment: transitionFramesPerSegment,
+                                    selector: Sequential(seed: seed), seed: seed)
+            let plan = FramePlan(schedule: &schedule, segmentCount: segmentCount, flames: planFlames,
+                                 loopCycles: loopCycles, stagger: stagger,
+                                 temporalSamples: max(1, settings.temporalSamples))
+            guard onlyFrame >= 0, onlyFrame < plan.totalFrames else {
+                EmberweftCLI.err("error: --frame \(onlyFrame) out of range (0..\(plan.totalFrames - 1))\n")
+                return 2
+            }
+            let d = plan.descriptor(for: onlyFrame)
             let (spp, os) = settings.quality.resolvedSamplesPerPixel(for: renderable[0])
             let params = RenderParams(seed: seed, width: pw, height: ph,
                                       oversample: os, samplesPerPixel: spp)
