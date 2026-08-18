@@ -9,19 +9,51 @@ implications of porting flam3) is the owner's decision and under review.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-18
+
+Framing at last: every genome now keeps its authored composition at every
+output resolution, from the archive to the export sheet to the library
+thumbnail and the playback preview. This release also fixes the GUI crash
+when generating into any non-1080p shard, and rebuilds the context menus on
+a native AppKit bridge so they no longer vanish mid-use.
+
 ### Added
 - **Resolution-independent framing (M6.6).** A genome's `scale` is absolute
   pixels-per-unit authored for its own canvas, so changing the output
   resolution used to change the composition (720p "zoomed in", 4K "zoomed
   out"). Framing now re-anchors `scale` to the output WIDTH (the ES gen-248
-  authoring anchor) via a multiplicative correction — same composition at
-  every resolution. New `--framing faithful|normalized` on `export` and
-  `flock` (default `normalized`; `--framing faithful` restores the raw scale),
-  a Framing picker (Normalized default / Authored) in the GUI export sheet,
-  and an `emberweft.framing` video tag + exact catalog hit-gate so a stitched
-  archive can never mix framing modes. `animate` and the renderers are
-  unchanged (always faithful) — engine behavior is untouched beyond the pure
-  `FlameKit.Framing` helper.
+  authoring anchor: scale/width agrees to 2% across the archive's three
+  authored-size populations, while scale/height differs by 34%) via a
+  multiplicative correction, the perceptually correct (log-scale) form. New
+  `--framing faithful|normalized` on `export` (including the batch
+  `--jobs` path) and `flock generate|stitch` (default `normalized`;
+  `--framing faithful` restores the raw scale), a Framing picker
+  (Normalized default / Authored) in the GUI export sheet, and an
+  `emberweft.framing` video tag + exact catalog hit-gate so a stitched
+  archive can never mix framing modes (legacy v0.6.0 artifacts re-render on
+  the next generate/stitch). `animate` and the renderers are unchanged
+  (always faithful); animate-to-export byte-identity pins stay green.
+- **Normalized framing in the library and previews.** Thumbnails and both
+  playback windows (single-genome and collection sequence) now frame exactly
+  like an export at any resolution; the thumbnail cache carries a generation
+  marker so pre-0.6.1 caches re-render once.
+
+### Fixed
+- **GUI crash when generating into a non-1080p shard** (v0.6.0): the encoder
+  sized its pixel-buffer pool from the export settings' default resolution
+  while frames rendered at the shard's dimensions, trapping on any shard
+  other than 1080p. The archive render path now force-aligns the encoder
+  resolution to the shard (and the encoded dimensions were wrong-by-luck for
+  1080p before).
+- **Context menus vanishing before a click landed.** The grid/list context
+  menus (library cells, collection cells, folder and collection rows, flock
+  browse rows) moved from SwiftUI `.contextMenu` to a native AppKit
+  responder-chain menu: SwiftUI tore the old sessions down on cell
+  re-renders (a thumbnail finishing its load, a facet or badge publish),
+  worst on the multi-level Add to Collection submenu. Menus are now built as
+  a snapshot at right-click time and cannot dismiss or mutate mid-session;
+  destructive items are styled in the system red, and left-click behavior
+  (taps, buttons, drag-reorder) is unchanged.
 
 ## [0.6.0] - 2026-08-16
 
