@@ -439,4 +439,39 @@ final class ArchiveRendererTests: XCTestCase {
                        Int(truncatingIfNeeded: FlockSeed.seed(shard: shard.name, aGen: "248", aId: "00628",
                                           bGen: "248", bId: "03194")))
     }
+
+    // MARK: - M6.6 framing normalization (flock)
+
+    func testUnitFlamesNormalizesBothEndpointsWhenNormalized() throws {
+        let A = try parseSierpinski()                       // authored 320×200, scale 100
+        let B = try parseSierpinski()
+        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: B, renderWidth: 48, framing: .normalized)
+        XCTAssertEqual(nA.camera.scale, 100.0 * 48.0 / 320.0, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(nB).camera.scale, 100.0 * 48.0 / 320.0, accuracy: 1e-9)
+        XCTAssertNil(ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: 48, framing: .normalized).B,
+                     "loop: B stays nil")
+    }
+
+    func testUnitFlamesFaithfulPassesEndpointsThrough() throws {
+        let A = try parseSierpinski()
+        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: A, renderWidth: 48, framing: .faithful)
+        XCTAssertEqual(nA, A, "faithful = verbatim genomes (CLI mastering-parity mode)")
+        XCTAssertEqual(nB, A)
+    }
+
+    /// Plan-level wiring pin: the CORE plan built by renderLoop from a
+    /// normalized render carries the rescaled scale at frame 0 (blend 0 = pure A).
+    /// This is the honest byte-level pin for the flock path — the .mov container
+    /// is not byte-stable, but the PLAN's genome is deterministic.
+    func testLoopCorePlanCarriesNormalizedScale() throws {
+        let A = try parseSierpinski()
+        let shard = shardSpec()
+        let (nA, _) = ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: shard.width,
+                                                 framing: .normalized)
+        let plan = ArchiveRenderer.makeLoopCorePlan(A: nA, loopFrames: shard.loopFrames,
+            transFrames: shard.transFrames, seed: 1, temporalSamples: 1)
+        let g = plan.descriptor(for: ArchiveRenderer.SeamGeometry.coreRenderRange(loopFrames: shard.loopFrames).lowerBound).blendAt(0)
+        XCTAssertEqual(g.camera.scale, 100.0 * Double(shard.width) / 320.0, accuracy: 1e-9,
+                       "the plan must carry the normalized scale end-to-end")
+    }
 }

@@ -172,12 +172,14 @@ public struct ArchiveRenderer: Sendable {
         let wrapOut = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
                                                      aGen: aGen, aId: aId, bGen: aGen, bId: aId,
                                                      ext: "mov", variant: FlockNaming.wrapVariant)
-        let params = Self.makeParams(A: A, shard: shard, seed: seed, settings: settings)
-        let corePlan = Self.makeLoopCorePlan(A: A, loopFrames: shard.loopFrames,
+        let (nA, _) = Self.unitFlames(A: A, B: nil, renderWidth: shard.width,
+                                      framing: settings.framing)
+        let params = Self.makeParams(A: nA, shard: shard, seed: seed, settings: settings)
+        let corePlan = Self.makeLoopCorePlan(A: nA, loopFrames: shard.loopFrames,
                                              transFrames: shard.transFrames, seed: seed,
                                              temporalSamples: settings.temporalSamples)
         let coreRange = SeamGeometry.coreRenderRange(loopFrames: shard.loopFrames)
-        let wrapPlan = Self.makeLoopWrapPlan(A: A, loopFrames: shard.loopFrames,
+        let wrapPlan = Self.makeLoopWrapPlan(A: nA, loopFrames: shard.loopFrames,
                                              transFrames: shard.transFrames, seed: seed,
                                              temporalSamples: settings.temporalSamples)
         let wrapRange = SeamGeometry.wrapRenderRange(loopFrames: shard.loopFrames)
@@ -193,7 +195,7 @@ public struct ArchiveRenderer: Sendable {
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: aGen, bId: aId,
             kind: .loop, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A, wrapOut: wrapOut, wrapPlan: wrapPlan, wrapRange: wrapRange,
+            seed: seed, A: nA, wrapOut: wrapOut, wrapPlan: wrapPlan, wrapRange: wrapRange,
             perFrame: corePerFrame)
     }
 
@@ -212,8 +214,10 @@ public struct ArchiveRenderer: Sendable {
         let seed = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId, bGen: bGen, bId: bId)
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
                                                  aGen: aGen, aId: aId, bGen: bGen, bId: bId, ext: "mov")
-        let params = Self.makeParams(A: A, shard: shard, seed: seed, settings: settings)
-        let plan = Self.makeEdgeExtPlan(A: A, B: B, loopFrames: shard.loopFrames,
+        let (nA, nB) = Self.unitFlames(A: A, B: B, renderWidth: shard.width,
+                                        framing: settings.framing)
+        let params = Self.makeParams(A: nA, shard: shard, seed: seed, settings: settings)
+        let plan = Self.makeEdgeExtPlan(A: nA, B: nB ?? nA, loopFrames: shard.loopFrames,
                                         transFrames: shard.transFrames, seed: seed,
                                         temporalSamples: settings.temporalSamples)
         let range = SeamGeometry.extRenderRange(loopFrames: shard.loopFrames,
@@ -222,7 +226,7 @@ public struct ArchiveRenderer: Sendable {
             out: out, shard: shard, aGen: aGen, aId: aId, bGen: bGen, bId: bId,
             kind: .edge, backend: backend, useOffMainMetal: useOffMainMetal,
             coordinator: coordinator, catalog: catalog, sourceSha: sourceSha, flockRoot: flockRoot,
-            seed: seed, A: A, wrapOut: nil, wrapPlan: nil, wrapRange: nil, perFrame: perFrame)
+            seed: seed, A: nA, wrapOut: nil, wrapPlan: nil, wrapRange: nil, perFrame: perFrame)
     }
 
     /// Shared body: drive `renderSegmentRange` (temp→atomic-rename handled inside
@@ -312,6 +316,22 @@ public struct ArchiveRenderer: Sendable {
             // `Int(tags["emberweft.seed"])` parses it back identically.
             seed: Int(truncatingIfNeeded: seed), codec: settings.codec)
         try await catalog.upsertArtifact(row)
+    }
+
+    /// M6.6 (D6, reconciled): the flock archive renders endpoints at their
+    /// AUTHORED framing regardless of shard width, gated on settings.framing
+    /// (the GUI has no toggle ⇒ GUI-driven runs are always normalized; the
+    /// CLI's --framing faithful is the mastering-parity escape hatch). Pure
+    /// step shared by renderLoop/renderEdge so loops and edges blend
+    /// normalized values (the interpolator's log-space scale blend then
+    /// operates on consistent endpoints). Framing is NOT identity (D8): same
+    /// seed, same archive path — a framing change re-renders + overwrites in
+    /// place.
+    static func unitFlames(A: Flame, B: Flame?, renderWidth: Int,
+                           framing: ExportSettings.FramingMode) -> (A: Flame, B: Flame?) {
+        guard framing == .normalized else { return (A, B) }
+        return (Framing.normalize(flame: A, renderWidth: renderWidth),
+                B.map { Framing.normalize(flame: $0, renderWidth: renderWidth) })
     }
 
     /// Build the `RenderParams` for one archive unit. spp + oversample are
