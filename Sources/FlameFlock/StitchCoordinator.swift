@@ -213,6 +213,11 @@ public actor StitchCoordinator {
         //     Dict keyed by the canonical PK string (rule #2 — a lookup map,
         //     never iterated for FP accumulation).
         var requestedRankByPK: [String: Double] = [:]
+        // Framing exact gate (M6.6, like the codec gate): a row HITs only if
+        // its files were rendered with the REQUESTED framing mode (0 =
+        // faithful/legacy, 1 = normalized). Legacy rows decode as 0 ⇒ MISS ⇒
+        // re-render (upgrade-overwrite at the same archive path).
+        let requestedFraming = request.settings.framing == .normalized ? 1 : 0
         var hitCount = 0, missCount = 0
         var seenPKs = Set<String>()
         for key in keys {
@@ -224,7 +229,8 @@ public actor StitchCoordinator {
                 continuation.yield(.failed(String(describing: error)))
                 continuation.finish(); return
             }
-            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row) {
+            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row),
+               row.framing == requestedFraming {
                 hitCount += 1
             } else {
                 missCount += 1
@@ -252,7 +258,8 @@ public actor StitchCoordinator {
             if cancelled { continuation.yield(.cancelled); break }
             let pk = pkStringTuple(key)
             let requested = requestedRankByPK[pk] ?? 0   // memoized in step 5b
-            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row) {
+            if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row),
+               row.framing == requestedFraming {
                 hit += 1
                 urls.append(contentsOf: unitURLs(for: row, idx: idx, keys: keys,
                                                  flockRoot: request.flockRoot))

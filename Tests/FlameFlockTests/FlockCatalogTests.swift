@@ -41,13 +41,13 @@ final class FlockCatalogTests: XCTestCase {
 
     // MARK: - Schema
 
-    func testSchemaCreatedOnInitAndSchemaVersionTwo() async throws {
+    func testSchemaCreatedOnInitAndSchemaVersionThree() async throws {
         let root = makeRoot()
         let cat = try FlockCatalog(root: root)
-        // flock_meta.schema_version == "2" (v2 = seam-aware geometry columns;
-        // read via the same connection).
+        // flock_meta.schema_version == "3" (v2 = seam-aware geometry columns;
+        // v3 = the framing exact hit-gate column; read via the same connection).
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "2")
+        XCTAssertEqual(v, "3")
         // The 4 tables exist (counts don't throw).
         let snap = await cat.snapshot()
         XCTAssertEqual(snap.shardCount, 0)
@@ -97,12 +97,14 @@ final class FlockCatalogTests: XCTestCase {
         // Opening with the current binary migrates in place.
         let cat = try FlockCatalog(root: root)
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "2", "a v1 catalog must migrate to v2 on open")
-        // The legacy row survived and decodes as geometry 1 (legacy monolithic).
+        XCTAssertEqual(v, "3", "a v1 catalog cascades 1→2→3 in one open")
+        // The legacy row survived and decodes as geometry 1 (legacy monolithic)
+        // + framing 0 (legacy/faithful).
         let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
                                        shard: shardName)
         let r = try XCTUnwrap(row, "the v1 row must survive the migration")
         XCTAssertEqual(r.geom, 1, "legacy rows decode as geometry v1")
+        XCTAssertEqual(r.framing, 0, "legacy rows decode as framing 0 (faithful)")
         XCTAssertNil(r.wrapFile)
         XCTAssertEqual(r.file, "x/mpeg/a.mov")
         XCTAssertEqual(r.seed, 7)
@@ -465,6 +467,102 @@ final class FlockCatalogTests: XCTestCase {
 
         // Unparseable shard name ⇒ nil (rebuild skips the dir, not fatal).
         XCTAssertNil(FlockCatalog.parseShardName("not-a-shard"))
+    }
+
+    // MARK: - M6.6 schema v3 (framing exact hit-gate)
+
+    /// v2 → v3 in-place migration: a pre-framing catalog (schema_version "2",
+    /// `wrap_file`/`geom` present, no `framing` column) opens cleanly, bumps to
+    /// "3", and its rows decode with `framing == 0` (legacy/faithful — the
+    /// value that makes a normalized request MISS and re-render).
+    func testV2CatalogMigratesToFraming() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Hand-build a v2 catalog (the seam-aware-geometry schema, pre-framing).
+        let v2 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        try v2.exec("""
+            CREATE TABLE flock_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE shards (name TEXT PRIMARY KEY, width INTEGER NOT NULL, height INTEGER NOT NULL,
+              fps INTEGER NOT NULL, loop_seconds REAL NOT NULL, trans_seconds REAL NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, is_canonical INTEGER NOT NULL,
+              codec TEXT NOT NULL);
+            CREATE TABLE sheep (gen TEXT NOT NULL, id TEXT NOT NULL, origin TEXT NOT NULL,
+              source_ref TEXT, source_sha TEXT, display_name TEXT, added_at INTEGER NOT NULL,
+              PRIMARY KEY (gen, id));
+            CREATE TABLE artifacts (
+              a_gen TEXT NOT NULL, a_id TEXT NOT NULL, b_gen TEXT NOT NULL, b_id TEXT NOT NULL,
+              shard TEXT NOT NULL, kind TEXT NOT NULL, file TEXT NOT NULL, wrap_file TEXT,
+              geom INTEGER NOT NULL DEFAULT 1, thumb TEXT,
+              width INTEGER NOT NULL, height INTEGER NOT NULL, fps INTEGER NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, spp INTEGER NOT NULL,
+              temporal INTEGER NOT NULL, smoothing TEXT NOT NULL, smoothing_hw INTEGER NOT NULL DEFAULT 0,
+              quality_rank REAL NOT NULL, bytes INTEGER NOT NULL, rendered_at INTEGER NOT NULL,
+              source_sha TEXT, seed INTEGER NOT NULL, codec TEXT NOT NULL,
+              PRIMARY KEY (a_gen, a_id, b_gen, b_id, shard),
+              FOREIGN KEY (shard) REFERENCES shards(name));
+            INSERT INTO flock_meta(key,value) VALUES('schema_version','2');
+            INSERT INTO shards VALUES('\(shardName)',1920,1080,30,15.0,12.0,450,360,1,'hevc');
+            INSERT INTO artifacts(a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,thumb,width,height,fps,
+              loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,quality_rank,bytes,
+              rendered_at,source_sha,seed,codec)
+            VALUES('248','00628','248','03194','\(shardName)','edge',
+                   'x/mpeg/a.mov',NULL,2,NULL,1920,1080,30,450,360,30,1,'off',0,30.0,1,0,NULL,7,'hevc');
+            """)
+
+        let cat = try FlockCatalog(root: root)
+        let v = try await cat.schemaVersion()
+        XCTAssertEqual(v, "3", "a v2 catalog must migrate to v3 on open")
+        // The v2 row survived and decodes as framing 0 (legacy/faithful).
+        let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                       shard: shardName)
+        XCTAssertEqual(row?.framing, 0, "v2 rows decode as framing 0 (legacy/faithful)")
+        XCTAssertEqual(row?.geom, 2)
+    }
+
+    /// Upsert/lookup round-trip of the framing field; the default (and a
+    /// migrated row) is 0. The GATE itself (`row.framing == requestedFraming`)
+    /// is inline in GenerateCoordinator/StitchCoordinator next to the existing
+    /// geom gate (same style as seamOK/seamGeometryOK) — it is pinned
+    /// END-TO-END by Task 7's faithful-generate-then-normalized-stitch MISS
+    /// test, the same coverage style the geom gate has.
+    func testFramingRoundTripsAndLegacyDefaultIsZero() async throws {
+        let root = makeRoot()
+        let cat = try FlockCatalog(root: root)
+        try await cat.upsertShard(shardSpec())
+        try await cat.upsertArtifact(sampleRow())
+        var row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                       shard: shardName)
+        let r = try XCTUnwrap(row)
+        XCTAssertEqual(r.framing, 0, "default framing is 0 (legacy/faithful)")
+        // Round-trip: flip to 1 (normalized) and read back.
+        var updated = r
+        updated.framing = 1
+        try await cat.upsertArtifact(updated)
+        row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                   shard: shardName)
+        XCTAssertEqual(row?.framing, 1, "framing round-trips through upsert/lookup")
+        // batchLookup reads the same column.
+        let batch = try await cat.batchLookup([("248", "00628", "248", "03194", shardName)])
+        XCTAssertEqual(batch.first?.framing, 1)
+    }
+
+    /// A NEWER schema (v4) throws `schemaVersionUnsupported` on open.
+    func testSchemaV4ThrowsUnsupported() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let v4 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        try v4.exec("""
+            CREATE TABLE flock_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO flock_meta(key,value) VALUES('schema_version','4');
+            """)
+        do {
+            _ = try FlockCatalog(root: root)
+            XCTFail("a v4 catalog must throw schemaVersionUnsupported")
+        } catch let e as FlockCatalogError {
+            XCTAssertEqual(e, .schemaVersionUnsupported(4))
+        }
     }
 
     // MARK: - helpers

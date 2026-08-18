@@ -237,9 +237,13 @@ public actor GenerateCoordinator {
                                                         shard: request.shard.name)
                 // Seam-geometry exact gate (same as StitchCoordinator): a v1
                 // monolithic artifact must not be reused as a v2 core/wrap/ext
-                // unit — the frame layout differs.
+                // unit — the frame layout differs. The framing gate is also
+                // exact (like codec): a faithful/legacy row (0) must not be
+                // reused for a normalized request (1) — its framing differs.
+                let requestedFraming = request.settings.framing == .normalized ? 1 : 0
                 let seamOK = existing?.geom == ArchiveRenderer.SeamGeometry.version
                     && (existing?.kind == .edge || existing?.wrapFile != nil)
+                    && existing?.framing == requestedFraming
                 if let existing, existing.qualityRank >= requestedRank, seamOK {
                     // HIT — stored quality meets/exceeds the request. Skip; the
                     // archive file is untouched. Recorded in the plan so resume

@@ -81,6 +81,7 @@ public actor FlockCatalog {
               file         TEXT NOT NULL,
               wrap_file    TEXT,
               geom         INTEGER NOT NULL DEFAULT 1,
+              framing      INTEGER NOT NULL DEFAULT 0,
               thumb        TEXT,
               width        INTEGER NOT NULL,
               height       INTEGER NOT NULL,
@@ -112,17 +113,31 @@ public actor FlockCatalog {
         //   EXACT hit-gate compares, like `codec`). ALTER TABLE ADD COLUMN is
         //   enough — v1 rows keep their identity and decode as geometry 1
         //   (legacy), so a seam-aware stitch simply re-renders them.
+        //   v2 → v3 (M6.6 framing normalization): `artifacts` gains `framing`
+        //   (0 = faithful/legacy, 1 = normalized — an EXACT hit-gate alongside
+        //   `geom`). v1 rows cascade 1→2→3 in one open (the loop re-reads the
+        //   version after each step) and decode as framing 0.
         let cur = try conn.query("SELECT value FROM flock_meta WHERE key='schema_version'")
         var v = ""
         if cur.next() && !cur.isNull(0) { v = cur.text(0) }
         if v.isEmpty {
-            try conn.run("INSERT INTO flock_meta(key,value) VALUES('schema_version','2')")
-        } else if v == "1" {
-            try conn.exec("ALTER TABLE artifacts ADD COLUMN wrap_file TEXT")
-            try conn.exec("ALTER TABLE artifacts ADD COLUMN geom INTEGER NOT NULL DEFAULT 1")
-            try conn.run("UPDATE flock_meta SET value='2' WHERE key='schema_version'")
-        } else if v != "2" {
-            throw FlockCatalogError.schemaVersionUnsupported(Int(v) ?? 0)
+            try conn.run("INSERT INTO flock_meta(key,value) VALUES('schema_version','3')")
+        } else {
+            while v != "3" {
+                if v == "1" {
+                    try conn.exec("ALTER TABLE artifacts ADD COLUMN wrap_file TEXT")
+                    try conn.exec("ALTER TABLE artifacts ADD COLUMN geom INTEGER NOT NULL DEFAULT 1")
+                    try conn.run("UPDATE flock_meta SET value='2' WHERE key='schema_version'")
+                } else if v == "2" {
+                    try conn.exec("ALTER TABLE artifacts ADD COLUMN framing INTEGER NOT NULL DEFAULT 0")
+                    try conn.run("UPDATE flock_meta SET value='3' WHERE key='schema_version'")
+                } else {
+                    throw FlockCatalogError.schemaVersionUnsupported(Int(v) ?? 0)
+                }
+                // Re-read: a v1 catalog must cascade 1→2→3 in this same open.
+                let step = try conn.query("SELECT value FROM flock_meta WHERE key='schema_version'")
+                v = (step.next() && !step.isNull(0)) ? step.text(0) : ""
+            }
         }
     }
 
@@ -239,19 +254,19 @@ public actor FlockCatalog {
     public func upsertArtifact(_ r: ArtifactRow) throws {
         let params: [SQLiteBindable] = [
             r.aGen, r.aId, r.bGen, r.bId, r.shard, r.kind.rawValue, r.file, r.wrapFile,
-            r.geom, r.thumb,
+            r.geom, r.framing, r.thumb,
             r.width, r.height, r.fps, r.loopFrames, r.transFrames, r.spp, r.temporal,
             r.smoothing, r.smoothingHw, r.qualityRank, r.bytes, r.renderedAt,
             r.sourceSha, r.seed, r.codec.rawValue,
         ]
         try conn.run("""
-            INSERT INTO artifacts(a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,thumb,width,
+            INSERT INTO artifacts(a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,framing,thumb,width,
                 height,fps,loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
                 quality_rank,bytes,rendered_at,source_sha,seed,codec)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(a_gen,a_id,b_gen,b_id,shard) DO UPDATE SET
               kind=excluded.kind, file=excluded.file, wrap_file=excluded.wrap_file,
-              geom=excluded.geom, thumb=excluded.thumb,
+              geom=excluded.geom, framing=excluded.framing, thumb=excluded.thumb,
               width=excluded.width, height=excluded.height, fps=excluded.fps,
               loop_frames=excluded.loop_frames, trans_frames=excluded.trans_frames,
               spp=excluded.spp, temporal=excluded.temporal, smoothing=excluded.smoothing,
@@ -290,7 +305,7 @@ public actor FlockCatalog {
             params.append(k.shard)
         }
         let cur = try conn.query("""
-            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,thumb,width,height,fps,
+            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,framing,thumb,width,height,fps,
                    loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
                    quality_rank,bytes,rendered_at,source_sha,seed,codec
             FROM artifacts
@@ -315,15 +330,16 @@ public actor FlockCatalog {
             file: c.text(6),
             wrapFile: c.isNull(7) ? nil : c.text(7),
             geom: c.int(8),
-            thumb: c.isNull(9) ? nil : c.text(9),
-            width: c.int(10), height: c.int(11), fps: c.int(12),
-            loopFrames: c.int(13), transFrames: c.int(14),
-            spp: c.int(15), temporal: c.int(16),
-            smoothing: c.text(17), smoothingHw: c.int(18),
-            qualityRank: c.double(19), bytes: c.int(20), renderedAt: c.int(21),
-            sourceSha: c.isNull(22) ? nil : c.text(22),
-            seed: c.int(23),
-            codec: ExportSettings.Codec(rawValue: c.text(24)) ?? .hevc)
+            framing: c.int(9),
+            thumb: c.isNull(10) ? nil : c.text(10),
+            width: c.int(11), height: c.int(12), fps: c.int(13),
+            loopFrames: c.int(14), transFrames: c.int(15),
+            spp: c.int(16), temporal: c.int(17),
+            smoothing: c.text(18), smoothingHw: c.int(19),
+            qualityRank: c.double(20), bytes: c.int(21), renderedAt: c.int(22),
+            sourceSha: c.isNull(23) ? nil : c.text(23),
+            seed: c.int(24),
+            codec: ExportSettings.Codec(rawValue: c.text(25)) ?? .hevc)
     }
 
     /// All artifacts in one shard, in deterministic `(a_gen,a_id,b_gen,b_id)`
@@ -332,7 +348,7 @@ public actor FlockCatalog {
     /// artifact in the shard (spec §9).
     public func artifactsIn(shard: String) async throws -> [ArtifactRow] {
         let cur = try conn.query("""
-            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,thumb,width,height,fps,
+            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,framing,thumb,width,height,fps,
                    loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
                    quality_rank,bytes,rendered_at,source_sha,seed,codec
             FROM artifacts WHERE shard=?
@@ -391,7 +407,7 @@ public actor FlockCatalog {
     /// the GUI from each row's `thumb` path. Additive read; no parity impact.
     public func artifactPage(shard: String, offset: Int, limit: Int) throws -> [ArtifactRow] {
         let cur = try conn.query("""
-            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,thumb,width,height,fps,
+            SELECT a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,framing,thumb,width,height,fps,
                    loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,
                    quality_rank,bytes,rendered_at,source_sha,seed,codec
             FROM artifacts WHERE shard=?
@@ -473,6 +489,10 @@ public actor FlockCatalog {
                 let seed = Int(tags["emberweft.seed"] ?? "") ?? 0
                 let renderedAt = parseRendered(tags["emberweft.rendered"])
                 let geom = Int(tags["emberweft.geom"] ?? "") ?? 1
+                // M6.6 framing gate: 0 = faithful/legacy, 1 = normalized. The
+                // `emberweft.framing` tag lands in T7 — a legacy file (no tag)
+                // defaults 0, so a normalized request re-renders it.
+                let framing = Int(tags["emberweft.framing"] ?? "") ?? 0
                 let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
                 let kind: ArtifactRow.Kind = (aGen == bGen && aId == bId) ? .loop : .edge
                 let relFile = "\(shardName)/mpeg/\(url.lastPathComponent)"
@@ -495,6 +515,7 @@ public actor FlockCatalog {
                 try await cat.upsertArtifact(ArtifactRow(
                     aGen: aGen, aId: aId, bGen: bGen, bId: bId,
                     shard: shardName, kind: kind, file: relFile, wrapFile: wrapRel, geom: geom,
+                    framing: framing,
                     thumb: thumb,
                     width: parsed.width, height: parsed.height, fps: parsed.fps,
                     loopFrames: parsed.loopFrames, transFrames: parsed.transFrames,

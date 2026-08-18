@@ -80,6 +80,13 @@ public struct ArtifactRow: Codable, Sendable, Equatable {
     /// geometry matches — mixing geometries in one timeline breaks phase
     /// continuity. Rows written before the fix decode as 1 and re-render.
     public var geom: Int
+    /// Framing mode the artifact's files were rendered with (0 = faithful /
+    /// legacy pre-M6.6 framing, 1 = normalized M6.6 framing). An EXACT gate
+    /// (like `codec`): a generate/stitch request only HITs rows whose framing
+    /// matches `request.settings.framing` — mixing framings in one archive
+    /// crops differently at the same resolution. Rows written before M6.6
+    /// decode as 0 and re-render for normalized requests.
+    public var framing: Int
     public var thumb: String?           // relative jpeg path
     public var width: Int
     public var height: Int
@@ -99,7 +106,7 @@ public struct ArtifactRow: Codable, Sendable, Equatable {
 
     public init(aGen: String, aId: String, bGen: String, bId: String,
                 shard: String, kind: Kind, file: String, wrapFile: String? = nil,
-                geom: Int = 1, thumb: String?,
+                geom: Int = 1, framing: Int = 0, thumb: String?,
                 width: Int, height: Int, fps: Int,
                 loopFrames: Int, transFrames: Int,
                 spp: Int, temporal: Int, smoothing: String, smoothingHw: Int,
@@ -107,7 +114,7 @@ public struct ArtifactRow: Codable, Sendable, Equatable {
                 sourceSha: String?, seed: Int, codec: ExportSettings.Codec) {
         self.aGen = aGen; self.aId = aId; self.bGen = bGen; self.bId = bId
         self.shard = shard; self.kind = kind; self.file = file; self.wrapFile = wrapFile
-        self.geom = geom; self.thumb = thumb
+        self.geom = geom; self.framing = framing; self.thumb = thumb
         self.width = width; self.height = height; self.fps = fps
         self.loopFrames = loopFrames; self.transFrames = transFrames
         self.spp = spp; self.temporal = temporal

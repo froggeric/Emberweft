@@ -301,6 +301,10 @@ public struct ArchiveRenderer: Sendable {
             file: Self.archiveRelativePath(shard: shard.name, file: out.lastPathComponent),
             wrapFile: wrapRel,
             geom: SeamGeometry.version,
+            // M6.6 framing exact hit-gate: 0 = faithful, 1 = normalized — the
+            // mode `unitFlames` actually applied for THIS render (same
+            // `settings`), so the row records reality.
+            framing: settings.framing == .normalized ? 1 : 0,
             thumb: Self.thumbRelativePath(shard: shard.name, aGen: aGen, aId: aId, bGen: bGen, bId: bId),
             width: shard.width, height: shard.height, fps: shard.fps,
             loopFrames: shard.loopFrames, transFrames: shard.transFrames,
