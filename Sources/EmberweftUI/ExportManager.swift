@@ -135,6 +135,13 @@ public final class ExportManager {
     /// toggle is a no-op (α collapses to 1.0 regardless), so the sheet disables
     /// it there. Default `.auto` matches the `ExportSettings.resolve` default.
     public var temporalSmoothing: TemporalSmoothing = .auto
+    /// M6.6: framing mode. `.normalized` (default) re-anchors each genome's
+    /// authored framing to the output width so 720p/1080p/4K render the SAME
+    /// composition; `.faithful` uses the genome's raw `scale` (flam3-exact,
+    /// resolution-dependent). Threaded through `resolveSettings` as a
+    /// POST-resolve assignment (`ExportSettings.resolve` has no framing
+    /// parameter by design, mirroring the CLI). The sheet binds this two-way.
+    public var framingChoice: ExportSettings.FramingMode = .normalized
     /// Loop duration in seconds ⇒ `framesPerSegment = round(loopDurationSeconds * fps)`.
     /// Default 15 s — the owner's optimal loop render length. Above ES "standard"
     /// (~11 s @ 30 fps) and short of the ~30 s vigilance-decrement floor. Tunable
@@ -603,13 +610,17 @@ public final class ExportManager {
     /// `temporalSmoothing` threading (Task 10) — `@testable import` reaches
     /// `internal` but not `private`. Pure value derivation; no I/O.
     internal func resolveSettings(baseFlame: Flame, backend: ExportCoordinator.Backend) -> ExportSettings {
-        ExportSettings.resolve(
+        var s = ExportSettings.resolve(
             quality: qualityChoice.exportQuality,
             temporalSamples: temporalSamples,
             codec: codec, container: container, fps: fps, bitrate: bitrate,
             resolution: resolution, segmentFrameBudget: 0,
             baseFlame: baseFlame, backend: backend,
             temporalSmoothing: temporalSmoothing)
+        // M6.6: post-resolve assignment — `resolve` has no framing parameter
+        // by design (the type-default stays `.faithful`; the GUI overrides).
+        s.framing = framingChoice
+        return s
     }
 
     /// Resolve a batch item's `out` via `BatchPath.resolve` (the D13 gate) and

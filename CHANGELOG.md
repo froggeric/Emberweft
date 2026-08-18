@@ -7,6 +7,22 @@ Emberweft is **source-available** (PolyForm Noncommercial). The CPU renderer is 
 faithful Swift port of the flam3 algorithm; the final license (including any GPL
 implications of porting flam3) is the owner's decision and under review.
 
+## [Unreleased]
+
+### Added
+- **Resolution-independent framing (M6.6).** A genome's `scale` is absolute
+  pixels-per-unit authored for its own canvas, so changing the output
+  resolution used to change the composition (720p "zoomed in", 4K "zoomed
+  out"). Framing now re-anchors `scale` to the output WIDTH (the ES gen-248
+  authoring anchor) via a multiplicative correction — same composition at
+  every resolution. New `--framing faithful|normalized` on `export` and
+  `flock` (default `normalized`; `--framing faithful` restores the raw scale),
+  a Framing picker (Normalized default / Authored) in the GUI export sheet,
+  and an `emberweft.framing` video tag + exact catalog hit-gate so a stitched
+  archive can never mix framing modes. `animate` and the renderers are
+  unchanged (always faithful) — engine behavior is untouched beyond the pure
+  `FlameKit.Framing` helper.
+
 ## [0.6.0] - 2026-08-16
 
 The flock archive: pre-render your loops and edges once, then compose long

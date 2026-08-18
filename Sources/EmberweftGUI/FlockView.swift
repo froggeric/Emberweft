@@ -313,6 +313,11 @@ private func archiveSettings(for shard: ShardSpec, quality: ExportQualityChoice)
     s.temporalSamples = quality.recommendedTemporalSamples
     s.temporalSmoothing = .auto
     s.smoothingAlpha = TemporalSmoothing.auto.alpha(for: quality.exportQuality)
+    // M6.6: the flock archive is ALWAYS normalized framing — resolution-
+    // independent framing is the archive's whole point (same composition at
+    // every shard size), and the catalog's framing gate keeps mixed-framing
+    // archives from stitching with framing jumps. No GUI toggle.
+    s.framing = .normalized
     return s
 }
 

@@ -123,6 +123,11 @@ struct ExportSheet: View {
                         }
                     }
                     .help("Auto probes Metal and falls back to CPU. CPU is the slower reference oracle; the image is identical either way.")
+                    Picker("Framing", selection: $em.framingChoice) {
+                        Text("Normalized").tag(ExportSettings.FramingMode.normalized)
+                        Text("Authored").tag(ExportSettings.FramingMode.faithful)
+                    }
+                    .help("Normalized keeps each genome's authored framing at any resolution. Authored uses the genome's raw scale.")
                 }
 
                 Section("Motion") {
