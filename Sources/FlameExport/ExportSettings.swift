@@ -23,6 +23,13 @@ public struct ExportSettings: Codable, Sendable, Equatable {
     /// renderers read a single concrete number with no inverse-tier lookup or
     /// `EmberweftUI` dependency from `FlameExport`.
     public var smoothingAlpha: Double = 1.0
+    /// M6.6 framing: `.faithful` uses `camera.scale` verbatim (today's bytes,
+    /// `animate` behavior); `.normalized` rescales to the render width via
+    /// `FlameKit.Framing` (authored framing at any resolution). TYPE default is
+    /// `.faithful` so raw settings + legacy checkpoints keep their bytes; the
+    /// product entry points (GUI sheet, GUI flock, CLI export/flock) default
+    /// `.normalized`. `animate` has no framing — always faithful.
+    public var framing: FramingMode = .faithful
     public init() {}
 
     /// P1.1 backward-compat: a v0.5.1 checkpoint blob (no `temporalSmoothing` /
@@ -50,10 +57,12 @@ public struct ExportSettings: Codable, Sendable, Equatable {
         temporalSmoothing = try c.decodeIfPresent(TemporalSmoothing.self, forKey: .temporalSmoothing) ?? .auto
         smoothingAlpha = try c.decodeIfPresent(Double.self, forKey: .smoothingAlpha)
             ?? TemporalSmoothing.auto.alpha(for: quality)
+        framing = try c.decodeIfPresent(FramingMode.self, forKey: .framing) ?? .faithful
     }
 
     public enum Codec: String, Codable, Sendable, CaseIterable { case h264, hevc, proRes422HQ }
     public enum Container: String, Codable, Sendable, CaseIterable { case mp4, mov }
+    public enum FramingMode: String, Codable, Sendable, Equatable, CaseIterable { case faithful, normalized }
     public enum Bitrate: Codable, Sendable, Equatable { case auto; case mbps(Int) }
     public struct MetadataItem: Codable, Sendable, Equatable {
         public var key: String; public var value: String

@@ -131,4 +131,32 @@ final class ExportSettingsResolveTests: XCTestCase {
         XCTAssertEqual(r.temporalSamples, 1,
                        "named tier (.spp) + ts=1 must be literal single-pass (1), NOT the genome's 200")
     }
+
+    // MARK: - M6.6 framing mode
+
+    func testFramingTypeDefaultIsFaithful() {
+        XCTAssertEqual(ExportSettings().framing, .faithful,
+                       "type default MUST stay faithful — raw settings keep today's bytes (spec D3)")
+    }
+
+    func testLegacyBlobDecodesAsFaithful() throws {
+        // A v0.6.0 checkpoint settings blob carries no `framing` key. Build a
+        // valid blob via the encoder, strip the key (JSONSerialization), decode —
+        // robust against the synthesized Codable shapes of the nested types.
+        var s = ExportSettings()
+        s.framing = .normalized
+        let data = try JSONEncoder().encode(s)
+        var obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        obj.removeValue(forKey: "framing")
+        let decoded = try JSONDecoder().decode(ExportSettings.self,
+                                               from: JSONSerialization.data(withJSONObject: obj))
+        XCTAssertEqual(decoded.framing, .faithful, "missing key must decode as faithful (backward compat)")
+    }
+
+    func testFramingRoundTrips() throws {
+        var s = ExportSettings()
+        s.framing = .normalized
+        let decoded = try JSONDecoder().decode(ExportSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(decoded.framing, .normalized)
+    }
 }
