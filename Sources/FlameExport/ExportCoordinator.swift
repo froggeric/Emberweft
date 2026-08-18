@@ -194,6 +194,13 @@ public actor ExportCoordinator: ExportCoordinating {
         -> (plan: FramePlan, params: RenderParams, budget: MetalRenderer.ThreadSeedBudget?,
             useMetal: Bool, schedule: Schedule) {
         let res = job.settings.resolution
+        // M6.6 (D5): normalize framing per settings — the single plan-construction
+        // site for runJob / runLongFormJob / runResumableBody, so resume
+        // re-normalizes deterministically from the re-parsed sources. Pure
+        // genome-level transform; RenderParams/seed untouched (rule #2).
+        let flames = job.settings.framing == .normalized
+            ? job.flames.map { Framing.normalize(flame: $0, renderWidth: max(1, res.width)) }
+            : job.flames
         let (spp, os) = job.settings.quality.resolvedSamplesPerPixel(for: job.flames[0])
         let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
                                   oversample: os, samplesPerPixel: spp)
@@ -203,7 +210,7 @@ public actor ExportCoordinator: ExportCoordinating {
         var schedule = Schedule(librarySize: job.flames.count, framesPerSegment: job.framesPerSegment,
                                 transitionFramesPerSegment: job.transitionFramesPerSegment,
                                 selector: selector, seed: job.seed)
-        let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: job.flames,
+        let plan = FramePlan(schedule: &schedule, segmentCount: job.segmentCount, flames: flames,
                              loopCycles: job.loopCycles, stagger: job.stagger,
                              temporalSamples: max(1, job.settings.temporalSamples))
         let budget: MetalRenderer.ThreadSeedBudget? = useMetal ? MetalRenderer.ThreadSeedBudget(baseSeed: params.seed) : nil
