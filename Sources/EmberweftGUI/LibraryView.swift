@@ -216,7 +216,7 @@ struct LibraryView: View {
         .tag(SidebarDestination.folder(url))
         // AppKit-native menu (see AppKitContextMenu): snapshot-built, immune to
         // the SwiftUI re-render teardown that dismissed the old .contextMenu.
-        .background(AppKitContextMenu {
+        .overlay(AppKitContextMenu {
             let menu = NSMenu()
             menu.addItem(NSMenuItem("Remove from Library", destructive: true) {
                 pendingRemoval = url
@@ -249,7 +249,7 @@ struct LibraryView: View {
         }
         .badge(resolvedCount(of: c))
         .tag(SidebarDestination.collection(c.id))
-        .background(AppKitContextMenu {
+        .overlay(AppKitContextMenu {
             let menu = NSMenu()
             menu.addItem(NSMenuItem("Play as Sequence") {
                 openWindow(value: CollectionPlaybackRoute(id: c.id))
@@ -751,7 +751,7 @@ struct LibraryView: View {
                         dragTranslation = .zero
                     }
             )
-            .background(AppKitContextMenu {
+            .overlay(AppKitContextMenu {
                 cellMenuInCollection(entry, collection: c, storedIndex: storedIndex)
             })
             .accessibilityLabel(cellAccessibilityLabel(entry))
@@ -1187,7 +1187,7 @@ struct LibraryView: View {
     @ViewBuilder
     private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         cellCore(entry, in: filtered)
-            .background(AppKitContextMenu { cellMenu(entry) })
+            .overlay(AppKitContextMenu { cellMenu(entry) })
             .accessibilityLabel(cellAccessibilityLabel(entry))
     }
 

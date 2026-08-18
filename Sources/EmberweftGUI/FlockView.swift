@@ -953,7 +953,7 @@ private struct BrowseTab: View {
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }
-        .background(AppKitContextMenu {
+        .overlay(AppKitContextMenu {
             let menu = NSMenu()
             menu.addItem(NSMenuItem("Show in Finder") { reveal(row) })
             menu.addItem(NSMenuItem("Delete", destructive: true) { delete(row) })
