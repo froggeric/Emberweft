@@ -436,4 +436,97 @@ final class FlockCommandTests: XCTestCase {
         ])
         XCTAssertNotEqual(rc, 0)
     }
+
+    // MARK: - M6.6 T7: --framing flag
+
+    /// `--framing` validation on BOTH subcommands: bad value → exit 2 with the
+    /// Task-4 wording (mirrors `ExportFramingCLITests`).
+    func testFramingFlagRejectsBadValue() async throws {
+        for sub in ["generate", "stitch"] {
+            let rc = await EmberweftCLI.flock([sub, "--shard", shardName,
+                                               "--from", "/tmp", "--sequence", "/tmp",
+                                               "--framing", "wide", "--flock", "/tmp/nowhere"])
+            XCTAssertEqual(rc, 2, "\(sub) --framing wide must be rejected")
+            let errText = await captureErr {
+                _ = await EmberweftCLI.flock([sub, "--shard", shardName,
+                                              "--framing", "wide", "--flock", "/tmp/nowhere"])
+            }
+            XCTAssertTrue(errText.contains("--framing must be faithful|normalized"),
+                          "\(sub) should print the exact validation error: \(errText)")
+        }
+    }
+
+    /// `resolveArchiveSettings` framing plumb: the CLI DEFAULT is `normalized`
+    /// (matches the one-shot export default); explicit `faithful` honored.
+    /// Pure call — mirrors `ExportFramingCLITests.testBatchSettingsBuildHonorsFraming`.
+    func testResolveArchiveSettingsFramingPlumb() {
+        let shard = ShardSpec(name: shardName, width: 48, height: 32, fps: 30,
+                              loopSeconds: 0.1, transSeconds: 0.07,
+                              loopFrames: 3, transFrames: 2, isCanonical: false, codec: .h264)
+        func build(_ framing: String) -> FlameExport.ExportSettings {
+            EmberweftCLI.resolveArchiveSettings(
+                quality: "genome", codec: "h264", shard: shard,
+                temporalSamples: 1, smoothing: "off",
+                baseFlame: Flame(), backend: .cpu, framing: framing)!
+        }
+        XCTAssertEqual(build("normalized").framing, .normalized,
+                       "flock CLI default framing must be normalized")
+        XCTAssertEqual(build("faithful").framing, .faithful,
+                       "explicit --framing faithful must be honored")
+    }
+
+    /// AC3 end-to-end gate (CLI drives the real coordinators): a FAITHFUL
+    /// generate then a DEFAULT (normalized) stitch ⇒ the faithful rows MISS the
+    /// normalized stitch's exact framing gate (`HIT=0 will-gen=1`) and get
+    /// re-rendered into the archive at normalized framing.
+    func testGenerateFaithfulThenDefaultNormalizedStitchMisses() async throws {
+        let root = makeFlockRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let from = try makeFromDir(genomeCount: 1)
+        defer { try? FileManager.default.removeItem(at: from) }
+        // 1. Faithful generate (framing 0 rows).
+        let genRC = await EmberweftCLI.flock([
+            "generate", "--from", from.path, "--shard", shardName,
+            "--scope", "loops", "--quality", "4", "--codec", "h264",
+            "--framing", "faithful",
+            "--backend", "cpu", "--flock", root.path,
+        ])
+        XCTAssertEqual(genRC, 0, "faithful generate should succeed")
+        let mpeg = root.appendingPathComponent(shardName).appendingPathComponent("mpeg")
+        let loopFile = mpeg.appendingPathComponent("248=00001=248=00001.mov")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: loopFile.path), "faithful loop must render")
+
+        // 2. Default (normalized) stitch: the faithful row must MISS the framing
+        //    gate and be re-rendered into the archive at normalized framing.
+        let out = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("flock-stitch-framing-\(UUID().uuidString).mov")
+        let progress = try await captureOut {
+            let rc = await EmberweftCLI.flock([
+                "stitch", "--sequence", from.path, "--shard", shardName,
+                "--codec", "h264", "--quality", "4", "--backend", "cpu",
+                "--loop-reps", "1",
+                "--flock", root.path, "--out", out.path,
+            ])
+            XCTAssertEqual(rc, 0, "normalized stitch should succeed")
+        }
+        XCTAssertTrue(progress.contains("HIT=0 will-gen=1"),
+                      "faithful rows must MISS the normalized stitch (framing exact gate): \(progress)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+        try? FileManager.default.removeItem(at: out)
+
+        // 3. The re-rendered row is now normalized — a FOLLOW-UP default stitch
+        //    is all-HIT (the gate stays satisfied; no render loop).
+        let progress2 = try await captureOut {
+            let rc = await EmberweftCLI.flock([
+                "stitch", "--sequence", from.path, "--shard", shardName,
+                "--codec", "h264", "--quality", "4", "--backend", "cpu",
+                "--loop-reps", "1",
+                "--flock", root.path, "--out", out.path,
+            ])
+            XCTAssertEqual(rc, 0)
+        }
+        XCTAssertTrue(progress2.contains("HIT=1 will-gen=0"),
+                      "after the normalized re-render the row must HIT: \(progress2)")
+        try? FileManager.default.removeItem(at: out)
+    }
 }

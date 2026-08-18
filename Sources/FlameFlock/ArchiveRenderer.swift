@@ -400,6 +400,11 @@ public struct ArchiveRenderer: Sendable {
         // Seam-geometry version (read back by `FlockCatalog.rebuild` into
         // `ArtifactRow.geom` — the exact hit-gate alongside `codec`).
         custom("emberweft.geom", String(SeamGeometry.version))
+        // M6.6 framing exact hit-gate (read back by `FlockCatalog.rebuild` into
+        // `ArtifactRow.framing`): 1 = normalized, 0 = faithful/legacy (a file
+        // with no tag decodes 0 on rebuild, so legacy rows MISS a normalized
+        // request — never silently reused).
+        custom("emberweft.framing", settings.framing == .normalized ? "1" : "0")
         return items
     }
 

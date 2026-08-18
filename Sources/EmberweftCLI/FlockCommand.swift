@@ -51,6 +51,7 @@ extension EmberweftCLI {
         var codec = "hevc"
         var temporalSamples = 1
         var smoothing = "off"
+        var framing = "normalized"
         var backend = "cpu"
         var flockRoot = defaultFlockRoot().path
         var i = 0
@@ -82,6 +83,12 @@ extension EmberweftCLI {
                 guard lv == "auto" || lv == "off"
                 else { err("error: --smoothing must be auto|off\n"); return 2 }
                 smoothing = lv; i += 2
+            case "--framing":
+                guard let v = value() else { return missing("--framing") }
+                let lv = v.lowercased()
+                guard lv == "faithful" || lv == "normalized"
+                else { err("error: --framing must be faithful|normalized\n"); return 2 }
+                framing = lv; i += 2
             case "--backend":
                 guard let v = value() else { return missing("--backend") }
                 let lv = v.lowercased()
@@ -126,7 +133,7 @@ extension EmberweftCLI {
         let settings = Self.resolveArchiveSettings(
             quality: quality, codec: codec, shard: shard,
             temporalSamples: temporalSamples, smoothing: smoothing,
-            baseFlame: baseFlame, backend: coordBackend)
+            baseFlame: baseFlame, backend: coordBackend, framing: framing)
         guard let settings else { return 2 }   // parse error already printed
 
         // HEVC availability probe (mirror ExportCommand: explicit hevc on a host
@@ -212,6 +219,7 @@ extension EmberweftCLI {
         var codec = "hevc"
         var temporalSamples = 1
         var smoothing = "off"
+        var framing = "normalized"
         var loopReps = 2
         var backend = "cpu"
         var flockRoot = defaultFlockRoot().path
@@ -244,6 +252,12 @@ extension EmberweftCLI {
                 guard lv == "auto" || lv == "off"
                 else { err("error: --smoothing must be auto|off\n"); return 2 }
                 smoothing = lv; i += 2
+            case "--framing":
+                guard let v = value() else { return missing("--framing") }
+                let lv = v.lowercased()
+                guard lv == "faithful" || lv == "normalized"
+                else { err("error: --framing must be faithful|normalized\n"); return 2 }
+                framing = lv; i += 2
             case "--backend":
                 guard let v = value() else { return missing("--backend") }
                 let lv = v.lowercased()
@@ -277,7 +291,7 @@ extension EmberweftCLI {
         let settings = Self.resolveArchiveSettings(
             quality: quality, codec: codec, shard: shard,
             temporalSamples: temporalSamples, smoothing: smoothing,
-            baseFlame: baseFlame, backend: coordBackend)
+            baseFlame: baseFlame, backend: coordBackend, framing: framing)
         guard let settings else { return 2 }
         if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {
             err("error: HEVC (H.265) encode is not available on this host; use --codec h264\n")
@@ -477,7 +491,8 @@ extension EmberweftCLI {
     static func resolveArchiveSettings(
         quality: String, codec: String, shard: ShardSpec,
         temporalSamples: Int, smoothing: String = "off",
-        baseFlame: Flame, backend: ExportCoordinator.Backend
+        baseFlame: Flame, backend: ExportCoordinator.Backend,
+        framing: String = "normalized"
     ) -> ExportSettings? {
         guard let codecEnum = Self.normalizeCodec(codec) else {
             err("error: --codec must be h264|hevc|prores-422-hq\n"); return nil
@@ -485,7 +500,7 @@ extension EmberweftCLI {
         let qualityEnum: ExportQuality = quality == "genome"
             ? .genome
             : .spp(Int(quality) ?? baseFlame.quality.samplesPerPixel)
-        return ExportSettings.resolve(
+        var settings = ExportSettings.resolve(
             quality: qualityEnum,
             temporalSamples: temporalSamples,
             codec: codecEnum,
@@ -497,6 +512,13 @@ extension EmberweftCLI {
             baseFlame: baseFlame,
             backend: backend,
             temporalSmoothing: smoothing == "auto" ? .auto : .off)
+        // M6.6 framing: the flock CLI DEFAULT is normalized (authored framing
+        // at any shard width — mirrors the one-shot export default);
+        // `--framing faithful` is the mastering-parity escape hatch. Threading
+        // it here (not via `ExportSettings.resolve`, which has no framing arg)
+        // keeps the resolved ts/spp/smoothing semantics unchanged.
+        settings.framing = framing == "normalized" ? .normalized : .faithful
+        return settings
     }
 
     /// `h264|hevc|prores-422-hq` → `ExportSettings.Codec` (accepts the dashed

@@ -459,6 +459,94 @@ final class ArchiveRendererTests: XCTestCase {
         XCTAssertEqual(nB, A)
     }
 
+    /// T7: `makeMetadata` mirrors the row's framing column into the
+    /// `emberweft.framing` mdta tag — "1" for normalized, "0" for faithful
+    /// (also the legacy no-tag default on rebuild).
+    func testMakeMetadataEmitsFramingTag() {
+        let shard = shardSpec()
+        func tag(_ settings: ExportSettings) -> String? {
+            ArchiveRenderer.makeMetadata(stem: "248=00628=248=00628", shard: shard,
+                                         settings: settings, seed: 1, sourceSha: nil, spp: 4)
+                .first { ($0.key as? String) == "emberweft.framing" }?.value as? String
+        }
+        var normalized = archiveSettings(matching: shard)
+        normalized.framing = .normalized
+        XCTAssertEqual(tag(normalized), "1", "normalized settings must tag 1")
+        XCTAssertEqual(tag(archiveSettings(matching: shard)), "0",
+                       "faithful settings (the ExportSettings default) must tag 0")
+    }
+
+    /// T7 round-trip: a rendered loop's FILE carries the framing tag; the
+    /// catalog row records the same value; and `FlockCatalog.rebuild` restores
+    /// `ArtifactRow.framing` from the tag after the sqlite is discarded.
+    ///
+    /// The render phase lives in a scoped helper so its `FlockCatalog` (an actor
+    /// holding an open sqlite connection) is RELEASED before `rebuild` moves
+    /// flock.sqlite — a live connection leaves stale `-wal` sidecars that make
+    /// the fresh catalog open fail with a disk I/O error.
+    func testRenderLoopFramingTagRoundTripsThroughRebuild() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shard = shardSpec()
+
+        // Phase 1 (scoped): render a normalized (00628) + a faithful (03194)
+        // loop into the same shard; report the FILE tags + the live rows.
+        func renderAndRead() async throws -> (tagN: String?, tagF: String?,
+                                              rowN: Int?, rowF: Int?) {
+            let catalog = try FlockCatalog(root: root)
+            try await catalog.upsertShard(shard)
+            var normalized = archiveSettings(matching: shard)
+            normalized.framing = .normalized
+            let faithful = archiveSettings(matching: shard)   // default == .faithful
+            let A = try parseSierpinski()
+            let coord = ExportCoordinator(backend: .cpu)
+            let renderer = ArchiveRenderer()
+            try await renderer.renderLoop(A: A, aGen: "248", aId: "00628", shard: shard,
+                                          settings: normalized, coordinator: coord, catalog: catalog,
+                                          backend: .cpu, useOffMainMetal: false,
+                                          flockRoot: root, sourceSha: nil)
+            try await renderer.renderLoop(A: A, aGen: "248", aId: "03194", shard: shard,
+                                          settings: faithful, coordinator: coord, catalog: catalog,
+                                          backend: .cpu, useOffMainMetal: false,
+                                          flockRoot: root, sourceSha: nil)
+
+            // The FILES carry the mdta tag with the rendered framing.
+            func framingTag(aId: String) async throws -> String? {
+                let out = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                         aGen: "248", aId: aId,
+                                                         bGen: "248", bId: aId, ext: "mov")
+                let all = try await AVURLAsset(url: out).load(.metadata)
+                return all.first {
+                    $0.keySpace == AVMetadataKeySpace(rawValue: "mdta")
+                        && ($0.key as? String) == "emberweft.framing"
+                }?.value as? String
+            }
+            let rowN = try await catalog.lookup(aGen: "248", aId: "00628",
+                                                bGen: "248", bId: "00628", shard: shard.name)?.framing
+            let rowF = try await catalog.lookup(aGen: "248", aId: "03194",
+                                                bGen: "248", bId: "03194", shard: shard.name)?.framing
+            return (try await framingTag(aId: "00628"), try await framingTag(aId: "03194"),
+                    rowN, rowF)
+        }
+        let phase1 = try await renderAndRead()
+        XCTAssertEqual(phase1.tagN, "1", "normalized loop file must tag 1")
+        XCTAssertEqual(phase1.tagF, "0", "faithful loop file must tag 0")
+        XCTAssertEqual(phase1.rowN, 1, "the live row must mirror the normalized tag")
+        XCTAssertEqual(phase1.rowF, 0, "the live row must mirror the faithful tag")
+
+        // Rebuild discards flock.sqlite and restores framing FROM THE TAG.
+        try await FlockCatalog.rebuild(from: root)
+        let fresh = try FlockCatalog(root: root)
+        let rebuiltN = try await fresh.lookup(aGen: "248", aId: "00628",
+                                              bGen: "248", bId: "00628", shard: shard.name)
+        let rebuiltF = try await fresh.lookup(aGen: "248", aId: "03194",
+                                              bGen: "248", bId: "03194", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(rebuiltN).framing, 1,
+                       "rebuild must restore framing 1 from the emberweft.framing tag")
+        XCTAssertEqual(try XCTUnwrap(rebuiltF).framing, 0,
+                       "rebuild must restore framing 0 from the emberweft.framing tag")
+    }
+
     /// Plan-level wiring pin: the CORE plan built by renderLoop from a
     /// normalized render carries the rescaled scale at frame 0 (blend 0 = pure A).
     /// This is the honest byte-level pin for the flock path — the .mov container
