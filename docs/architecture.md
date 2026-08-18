@@ -202,6 +202,53 @@ FlameExport handles long-form output:
 
 Export runs offscreen compute (no `MTKView`), fully CPU-detached from rendering.
 
+### FlameFlock (Flock Archive — M6.5/M6.6)
+
+**Purpose:** A local archive of pre-rendered loop/edge videos that makes long
+compositions cheap: **Generate** pre-bakes material into the archive,
+**Stitch** composes long videos from it (per-segment HIT reuses the cached
+file; MISS renders into the archive first) with a no-reencode
+`AVMutableComposition` passthrough concat. The `flock.sqlite` catalog
+(`FlockCatalog`, a serialized-writer actor, rebuildable from file names +
+embedded `mdta` tags) is the source of truth; shards partition the archive by
+resolution / frame rate / pace; ES-sourced sheep keep their real `(gen, id)`
+while user genomes get minted ids in reserved flock `900000`. `FlameFlock`
+links the system `sqlite3` directly (Apple SDKs only — no SwiftPM
+dependency). Archive renders go through `FlameExport.renderSegmentRange`
+(single-sourced with the one-shot export path) and always render with
+normalized framing (M6.6).
+
+#### Artifact geometry: core + wrap / ext (seam-aware, geometry v2)
+
+Temporal smoothing averages each frame's histogram over an 11-frame centered
+window (h = 5). Standalone video files would clip that window at their first
+and last frames — and because the display pipeline tracks the *brightest*
+window member (gamma compression), the boundary frames on the two sides of a
+stitch seam differed wildly (measured up to 35× the normal frame-to-frame
+change). The fix re-slices the timeline so **every encoded frame's window
+lies strictly inside its own unit's render plan**, and every seam is *owned*
+by a file whose plan contains both sides:
+
+- **A loop is TWO files.** The **core** encodes phases `[h, L−h)` of a
+  1-cycle plan (all windows interior — this is why the core plays h frames
+  short at each end, imperceptible on ambient content). The **wrap** (the
+  short `…=wrap.mov`, `2h ≈ 10` frames) encodes `[2L−h, 2L+h)` of a
+  **3-cycle** plan — the last h frames of a cycle plus the first h of the
+  next, rendered as one contiguous range whose windows straddle the cycle
+  wrap internally. A stitch playing a loop N times concatenates
+  `[core, (wrap, core) × (N−1)]`: the wrap is the glue at every
+  loop-to-itself boundary.
+- **An edge is ONE file (ext).** It is rendered from a 3-segment plan
+  `loop(A) + transition + loop(B)` and encodes `[L−h, L+T+h)` — the
+  transition plus h boundary frames of EACH neighboring loop, so its windows
+  straddle both boundaries already. **Edges need no wrap**: the loop-core ↔
+  edge seams are owned by the edge's built-in margins.
+
+The rule: every seam between files must be owned by a file whose plan
+contains both sides. Loop-repeat seams get a dedicated owner (the wrap);
+loop↔edge seams are owned by the edge. The `geom` catalog column (v2) is an
+exact hit-gate so geometry-v1 artifacts are never mixed into v2 stitches.
+
 ### App (SwiftUI User Interface, M4)
 
 **Purpose:** Interactive genome-library studio and player
@@ -305,6 +352,7 @@ Package.swift
 │   └── Tests/FlameRendererTests/ — reference renders
 ├── FlamePlayer (library product)
 ├── FlameExport (library product)
+├── FlameFlock (library product — M6.5; links system sqlite3)
 ├── EmberweftUI (library product — M4)
 │   ├── Sources/EmberweftUI/ — SwiftUI bridge, playback conformers, thumbnails, models
 │   └── Tests/EmberweftUITests/ — unit + Metal smoke + parity tests
