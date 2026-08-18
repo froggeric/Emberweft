@@ -30,7 +30,7 @@ struct LibraryView: View {
     @State private var renameText: String = ""
     /// Pending entries for the create-collection sheet. `nil` ⇒ sheet hidden.
     /// Non-empty ⇒ create AND add those entries (the "New Collection…" item of
-    /// `addToCollectionMenu`); empty ⇒ create an empty collection (the sidebar
+    /// `addToCollectionSubmenu`); empty ⇒ create an empty collection (the sidebar
     /// "New Collection…" row). Mirrors the rename-sheet pattern above.
     @State private var creatingCollectionEntries: [CollectionEntry]?
     @State private var createText: String = ""
@@ -214,11 +214,15 @@ struct LibraryView: View {
         }
         .contentShape(Rectangle())
         .tag(SidebarDestination.folder(url))
-        .contextMenu {
-            Button("Remove from Library", role: .destructive) {
+        // AppKit-native menu (see AppKitContextMenu): snapshot-built, immune to
+        // the SwiftUI re-render teardown that dismissed the old .contextMenu.
+        .background(AppKitContextMenu {
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem("Remove from Library", destructive: true) {
                 pendingRemoval = url
-            }
-        }
+            })
+            return menu
+        })
         .accessibilityLabel("Folder \(url.lastPathComponent)")
     }
 
@@ -245,12 +249,20 @@ struct LibraryView: View {
         }
         .badge(resolvedCount(of: c))
         .tag(SidebarDestination.collection(c.id))
-        .contextMenu {
-            Button("Play as Sequence") { openWindow(value: CollectionPlaybackRoute(id: c.id)) }
-            Divider()
-            Button("Rename…") { renamingCollection = c; renameText = c.name }
-            Button("Delete", role: .destructive) { deleteCollection(c.id) }
-        }
+        .background(AppKitContextMenu {
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem("Play as Sequence") {
+                openWindow(value: CollectionPlaybackRoute(id: c.id))
+            })
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem("Rename…") {
+                renamingCollection = c; renameText = c.name
+            })
+            menu.addItem(NSMenuItem("Delete", destructive: true) {
+                deleteCollection(c.id)
+            })
+            return menu
+        })
         .accessibilityLabel("Collection \(c.name), \(resolvedCount(of: c)) genomes")
     }
 
@@ -739,27 +751,44 @@ struct LibraryView: View {
                         dragTranslation = .zero
                     }
             )
-            .contextMenu {
-                Button("Play") { openWindow(value: PlaybackRoute(entry)) }
-                Divider()
-                Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
-                Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
-                Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
-                Divider()
-                Button("Move Up") {
-                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
-                }.disabled(storedIndex == 0)
-                Button("Move Down") {
-                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
-                }.disabled(storedIndex >= c.entries.count - 1)
-                Divider()
-                Button("Remove from Collection", role: .destructive) {
-                    model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
-                }
-                Divider()
-                addToCollectionMenu(for: [CollectionEntry(entry)])
-            }
+            .background(AppKitContextMenu {
+                cellMenuInCollection(entry, collection: c, storedIndex: storedIndex)
+            })
             .accessibilityLabel(cellAccessibilityLabel(entry))
+    }
+
+    /// NSMenu for a cell inside a collection grid (Play / sentiment / reorder /
+    /// remove / add-to-collection). Snapshot semantics: built fresh at
+    /// right-click time (see AppKitContextMenu), so `c.entries.count` and the
+    /// Move Up/Down enable states are read AT CLICK TIME, never stale and never
+    /// mutated mid-session.
+    private func cellMenuInCollection(_ entry: LibraryEntry,
+                                      collection c: GenomeCollection,
+                                      storedIndex: Int) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem("Play") { openWindow(value: PlaybackRoute(entry)) })
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem("👍 Like") { model.metadataStore.setSentiment(1, for: entry) })
+        menu.addItem(NSMenuItem("● Neutral") { model.metadataStore.setSentiment(0, for: entry) })
+        menu.addItem(NSMenuItem("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) })
+        menu.addItem(.separator())
+        let moveUp = NSMenuItem("Move Up") {
+            model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
+        }
+        moveUp.isEnabled = storedIndex > 0
+        menu.addItem(moveUp)
+        let moveDown = NSMenuItem("Move Down") {
+            model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
+        }
+        moveDown.isEnabled = storedIndex < c.entries.count - 1
+        menu.addItem(moveDown)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem("Remove from Collection", destructive: true) {
+            model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
+        })
+        menu.addItem(.separator())
+        menu.addItem(addToCollectionSubmenu(for: [CollectionEntry(entry)]))
+        return menu
     }
 
     /// Hit-test the in-progress drag: returns the STORED index of the cell under
@@ -1158,40 +1187,48 @@ struct LibraryView: View {
     @ViewBuilder
     private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         cellCore(entry, in: filtered)
-            .contextMenu {
-                Button("Play") { openWindow(value: PlaybackRoute(entry)) }
-                Divider()
-                Button("👍 Like") { model.metadataStore.setSentiment(1, for: entry) }
-                Button("● Neutral") { model.metadataStore.setSentiment(0, for: entry) }
-                Button("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
-                Divider()
-                addToCollectionMenu(for: [CollectionEntry(entry)])
-            }
+            .background(AppKitContextMenu { cellMenu(entry) })
             .accessibilityLabel(cellAccessibilityLabel(entry))
     }
 
-    /// "Add to Collection ▾" submenu — adds the given entries (deduped by
-    /// identity) to whichever collection the user picks, or creates a brand-new
-    /// collection seeded with them ("New Collection…" → the create sheet, so the
-    /// menu never dead-ends when there are no collections yet). Shared by the
-    /// grid-cell and collection-cell context menus (one entry each). Reads
-    /// `model.collectionsStore.collections` (`@Observable`) so the menu
-    /// refreshes as collections are created/deleted.
-    @ViewBuilder
-    private func addToCollectionMenu(for entries: [CollectionEntry]) -> some View {
-        Menu("Add to Collection") {
-            Button {
+    /// NSMenu for a grid cell (Play / sentiment / add-to-collection). Snapshot
+    /// semantics — see `cellMenuInCollection`.
+    private func cellMenu(_ entry: LibraryEntry) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem("Play") { openWindow(value: PlaybackRoute(entry)) })
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem("👍 Like") { model.metadataStore.setSentiment(1, for: entry) })
+        menu.addItem(NSMenuItem("● Neutral") { model.metadataStore.setSentiment(0, for: entry) })
+        menu.addItem(NSMenuItem("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) })
+        menu.addItem(.separator())
+        menu.addItem(addToCollectionSubmenu(for: [CollectionEntry(entry)]))
+        return menu
+    }
+
+    /// "Add to Collection" submenu (NSMenu) — adds the given entries (deduped
+    /// by identity) to whichever collection the user picks, or creates a
+    /// brand-new one seeded with them ("New Collection…" → the create sheet, so
+    /// the menu never dead-ends when there are no collections yet). Shared by
+    /// the grid-cell and collection-cell menus. The collection list is read ONCE
+    /// at menu-build time (a snapshot) — the menu cannot mutate or dismiss
+    /// mid-session when the store publishes.
+    private func addToCollectionSubmenu(for entries: [CollectionEntry]) -> NSMenuItem {
+        NSMenuItem.submenu("Add to Collection") {
+            let submenu = NSMenu()
+            let newItem = NSMenuItem("New Collection…") {
                 creatingCollectionEntries = entries
                 createText = defaultCollectionName()
-            } label: {
-                Label("New Collection…", systemImage: "plus")
             }
-            ForEach(model.collectionsStore.collections) { c in
-                Button(c.name) {
+            newItem.image = NSImage(systemSymbolName: "plus",
+                                    accessibilityDescription: "New collection")
+            submenu.addItem(newItem)
+            for c in model.collectionsStore.collections {
+                submenu.addItem(NSMenuItem(c.name) {
                     let added = model.collectionsStore.addEntries(entries, to: c.id)
                     importToast = added == 0 ? "Already in \(c.name)" : "Added \(added) to \(c.name)"
-                }
+                })
             }
+            return submenu
         }
     }
 

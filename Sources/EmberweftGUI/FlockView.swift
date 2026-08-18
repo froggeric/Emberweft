@@ -953,10 +953,12 @@ private struct BrowseTab: View {
                     .font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }
-        .contextMenu {
-            Button("Show in Finder") { reveal(row) }
-            Button("Delete", role: .destructive) { delete(row) }
-        }
+        .background(AppKitContextMenu {
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem("Show in Finder") { reveal(row) })
+            menu.addItem(NSMenuItem("Delete", destructive: true) { delete(row) })
+            return menu
+        })
     }
 
     /// Refresh snapshot + shard list (catalog reads). Deterministic SQL order.

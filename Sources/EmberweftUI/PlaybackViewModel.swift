@@ -122,9 +122,17 @@ public final class PlaybackViewModel {
 
     /// Render one frame at `p` (pure `Loop.blend` → renderer → layer). Deterministic
     /// at fixed seed: same `flame`/`params`/`p` ⇒ identical pixels.
+    ///
+    /// M6.6: the flame is FRAMING-NORMALIZED to the CURRENT `params.width` before
+    /// the blend — `camera.scale` is absolute pixels-per-unit authored for the
+    /// genome's `size`, so a raw render at the (small) preview buffer width zooms
+    /// the subject into the frame. Normalizing here (rather than at `load`) also
+    /// keeps framing correct through `updateParams` width hot-swaps. Pure + cheap
+    /// (one struct copy + a scale multiply).
     public func renderOnce(at p: Double) async {
         guard let flame, flame.isRenderable else { return }
-        let blended = Loop.blend(flame, t: min(max(p, 0), 1), cycles: cycles)
+        let normalized = Framing.normalize(flame: flame, renderWidth: params.width)
+        let blended = Loop.blend(normalized, t: min(max(p, 0), 1), cycles: cycles)
         let image = await renderer.render(flame: blended, params: params)
         sinkView.present(image)
     }

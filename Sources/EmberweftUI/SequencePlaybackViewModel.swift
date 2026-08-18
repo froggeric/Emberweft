@@ -114,7 +114,14 @@ public final class SequencePlaybackViewModel {
         // The dispatcher materializes segments lazily as `globalFrame` advances;
         // pre-walking segment 0 keeps `schedule.currentSheep` at 0 (start).
         _ = schedule.segment(at: 0)
-        let provider = ArrayFlameProvider(flames: flames)
+        // M6.6: normalize each endpoint's framing to the preview buffer width
+        // BEFORE the provider sees them, so loops AND transition blends operate
+        // on consistent scales (a raw `camera.scale` authored for an 800px canvas
+        // zooms the subject into a 854×480 preview buffer). `flames` itself stays
+        // RAW — `resolvedFlames` feeds the export wiring, which applies its own
+        // framing per export settings. Pure per-genome transform (rule #2).
+        let normalized = flames.map { Framing.normalize(flame: $0, renderWidth: params.width) }
+        let provider = ArrayFlameProvider(flames: normalized)
         let sink = SequenceSink(vm: self, sink: sinkView)
         dispatcher = PlaybackDispatcher(
             schedule: schedule,

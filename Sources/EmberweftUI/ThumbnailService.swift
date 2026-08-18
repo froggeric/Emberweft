@@ -82,8 +82,14 @@ public actor ThumbnailService {
             return .image(cached)
         }
 
-        // Render the poster frame (the raw flame = the as-authored still).
-        let fullSize = await render(flame: flame, params: renderParams, backend: backend)
+        // Render the poster frame (the loop's t=0 identity-rotation still),
+        // FRAMING-NORMALIZED to the render width (M6.6): `camera.scale` is
+        // absolute pixels-per-unit authored for the genome's `size`, so a raw
+        // render at the (small) thumbnail width zooms the subject INTO the
+        // frame. Normalizing keeps the thumbnail's framing identical to what
+        // export/flock produce at any resolution.
+        let normalized = Framing.normalize(flame: flame, renderWidth: renderParams.width)
+        let fullSize = await render(flame: normalized, params: renderParams, backend: backend)
         // All-black ⇒ degenerate sentinel (never cache as a black PNG).
         if fullSize.isAllZero { return .degenerate }
 
@@ -101,13 +107,15 @@ public actor ThumbnailService {
 
     /// Deterministic cache key from string/int components only. Same inputs ⇒
     /// same key across runs and machines. Includes both render and display sizes
-    /// so changing either invalidates the cache.
+    /// so changing either invalidates the cache. The `frn1` suffix is the M6.6
+    /// framing-generation marker — normalized thumbnails must not be served from
+    /// pre-M6.6 faithful caches (or vice versa on a hypothetical rollback).
     public static func cacheKey(id: String,
                                 renderW: Int, renderH: Int,
                                 displayW: Int, displayH: Int,
                                 spp: Int, backend: String, seed: UInt64) -> String {
         let safeID = id.replacingOccurrences(of: "/", with: "__")
-        return "\(safeID)__rw\(renderW)x\(renderH)__dw\(displayW)x\(displayH)__spp\(spp)__\(backend)__seed\(seed)"
+        return "\(safeID)__rw\(renderW)x\(renderH)__dw\(displayW)x\(displayH)__spp\(spp)__\(backend)__seed\(seed)__frn1"
     }
 
     // MARK: - Internals
