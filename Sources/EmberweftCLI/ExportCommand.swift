@@ -350,7 +350,8 @@ extension EmberweftCLI {
                 resolution: resolution, segmentFrames: segmentFrames, framesPerSegment: framesPerSegment,
                 transitionFramesPerSegment: transitionFramesPerSegment,
                 segmentCount: segmentCount, seed: seed, loopCycles: loopCycles, stagger: stagger,
-                backend: backend, strictBackend: strictBackend, force: force, failFast: failFast)
+                backend: backend, strictBackend: strictBackend, force: force, failFast: failFast,
+                framing: framing)
         }
 
         // --- genome-count guard (mirrors AnimateCommand) ---
@@ -401,12 +402,8 @@ extension EmberweftCLI {
             codec: codec, container: container, fps: fps, quality: quality,
             temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
             segmentFrames: segmentFrames, renderable: renderable, fallbackFlame: flames[0], backend: backend,
-            temporalSmoothing: temporalSmoothing)
-        // M6.6 (T4): framing is a CLI-level concern (the shared resolver has no
-        // framing parameter by design — the GUI builds it from its own pickers;
-        // keeping `ExportSettings.resolve`'s signature stable avoids drift).
-        // The TYPE default is `.faithful`, so this only overrides on export.
-        settings.framing = framing == "normalized" ? .normalized : .faithful
+            temporalSmoothing: temporalSmoothing,
+            framing: framing)
 
         // --- HEVC availability probe + fallback (Task 5 AC3) ---
         // H.264 is universally available on the target, so we only probe when
@@ -683,7 +680,8 @@ extension EmberweftCLI {
         codec: String, container: String, fps: Int, quality: String,
         temporalSamples: Int, bitrate: String, resolution: String,
         segmentFrames: Int, renderable: [Flame], fallbackFlame: Flame, backend: String,
-        temporalSmoothing: TemporalSmoothing = .auto
+        temporalSmoothing: TemporalSmoothing = .auto,
+        framing: String = "normalized"
     ) -> ExportSettings {
         // --- String → enum parsing (VERBATIM from the original; the resolver
         // takes parsed enums so this is the ONLY place strings are interpreted) ---
@@ -721,13 +719,21 @@ extension EmberweftCLI {
 
         // Delegate the motion-blur fallback + Metal cap to the shared pure+silent
         // resolver (single source of truth for CLI + GUI; spec §4.2b).
-        let settings = ExportSettings.resolve(
+        var settings = ExportSettings.resolve(
             quality: qualityEnum,
             temporalSamples: temporalSamples,
             codec: codecEnum, container: containerEnum, fps: fps, bitrate: bitrateEnum,
             resolution: resolutionEnum, segmentFrameBudget: segmentFrames,
             baseFlame: baseFlame, backend: backendEnum,
             temporalSmoothing: temporalSmoothing)
+
+        // M6.6 (T4/R1): framing is a CLI-level concern (the shared resolver has
+        // no framing parameter by design — the GUI builds it from its own
+        // pickers; keeping `ExportSettings.resolve`'s signature stable avoids
+        // drift). The TYPE default is `.faithful`; the CLI default is
+        // `normalized` (both the one-shot and batch paths route through THIS
+        // wrapper, so the two can't diverge).
+        settings.framing = framing == "normalized" ? .normalized : .faithful
 
         // --- Metal temporal cap notice (the resolver is SILENT; the CLI prints) ---
         // Mirrors the original (ExportCommand.swift:378-382) EXACTLY: the notice
@@ -778,7 +784,8 @@ extension EmberweftCLI {
         resolution: String, segmentFrames: Int, framesPerSegment: Int,
         transitionFramesPerSegment: Int?,
         segmentCount: Int, seed: UInt64, loopCycles: Int, stagger: Double,
-        backend: String, strictBackend: Bool, force: Bool, failFast: Bool
+        backend: String, strictBackend: Bool, force: Bool, failFast: Bool,
+        framing: String = "normalized"
     ) async -> Int32 {
         // Load + decode the manifest.
         let manifestURL = URL(fileURLWithPath: manifestPath)
@@ -804,7 +811,8 @@ extension EmberweftCLI {
             codec: codec, container: container, fps: fps, quality: quality,
             temporalSamples: temporalSamples, bitrate: bitrate, resolution: resolution,
             segmentFrames: segmentFrames, renderable: renderable0, fallbackFlame: firstFlame, backend: backend,
-            temporalSmoothing: .auto)   // batch: smoothing is batch-wide from quality; no per-entry override
+            temporalSmoothing: .auto,   // batch: smoothing is batch-wide from quality; no per-entry override
+            framing: framing)   // M6.6 R1: batch framing == one-shot framing (default normalized, explicit flag honored)
 
         // HEVC availability (probe once — codec is batch-wide).
         if settings.codec == .hevc && !VideoEncoder.canEncode(.hevc) {
