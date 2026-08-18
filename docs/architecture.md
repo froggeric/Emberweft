@@ -64,6 +64,12 @@ FlameKit provides the data model for fractal flame genomes:
     (ε-greedy, F1-deterministic over sorted-array `FeatureVector`s).
   - `PaletteBlend` / `SpecialSauce` / `RefAngles` — the supporting `sheep_edge`
     pieces (HSV palette mix, rest-position padding, wind-angle anchors).
+  - `Framing` — the pure M6.6 width normalization: a genome's `camera.scale`
+    is absolute pixels-per-unit authored for its `size`, so rendering at
+    another width rescales it by `renderWidth / size.x` (identity at the
+    authored width; degenerate headers pass through unchanged). Consumed at
+    the export/flock/preview entry points via `ExportSettings.framing`; the
+    renderers and `animate` never apply it.
 
 FlameKit has no Metal dependencies and can be used in headless tools or tests.
 
