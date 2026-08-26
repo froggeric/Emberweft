@@ -68,7 +68,8 @@ FlameKit provides the data model for fractal flame genomes:
     is absolute pixels-per-unit authored for its `size`, so rendering at
     another width rescales it by `renderWidth / size.x` (identity at the
     authored width; degenerate headers pass through unchanged). M6.7 adds the
-    orientation-aware sibling `Framing.apply(flame:renderWidth:renderHeight:framing:)`:
+    orientation-aware sibling `Framing.apply(flame:renderWidth:renderHeight:normalized:)`
+    (a `normalized: Bool` flag):
     orientation is derived from the final canvas dims (`h > w` portrait,
     `w == h` square — never stored), and a portrait canvas rotates a
     landscape-authored genome **+90°** while anchoring its authored *height*
