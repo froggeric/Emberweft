@@ -14,6 +14,7 @@ implications of porting flam3) is the owner's decision and under review.
 - Vertical/social resolution presets (720×1280, 1080×1920, 1080×1350, 1080×1080) with orientation derived from the render size, and one shared pixel-band bitrate source (custom WxH sizes now match their named-preset tiers).
 - CLI `--resolution` accepts the vertical/square tokens and explicit `WxH` sizes; invalid values now fail fast instead of silently rendering at 1080p.
 - Exports at vertical resolutions render the authored composition rotated 90° with the same normalized framing (faithful mode rotates without rescaling).
+- Flock archive: portrait shard presets (720×1280 / 1080×1920 / 1080×1350 / 1080×1080) and a per-artifact framing gate that distinguishes rotated portrait material.
 
 ## [0.6.1] - 2026-08-18
 

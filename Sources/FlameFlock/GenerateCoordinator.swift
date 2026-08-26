@@ -238,9 +238,16 @@ public actor GenerateCoordinator {
                 // Seam-geometry exact gate (same as StitchCoordinator): a v1
                 // monolithic artifact must not be reused as a v2 core/wrap/ext
                 // unit — the frame layout differs. The framing gate is also
-                // exact (like codec): a faithful/legacy row (0) must not be
-                // reused for a normalized request (1) — its framing differs.
-                let requestedFraming = request.settings.framing == .normalized ? 1 : 0
+                // exact (like codec) and derives PER KEY via the shared
+                // `FlockFramingGate` (M6.7 D7): 0 = faithful/legacy, 1 =
+                // normalized unrotated, 2 = normalized rotated (portrait shard ×
+                // landscape-authored genome). Canvas dims from the SHARD,
+                // authored dims from the unit's A flame — never
+                // `settings.resolution` (not guaranteed shard-aligned).
+                let requestedFraming = FlockFramingGate.value(
+                    normalized: request.settings.framing == .normalized,
+                    canvasW: request.shard.width, canvasH: request.shard.height,
+                    authoredW: unit.A.size.x, authoredH: unit.A.size.y)
                 let seamOK = existing?.geom == ArchiveRenderer.SeamGeometry.version
                     && (existing?.kind == .edge || existing?.wrapFile != nil)
                     && existing?.framing == requestedFraming

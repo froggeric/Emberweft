@@ -173,7 +173,7 @@ public struct ArchiveRenderer: Sendable {
                                                      aGen: aGen, aId: aId, bGen: aGen, bId: aId,
                                                      ext: "mov", variant: FlockNaming.wrapVariant)
         let (nA, _) = Self.unitFlames(A: A, B: nil, renderWidth: shard.width,
-                                      framing: settings.framing)
+                                      renderHeight: shard.height, framing: settings.framing)
         let params = Self.makeParams(A: nA, shard: shard, seed: seed, settings: settings)
         let corePlan = Self.makeLoopCorePlan(A: nA, loopFrames: shard.loopFrames,
                                              transFrames: shard.transFrames, seed: seed,
@@ -215,7 +215,8 @@ public struct ArchiveRenderer: Sendable {
         let out = try FlockNaming.archiveFileURL(flockRoot: flockRoot, shardDir: shard.name,
                                                  aGen: aGen, aId: aId, bGen: bGen, bId: bId, ext: "mov")
         let (nA, nB) = Self.unitFlames(A: A, B: B, renderWidth: shard.width,
-                                        framing: settings.framing)
+                                       renderHeight: shard.height,
+                                       framing: settings.framing)
         let params = Self.makeParams(A: nA, shard: shard, seed: seed, settings: settings)
         let plan = Self.makeEdgeExtPlan(A: nA, B: nB ?? nA, loopFrames: shard.loopFrames,
                                         transFrames: shard.transFrames, seed: seed,
@@ -262,9 +263,17 @@ public struct ArchiveRenderer: Sendable {
         let settings = aligned
         let (spp, _) = settings.quality.resolvedSamplesPerPixel(for: A)
         let stem = out.deletingPathExtension().lastPathComponent
+        // M6.7: the per-key framing gate — ONE value threaded into BOTH the row
+        // write and the `emberweft.framing` mdta tag below (write/write
+        // divergence would corrupt rebuilds). Canvas dims from the SHARD,
+        // authored dims from the unit's A flame (`Framing.apply` never touches
+        // `size`, so the transformed A still carries the authored dims).
+        let framingGate = FlockFramingGate.value(normalized: settings.framing == .normalized,
+                                                 canvasW: shard.width, canvasH: shard.height,
+                                                 authoredW: A.size.x, authoredH: A.size.y)
         func makeMeta() -> [AVMetadataItem] {
             Self.makeMetadata(stem: stem, shard: shard, settings: settings, seed: seed,
-                              sourceSha: sourceSha, spp: spp)
+                              sourceSha: sourceSha, spp: spp, framingGate: framingGate)
         }
         // renderSegmentRange writes a temp beside `out`, then atomic-renames to `out`.
         // If it throws (e.g. ProRes-in-mp4, cancel, disk-full) no file lands at
@@ -301,10 +310,12 @@ public struct ArchiveRenderer: Sendable {
             file: Self.archiveRelativePath(shard: shard.name, file: out.lastPathComponent),
             wrapFile: wrapRel,
             geom: SeamGeometry.version,
-            // M6.6 framing exact hit-gate: 0 = faithful, 1 = normalized — the
-            // mode `unitFlames` actually applied for THIS render (same
-            // `settings`), so the row records reality.
-            framing: settings.framing == .normalized ? 1 : 0,
+            // M6.7 per-key framing exact hit-gate: 0 = faithful / legacy,
+            // 1 = normalized unrotated (landscape/square shard, or a
+            // portrait-authored genome), 2 = normalized ROTATED (portrait
+            // shard × landscape-authored genome) — the framing `unitFlames`
+            // actually applied for THIS render, so the row records reality.
+            framing: framingGate,
             thumb: Self.thumbRelativePath(shard: shard.name, aGen: aGen, aId: aId, bGen: bGen, bId: bId),
             width: shard.width, height: shard.height, fps: shard.fps,
             loopFrames: shard.loopFrames, transFrames: shard.transFrames,
@@ -322,20 +333,18 @@ public struct ArchiveRenderer: Sendable {
         try await catalog.upsertArtifact(row)
     }
 
-    /// M6.6 (D6, reconciled): the flock archive renders endpoints at their
-    /// AUTHORED framing regardless of shard width, gated on settings.framing
-    /// (the GUI has no toggle ⇒ GUI-driven runs are always normalized; the
-    /// CLI's --framing faithful is the mastering-parity escape hatch). Pure
-    /// step shared by renderLoop/renderEdge so loops and edges blend
-    /// normalized values (the interpolator's log-space scale blend then
-    /// operates on consistent endpoints). Framing is NOT identity (D8): same
-    /// seed, same archive path — a framing change re-renders + overwrites in
-    /// place.
-    static func unitFlames(A: Flame, B: Flame?, renderWidth: Int,
+    /// M6.7: the orientation-aware matrix (`Framing.apply`) — including
+    /// faithful mode (D3: rotation is the preset's orientation semantic; the
+    /// old guard returned the flames untouched for faithful, so a portrait
+    /// shard rendered faithful was unrotated). `apply`'s non-portrait cells
+    /// are byte-identical to the previous conditional `normalize`.
+    static func unitFlames(A: Flame, B: Flame?, renderWidth: Int, renderHeight: Int,
                            framing: ExportSettings.FramingMode) -> (A: Flame, B: Flame?) {
-        guard framing == .normalized else { return (A, B) }
-        return (Framing.normalize(flame: A, renderWidth: renderWidth),
-                B.map { Framing.normalize(flame: $0, renderWidth: renderWidth) })
+        let normalized = framing == .normalized
+        return (Framing.apply(flame: A, renderWidth: renderWidth,
+                              renderHeight: renderHeight, normalized: normalized),
+                B.map { Framing.apply(flame: $0, renderWidth: renderWidth,
+                                      renderHeight: renderHeight, normalized: normalized) })
     }
 
     /// Build the `RenderParams` for one archive unit. spp + oversample are
@@ -364,9 +373,12 @@ public struct ArchiveRenderer: Sendable {
     /// finding). The namespace is encoded in the KEY (`emberweft.*`, mirroring
     /// Apple's `com.apple.quicktime.*` convention), and the keyspace is `mdta`.
     /// `spp` is passed in (resolved by the caller) because `ExportSettings` has
-    /// no `samplesPerPixel` field.
+    /// no `samplesPerPixel` field; `framingGate` likewise (the per-key
+    /// `FlockFramingGate` value the caller derived for the row, so the tag and
+    /// the row can never disagree).
     static func makeMetadata(stem: String, shard: ShardSpec, settings: ExportSettings,
-                             seed: UInt64, sourceSha: String?, spp: Int) -> [AVMetadataItem] {
+                             seed: UInt64, sourceSha: String?, spp: Int,
+                             framingGate: Int) -> [AVMetadataItem] {
         var items: [AVMetadataItem] = []
         func custom(_ key: String, _ value: String) {
             let m = AVMutableMetadataItem()
@@ -400,11 +412,14 @@ public struct ArchiveRenderer: Sendable {
         // Seam-geometry version (read back by `FlockCatalog.rebuild` into
         // `ArtifactRow.geom` — the exact hit-gate alongside `codec`).
         custom("emberweft.geom", String(SeamGeometry.version))
-        // M6.6 framing exact hit-gate (read back by `FlockCatalog.rebuild` into
-        // `ArtifactRow.framing`): 1 = normalized, 0 = faithful/legacy (a file
-        // with no tag decodes 0 on rebuild, so legacy rows MISS a normalized
-        // request — never silently reused).
-        custom("emberweft.framing", settings.framing == .normalized ? "1" : "0")
+        // M6.7 per-key framing exact hit-gate (read back by
+        // `FlockCatalog.rebuild` into `ArtifactRow.framing`): the
+        // `FlockFramingGate` value for THIS render — 2 = normalized ROTATED
+        // (portrait shard × landscape-authored genome), 1 = normalized
+        // unrotated, 0 = faithful/legacy (a file with no tag decodes 0 on
+        // rebuild, so legacy rows MISS a normalized request — never silently
+        // reused).
+        custom("emberweft.framing", String(framingGate))
         return items
     }
 

@@ -40,17 +40,28 @@ public enum ShardPresets {
             isCanonical: true, codec: .hevc)
     }
 
-    /// The sensible canonical shards — 720p / 1080p / 1440p / 4K at 30 fps, all
-    /// at the canonical pace (15 s loops / 12 s edges ⇒ names `1280x720_30fps`,
-    /// `1920x1080_30fps`, `2560x1440_30fps`, `3840x2160_30fps`). Ascending
-    /// pixels (deterministic order); HEVC per the archive-wide codec decision
-    /// (D12).
+    /// The sensible canonical shards — the four landscape tiers PLUS the four
+    /// M6.7 social formats (D14: they JOIN `sensible` so `preset(named:)`, the
+    /// Settings default-shard picker, and the FlockView dedup filter see
+    /// them). Ascending pixels with an ascending-width tie-break (the 720p
+    /// and 1080p landscape/portrait pairs have equal pixel counts); HEVC per
+    /// the archive-wide codec decision (D12).
     public static let sensible: [ShardSpec] = [
+        make(width: 720, height: 1280),
         make(width: 1280, height: 720),
+        make(width: 1080, height: 1080),
+        make(width: 1080, height: 1350),
+        make(width: 1080, height: 1920),
         make(width: 1920, height: 1080),
         make(width: 2560, height: 1440),
         make(width: 3840, height: 2160),
     ]
+
+    /// D14: the GUI's Standard/Vertical grouping predicate. Lives HERE (spec
+    /// §7's file map), unit-testable in FlameFlockTests, so FlockView and
+    /// SettingsView share one definition instead of duplicating `height >
+    /// width` filters. Square (h == w) is NOT vertical — it renders unrotated.
+    public static func isVertical(_ s: ShardSpec) -> Bool { s.height > s.width }
 
     /// The canonical default: 1080p30 at the canonical pace. Used as the
     /// fallback when a preferred shard name is unset or unknown (it is also

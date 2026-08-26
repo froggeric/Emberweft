@@ -356,4 +356,121 @@ final class DeterminismPinsTests: XCTestCase {
         let sha1 = try sha256(of: out1), sha2 = try sha256(of: out2)
         print("[testArtifactDeterminism] .mov shasum match (diagnostic, non-load-bearing): \(sha1 == sha2)")
     }
+
+    // MARK: - Pin 3b: portrait-shard artifact determinism (M6.7, spec §8 REQUIRED)
+
+    /// Portrait twin of `testArtifactDeterminism` (spec §8 REQUIRED: "a
+    /// portrait shard rendered twice yields identical frames"). Portrait shards
+    /// are new cache identities (D11) and the rotation branch of
+    /// `Framing.apply` (landscape-authored genome × portrait canvas) is new
+    /// code on the archive path — this is its rule-#2 guard.
+    ///
+    /// Mirrors the landscape twin's pinning level: the deterministic INPUT
+    /// chain (seed → `unitFlames`' rotation/scale → `makeParams` → row), NOT
+    /// the `.mov` container bytes — `makeMetadata` embeds a wall-clock
+    /// `emberweft.rendered` tag, so an unconditional file-shasum assertion
+    /// would be flaky at the second boundary (the landscape twin's documented
+    /// finding); the container-shasum comparison is printed as a diagnostic.
+    func testPortraitShardArtifactDeterminism() async throws {
+        // The portrait shard is constructed EXPLICITLY: `shardSpec(name:)`
+        // hardcodes 48×32 landscape — a W<H NAME alone does not make it
+        // portrait. (Codec/settings mirror the file's h264 harness.)
+        let shard = ShardSpec(name: "32x48_30fps", width: 32, height: 48, fps: 30,
+                              loopSeconds: 0.1, transSeconds: 0.07,
+                              loopFrames: 3, transFrames: 2,
+                              isCanonical: false, codec: .h264)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        let A = try parseSierpinski()   // landscape-authored 320×200 ⇒ gate 2
+        let aGen = "248", aId = "00628", bId = "03194"
+
+        // (a) `FlockSeed.seed` is pure for the portrait shard key (the root of
+        //     the determinism chain — a new cache identity still keys a new but
+        //     STABLE seed).
+        let seed1 = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId,
+                                   bGen: aGen, bId: aId)
+        let seed2 = FlockSeed.seed(shard: shard.name, aGen: aGen, aId: aId,
+                                   bGen: aGen, bId: aId)
+        XCTAssertEqual(seed1, seed2,
+                       "FlockSeed.seed must be pure for the portrait shard key")
+
+        // (b) The ROTATION branch is deterministic: the same authored genome
+        //     maps to the identical rotated + authored-height-anchored matrix,
+        //     call after call, and `makeParams` bridges it into identical
+        //     `RenderParams`.
+        let (n1, _) = ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: shard.width,
+                                                 renderHeight: shard.height,
+                                                 framing: settings.framing)
+        let (n2, _) = ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: shard.width,
+                                                 renderHeight: shard.height,
+                                                 framing: settings.framing)
+        XCTAssertEqual(n1, n2, "unitFlames must be pure (identical transformed genome)")
+        XCTAssertEqual(n1.camera.rotation, Framing.portraitRotationDegrees,
+                       "landscape-authored × portrait canvas ⇒ rotated")
+        XCTAssertEqual(n1.camera.scale, 100.0 * Double(shard.width) / 200.0, accuracy: 1e-9,
+                       "normalized ⇒ authored-HEIGHT anchor (scale × canvasW / size.y)")
+        let p1 = ArchiveRenderer.makeParams(A: n1, shard: shard, seed: seed1, settings: settings)
+        let p2 = ArchiveRenderer.makeParams(A: n2, shard: shard, seed: seed2, settings: settings)
+        XCTAssertEqual(p1.seed, p2.seed, "both renders thread the identical seed")
+        XCTAssertEqual(p1.seed, seed1)
+        XCTAssertEqual(p1.width, p2.width); XCTAssertEqual(p1.width, 32)
+        XCTAssertEqual(p1.height, p2.height); XCTAssertEqual(p1.height, 48)
+        XCTAssertEqual(p1.samplesPerPixel, p2.samplesPerPixel)
+        XCTAssertEqual(p1.oversample, p2.oversample)
+
+        // (c) Empirically render the same LOOP (and edge) into two FRESH roots
+        //     (no shared cache, independent coordinators) under `.normalized`:
+        //     both artifacts materialize at the deterministic archive paths,
+        //     and both rows carry the identical canonical seed + the gate-2
+        //     framing (the portrait cache identity).
+        let root1 = makeRoot("portrait-1"), root2 = makeRoot("portrait-2")
+        defer { try? FileManager.default.removeItem(at: root1); try? FileManager.default.removeItem(at: root2) }
+        let cat1 = try FlockCatalog(root: root1), cat2 = try FlockCatalog(root: root2)
+        try await cat1.upsertShard(shard); try await cat2.upsertShard(shard)
+        let renderer = ArchiveRenderer()
+        let coord1 = ExportCoordinator(backend: .cpu), coord2 = ExportCoordinator(backend: .cpu)
+        for (cat, root, coord) in [(cat1, root1, coord1), (cat2, root2, coord2)] {
+            try await renderer.renderLoop(A: A, aGen: aGen, aId: aId, shard: shard,
+                                          settings: settings, coordinator: coord, catalog: cat,
+                                          backend: .cpu, useOffMainMetal: false,
+                                          flockRoot: root, sourceSha: nil)
+            try await renderer.renderEdge(A: A, B: A, aGen: aGen, aId: aId, bGen: aGen, bId: bId,
+                                          shard: shard, settings: settings, coordinator: coord,
+                                          catalog: cat, backend: .cpu, useOffMainMetal: false,
+                                          flockRoot: root, sourceSha: nil)
+        }
+        let loopOut1 = try FlockNaming.archiveFileURL(flockRoot: root1, shardDir: shard.name,
+                                                      aGen: aGen, aId: aId, bGen: aGen, bId: aId, ext: "mov")
+        let loopOut2 = try FlockNaming.archiveFileURL(flockRoot: root2, shardDir: shard.name,
+                                                      aGen: aGen, aId: aId, bGen: aGen, bId: aId, ext: "mov")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: loopOut1.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: loopOut2.path))
+        XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: loopOut1.path)[.size] as? Int ?? 0, 0)
+        XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: loopOut2.path)[.size] as? Int ?? 0, 0)
+
+        // Rows: identical deterministic inputs + the portrait framing gate.
+        // (`XCTUnwrap`'s autoclosure can't `await`, so resolve the actor calls
+        // into temporaries first, then unwrap — same as the landscape twin.)
+        let l1Opt = try await cat1.lookup(aGen: aGen, aId: aId, bGen: aGen, bId: aId, shard: shard.name)
+        let l2Opt = try await cat2.lookup(aGen: aGen, aId: aId, bGen: aGen, bId: aId, shard: shard.name)
+        let lr1 = try XCTUnwrap(l1Opt), lr2 = try XCTUnwrap(l2Opt)
+        XCTAssertEqual(lr1.seed, lr2.seed, "both loop rows carry the identical canonical seed")
+        XCTAssertEqual(lr1.seed, Int(truncatingIfNeeded: seed1))
+        XCTAssertEqual(lr1.framing, 2, "portrait shard × landscape-authored ⇒ row gate 2")
+        XCTAssertEqual(lr2.framing, 2)
+        XCTAssertEqual(lr1.qualityRank, lr2.qualityRank, accuracy: 1e-9)
+        XCTAssertEqual(lr1.wrapFile, lr2.wrapFile, "both rows record the identical wrap path")
+        let e1Opt = try await cat1.lookup(aGen: aGen, aId: aId, bGen: aGen, bId: bId, shard: shard.name)
+        let e2Opt = try await cat2.lookup(aGen: aGen, aId: aId, bGen: aGen, bId: bId, shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(e1Opt).framing, 2, "edge artifacts record gate 2 too")
+        XCTAssertEqual(try XCTUnwrap(e2Opt).framing, 2)
+        XCTAssertEqual(try XCTUnwrap(e1Opt).seed, try XCTUnwrap(e2Opt).seed)
+
+        // Diagnostic (non-load-bearing, mirroring the landscape twin): the
+        // container bytes compare equal only when both renders land in the same
+        // wall-clock second (the `emberweft.rendered` tag); the INPUT chain
+        // above is the pin.
+        let psha1 = try sha256(of: loopOut1), psha2 = try sha256(of: loopOut2)
+        print("[testPortraitShardArtifactDeterminism] .mov shasum match (diagnostic, non-load-bearing): \(psha1 == psha2)")
+    }
 }

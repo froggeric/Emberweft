@@ -665,6 +665,192 @@ final class StitchCoordinatorTests: XCTestCase {
         XCTAssertNotNil(try XCTUnwrap(row).wrapFile)
     }
 
+    // MARK: - (i3): M6.7 per-key framing gate (0/1/2)
+
+    /// A PORTRAIT test shard (32×48) at this file's fast pace. Constructed
+    /// explicitly — `shardSpec(name:)` hardcodes the 48×32 landscape dims, and
+    /// a W<H NAME alone does not make a shard portrait (the gate reads
+    /// `width`/`height`, not the name).
+    private func portraitShardSpec() -> ShardSpec {
+        ShardSpec(name: "32x48_30fps", width: 32, height: 48, fps: 30,
+                  loopSeconds: 0.2, transSeconds: 0.133,
+                  loopFrames: 6, transFrames: 4,
+                  isCanonical: false, codec: .h264)
+    }
+
+    /// A SQUARE test shard (32×32): unrotated width-anchor ⇒ gate 1.
+    private func squareShardSpec() -> ShardSpec {
+        ShardSpec(name: "32x32_30fps", width: 32, height: 32, fps: 30,
+                  loopSeconds: 0.2, transSeconds: 0.133,
+                  loopFrames: 6, transFrames: 4,
+                  isCanonical: false, codec: .h264)
+    }
+
+    /// (a) A portrait shard + a LANDSCAPE-authored genome under `.normalized`
+    /// derives gate 2 (rotated): a stored row with framing 1 — rank sufficient,
+    /// geometry current, wrap present — is NOT a HIT. It must be re-rendered,
+    /// and the fresh row comes back at gate 2 (the row-write site derives the
+    /// same value the compare derived).
+    func testPortraitShardGateTwoMissesFramingOneRow() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = portraitShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        let A = try parseSierpinski()   // 320×200 landscape-authored
+
+        // A gate-1 row whose ONLY mismatch is the framing gate.
+        var gateOne = makeRow(aGen: "248", aId: "00001", bGen: "248", bId: "00001",
+                              shard: shard.name, codec: shard.codec)
+        gateOne.qualityRank = 100.0
+        gateOne.framing = 1
+        try await catalog.upsertArtifact(gateOne)
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+        let progress = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: settings, flockRoot: root, out: outURL(root: root),
+                          loopRepetitions: 1),
+            coordinator: coord))
+
+        let planIdx = try XCTUnwrap(progress.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress[planIdx], .plan(hitCount: 0, missCount: 1, segmentCount: 2),
+                       "a framing-1 row must MISS a gate-2 (rotated portrait) request")
+        XCTAssertEqual(progress.last, .completed(out: outURL(root: root)))
+        let row = try await catalog.lookup(aGen: "248", aId: "00001",
+                                           bGen: "248", bId: "00001", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(row).framing, 2,
+                       "the re-rendered row must record gate 2 (row write agrees with the compare)")
+    }
+
+    /// (b) A SQUARE shard derives gate 1 (unrotated width-anchor, D7 rev 3): a
+    /// framing-1 row HITs (zero frames re-rendered), a framing-2 row MISSes and
+    /// re-renders back to gate 1.
+    func testSquareShardGateOneHitsAndGateTwoMisses() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = squareShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        let A = try parseSierpinski()
+
+        // Phase 1: a real normalized render writes a gate-1 row; the stitch at
+        // the same settings derives gate 1 ⇒ HIT, nothing re-rendered.
+        let coord = ExportCoordinator(backend: .cpu)
+        let renderer = ArchiveRenderer()
+        try await renderer.renderLoop(A: A, aGen: "248", aId: "00001", shard: shard,
+                                      settings: settings, coordinator: coord, catalog: catalog,
+                                      backend: .cpu, useOffMainMetal: false, flockRoot: root,
+                                      sourceSha: nil)
+        let seededOpt = try await catalog.lookup(aGen: "248", aId: "00001",
+                                                 bGen: "248", bId: "00001", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(seededOpt).framing, 1, "a square shard renders at gate 1")
+
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: renderer,
+                                         backend: .cpu, useOffMainMetal: false)
+        let out1 = root.appendingPathComponent("hit.mov")
+        let progress1 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: settings, flockRoot: root, out: out1, loopRepetitions: 1),
+            coordinator: coord))
+        let plan1 = try XCTUnwrap(progress1.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress1[plan1], .plan(hitCount: 1, missCount: 0, segmentCount: 2),
+                       "a framing-1 row HITs a square (gate-1) request")
+        XCTAssertEqual(progress1.last, .completed(out: out1))
+
+        // Phase 2: overwrite the row at framing 2 (a bogus higher gate) ⇒
+        // MISS ⇒ re-render; the fresh row comes back at gate 1.
+        var bogus = makeRow(aGen: "248", aId: "00001", bGen: "248", bId: "00001",
+                            shard: shard.name, codec: shard.codec)
+        bogus.qualityRank = 100.0
+        bogus.framing = 2
+        try await catalog.upsertArtifact(bogus)
+        let out2 = root.appendingPathComponent("miss.mov")
+        let progress2 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", A)],
+                          settings: settings, flockRoot: root, out: out2, loopRepetitions: 1),
+            coordinator: coord))
+        let plan2 = try XCTUnwrap(progress2.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress2[plan2], .plan(hitCount: 0, missCount: 1, segmentCount: 2),
+                       "a framing-2 row must MISS a square (gate-1) request")
+        XCTAssertEqual(progress2.last, .completed(out: out2))
+        let row = try await catalog.lookup(aGen: "248", aId: "00001",
+                                           bGen: "248", bId: "00001", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(row).framing, 1, "the re-render restores gate 1")
+    }
+
+    /// (c) A PORTRAIT-authored genome on a portrait shard derives gate 1 (D3:
+    /// already composed vertically — never rotated): the first stitch
+    /// MISS-renders (row + mdta record 1), and a second stitch at the same
+    /// settings HITs with zero new frames. Together with its
+    /// `GenerateCoordinatorTests` twin this exercises all FOUR consumer sites
+    /// end-to-end (row write + mdta write + both compares).
+    func testPortraitAuthoredUnitOnPortraitShardDerivesGateOneAndHits() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = portraitShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        var portrait = try parseSierpinski()
+        portrait.size = SIMD2<Int>(200, 320)   // portrait-authored twin of the fixture
+
+        let coord = ExportCoordinator(backend: .cpu)
+        let stitcher = StitchCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                         backend: .cpu, useOffMainMetal: false)
+
+        // Run 1 (empty archive): MISS render ⇒ the row AND the file tag record
+        // gate 1 (unrotated), never 2.
+        let out1 = root.appendingPathComponent("first.mov")
+        let progress1 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", portrait)],
+                          settings: settings, flockRoot: root, out: out1, loopRepetitions: 1),
+            coordinator: coord))
+        XCTAssertEqual(progress1.last, .completed(out: out1))
+        let rowOpt = try await catalog.lookup(aGen: "248", aId: "00001",
+                                              bGen: "248", bId: "00001", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(rowOpt).framing, 1,
+                       "portrait-authored on a portrait shard ⇒ row gate 1 (never rotated)")
+        let core = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                  aGen: "248", aId: "00001",
+                                                  bGen: "248", bId: "00001", ext: "mov")
+        let all = try await AVURLAsset(url: core).load(.metadata)
+        let tag = all.first {
+            $0.keySpace == AVMetadataKeySpace(rawValue: "mdta")
+                && ($0.key as? String) == "emberweft.framing"
+        }?.value as? String
+        XCTAssertEqual(tag, "1", "the mdta write agrees with the row write (both gate 1)")
+
+        // Run 2: same settings ⇒ derives gate 1 ⇒ HIT, nothing re-rendered.
+        let appendedBefore = await coord.appendedFrameCount
+        let out2 = root.appendingPathComponent("second.mov")
+        let progress2 = try await drain(stitcher.stitch(
+            StitchRequest(shard: shard, orderedFlames: [("248", "00001", portrait)],
+                          settings: settings, flockRoot: root, out: out2, loopRepetitions: 1),
+            coordinator: coord))
+        let plan2 = try XCTUnwrap(progress2.firstIndex(where: {
+            if case .plan = $0 { return true } else { return false }
+        }))
+        XCTAssertEqual(progress2[plan2], .plan(hitCount: 1, missCount: 0, segmentCount: 2),
+                       "the gate-1 row HITs the derived gate-1 request")
+        XCTAssertEqual(progress2.last, .completed(out: out2))
+        let appendedAfter = await coord.appendedFrameCount
+        XCTAssertEqual(appendedBefore, appendedAfter, "the HIT must not re-render any frame")
+    }
+
     // MARK: - (i): HIT respects the D4 quality rank (upgrade-overwrite)
 
     /// A stored row below the REQUESTED rank is NOT a HIT: it is re-rendered

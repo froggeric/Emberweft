@@ -249,6 +249,114 @@ final class GenerateCoordinatorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(row).qualityRank, 100, "hit-skip must not rewrite the row")
     }
 
+    // MARK: - M6.7: per-key framing gate (0/1/2)
+
+    /// A PORTRAIT test shard (32×48) at this file's fast pace. Constructed
+    /// explicitly — `shardSpec(name:)` hardcodes the 48×32 landscape dims, and
+    /// a W<H NAME alone does not make a shard portrait (the gate reads
+    /// `width`/`height`, not the name).
+    private func portraitShardSpec() -> ShardSpec {
+        ShardSpec(name: "32x48_30fps", width: 32, height: 48, fps: 30,
+                  loopSeconds: 0.1, transSeconds: 0.07,
+                  loopFrames: 3, transFrames: 2,
+                  isCanonical: false, codec: .h264)
+    }
+
+    /// A SQUARE test shard (32×32): unrotated width-anchor ⇒ gate 1.
+    private func squareShardSpec() -> ShardSpec {
+        ShardSpec(name: "32x32_30fps", width: 32, height: 32, fps: 30,
+                  loopSeconds: 0.1, transSeconds: 0.07,
+                  loopFrames: 3, transFrames: 2,
+                  isCanonical: false, codec: .h264)
+    }
+
+    /// (a) A portrait shard + a LANDSCAPE-authored genome under `.normalized`
+    /// derives gate 2 (rotated): a pre-upserted framing-1 row (rank
+    /// sufficient, geometry current) is NOT a HIT — the unit re-renders and
+    /// the fresh row records gate 2 (the row write agrees with the compare).
+    func testPortraitShardGateTwoMissesFramingOneRow() async throws {
+        let root = makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = portraitShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        var gateOne = artifactRow(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                  shard: shard.name, kind: .edge, qualityRank: 100)
+        gateOne.framing = 1
+        try await catalog.upsertArtifact(gateOne)
+        let gen = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                      backend: .cpu, useOffMainMetal: false)
+        let req = GenerateRequest(shard: shard, units: [try edgeUnit()],
+                                  scope: .edges, settings: settings, flockRoot: root)
+        let events = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events, rendered: 1, skipped: 0)   // framing-1 row MISSes gate 2
+        let row = try await catalog.lookup(aGen: "248", aId: "00628",
+                                           bGen: "248", bId: "03194", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(row).framing, 2,
+                       "the re-rendered row must record gate 2 (row write agrees with the compare)")
+    }
+
+    /// (b) A SQUARE shard derives gate 1 (unrotated width-anchor, D7 rev 3): a
+    /// framing-1 row HITs (skip), a framing-2 row MISSes (re-render) and the
+    /// fresh row comes back at gate 1.
+    func testSquareShardGateOneHitsAndGateTwoMisses() async throws {
+        let root = makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = squareShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        var gateOne = artifactRow(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                  shard: shard.name, kind: .edge, qualityRank: 100)
+        gateOne.framing = 1
+        try await catalog.upsertArtifact(gateOne)
+        let gen = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                      backend: .cpu, useOffMainMetal: false)
+        let req = GenerateRequest(shard: shard, units: [try edgeUnit()],
+                                  scope: .edges, settings: settings, flockRoot: root)
+        let events1 = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events1, rendered: 0, skipped: 1)   // framing-1 row HITs gate 1
+
+        var gateTwo = artifactRow(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                  shard: shard.name, kind: .edge, qualityRank: 100)
+        gateTwo.framing = 2
+        try await catalog.upsertArtifact(gateTwo)
+        let events2 = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events2, rendered: 1, skipped: 0)   // framing-2 row MISSes gate 1
+        let row = try await catalog.lookup(aGen: "248", aId: "00628",
+                                           bGen: "248", bId: "03194", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(row).framing, 1, "the re-render restores gate 1")
+    }
+
+    /// (c) A PORTRAIT-authored unit on a portrait shard derives gate 1 (D3:
+    /// never rotated): the first run renders (row gate 1), the second run
+    /// HITs. With its `StitchCoordinatorTests` twin this exercises all FOUR
+    /// consumer sites end-to-end (row write + mdta write + both compares).
+    func testPortraitAuthoredUnitDerivesGateOneAndHits() async throws {
+        let root = makeRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = try FlockCatalog(root: root)
+        let shard = portraitShardSpec()
+        try await catalog.upsertShard(shard)
+        var settings = archiveSettings(matching: shard)
+        settings.framing = .normalized
+        var portrait = try parseSierpinski()
+        portrait.size = SIMD2<Int>(200, 320)   // portrait-authored twin of the fixture
+        let gen = GenerateCoordinator(catalog: catalog, renderer: ArchiveRenderer(),
+                                      backend: .cpu, useOffMainMetal: false)
+        let req = GenerateRequest(shard: shard,
+                                  units: [try edgeUnit(A: portrait, B: portrait)],
+                                  scope: .edges, settings: settings, flockRoot: root)
+        let events1 = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events1, rendered: 1, skipped: 0)
+        let rowOpt = try await catalog.lookup(aGen: "248", aId: "00628",
+                                              bGen: "248", bId: "03194", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(rowOpt).framing, 1,
+                       "portrait-authored on a portrait shard ⇒ row gate 1 (never rotated)")
+        let events2 = try await collect(gen.generate(req, coordinator: ExportCoordinator(backend: .cpu)))
+        assertCompleted(events2, rendered: 0, skipped: 1)   // gate-1 row HITs the derived gate 1
+    }
+
     // MARK: - AC (c): upgrade-overwrite (higher quality_rank ⇒ overwrite file + update row)
 
     func testUpgradeOverwriteWhenStoredQualityRankLower() async throws {

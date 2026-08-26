@@ -10,16 +10,17 @@ final class ShardPresetsTests: XCTestCase {
 
     // MARK: - sensible (the preset list)
 
-    /// Exactly the four sensible resolutions, at 30 fps, all canonical pace.
-    func testSensibleCoversTheFourResolutionsAt30fpsCanonicalPace() {
+    /// Exactly the eight sensible resolutions (4 landscape + 4 social), 30 fps,
+    /// all canonical pace (M6.7 D14: the portrait presets JOIN `sensible` so
+    /// `preset(named:)`, the Settings default picker, and the archive-dedup
+    /// filter all see them).
+    func testSensibleCoversTheEightResolutionsAt30fpsCanonicalPace() {
         XCTAssertEqual(ShardPresets.sensible.map { "\($0.width)x\($0.height)" },
-                       ["1280x720", "1920x1080", "2560x1440", "3840x2160"])
-        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.fps == 30 },
-                      "all presets are 30 fps")
-        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.isCanonical },
-                      "all presets carry the canonical pace flag")
-        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.codec == .hevc },
-                      "archive codec is HEVC (D12)")
+                       ["720x1280", "1280x720", "1080x1080", "1080x1350",
+                        "1080x1920", "1920x1080", "2560x1440", "3840x2160"])
+        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.fps == 30 })
+        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.isCanonical })
+        XCTAssertTrue(ShardPresets.sensible.allSatisfy { $0.codec == .hevc })
     }
 
     /// Deterministic order: ascending pixels, unique names (rule #2 — the list
@@ -53,22 +54,29 @@ final class ShardPresetsTests: XCTestCase {
         }
     }
 
-    func testSensibleNames() {
+    /// Ascending pixels with the ascending-WIDTH tie-break for the equal-pixel
+    /// 720p pair (720×1280 before 1280×720; 1080×1920 before 1920×1080).
+    func testSensibleOrderAscendingPixelsThenWidth() {
+        let pairs = ShardPresets.sensible.map { ($0.width * $0.height, $0.width) }
+        let sorted = pairs.sorted(by: { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 })
+        // Mechanical fix: `[(Int, Int)]` is not Equatable (tuples can't conform),
+        // so the ordered pairs are compared through an unambiguous encoding.
+        XCTAssertEqual(pairs.map { "\($0.0)|\($0.1)" }, sorted.map { "\($0.0)|\($0.1)" })
         XCTAssertEqual(ShardPresets.sensible.map(\.name),
-                       ["1280x720_30fps", "1920x1080_30fps",
-                        "2560x1440_30fps", "3840x2160_30fps"])
+                       ["720x1280_30fps", "1280x720_30fps", "1080x1080_30fps", "1080x1350_30fps",
+                        "1080x1920_30fps", "1920x1080_30fps", "2560x1440_30fps", "3840x2160_30fps"])
     }
 
     // MARK: - canonicalDefault
 
     /// The default is the 1080p30 canonical preset, and IS a member of the list
-    /// (so a picker dedupe by name never hides the default).
+    /// (so a picker dedupe by name never hides the default). M6.7: asserted by
+    /// NAME, not position — the 8-member list puts portrait presets first.
     func testCanonicalDefaultIsThe1080p30Preset() {
         XCTAssertEqual(ShardPresets.canonicalDefault.name, "1920x1080_30fps")
         XCTAssertEqual(ShardPresets.canonicalDefault.width, 1920)
         XCTAssertEqual(ShardPresets.canonicalDefault.height, 1080)
         XCTAssertTrue(ShardPresets.canonicalDefault.isCanonical)
-        XCTAssertEqual(ShardPresets.canonicalDefault, ShardPresets.sensible[1])
         XCTAssertTrue(ShardPresets.sensible.contains(ShardPresets.canonicalDefault))
     }
 
@@ -80,6 +88,12 @@ final class ShardPresetsTests: XCTestCase {
         XCTAssertNil(ShardPresets.preset(named: "1920x1080_30fps_Lf600-Tf300"),
                      "a non-canonical archive shard is not a preset")
         XCTAssertNil(ShardPresets.preset(named: ""))
+    }
+
+    func testPresetNamedResolvesPortraitShards() {
+        XCTAssertEqual(ShardPresets.preset(named: "1080x1920_30fps")?.height, 1920)
+        XCTAssertEqual(ShardPresets.preset(named: "1080x1350_30fps")?.width, 1080)
+        XCTAssertEqual(ShardPresets.preset(named: "1080x1080_30fps")?.width, 1080)
     }
 
     // MARK: - withPace (the shared pace-edit recompute)

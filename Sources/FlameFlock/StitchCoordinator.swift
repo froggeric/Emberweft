@@ -213,11 +213,25 @@ public actor StitchCoordinator {
         //     Dict keyed by the canonical PK string (rule #2 — a lookup map,
         //     never iterated for FP accumulation).
         var requestedRankByPK: [String: Double] = [:]
-        // Framing exact gate (M6.6, like the codec gate): a row HITs only if
-        // its files were rendered with the REQUESTED framing mode (0 =
-        // faithful/legacy, 1 = normalized). Legacy rows decode as 0 ⇒ MISS ⇒
-        // re-render (upgrade-overwrite at the same archive path).
-        let requestedFraming = request.settings.framing == .normalized ? 1 : 0
+        // M6.7 (D7): the framing gate derives PER KEY — canvas dims from the
+        // shard, authored dims from the key's A flame (a landscape-authored
+        // genome on a portrait shard requests 2; square/landscape shards and
+        // portrait-authored genomes 1). Lookup map keyed by the canonical id
+        // pair — membership-only, never iterated for FP accumulation (rule #2).
+        // Key format matches the file's '|' PK convention (pkString/pkStringTuple)
+        // — one key format per function, and Swift tuples are not Hashable.
+        func aKey(_ gen: String, _ id: String) -> String { "\(gen)|\(id)" }
+        var flameById: [String: Flame] = [:]
+        for f in request.orderedFlames { flameById[aKey(f.gen, f.id)] = f.flame }
+        func requestedFraming(for key: (aGen: String, aId: String, bGen: String,
+                                        bId: String, shard: String)) -> Int {
+            // Unreachable-nil guard: keys are derived FROM orderedFlames.
+            let a = flameById[aKey(key.aGen, key.aId)] ?? Flame()
+            return FlockFramingGate.value(normalized: request.settings.framing == .normalized,
+                                          canvasW: request.shard.width,
+                                          canvasH: request.shard.height,
+                                          authoredW: a.size.x, authoredH: a.size.y)
+        }
         var hitCount = 0, missCount = 0
         var seenPKs = Set<String>()
         for key in keys {
@@ -230,7 +244,7 @@ public actor StitchCoordinator {
                 continuation.finish(); return
             }
             if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row),
-               row.framing == requestedFraming {
+               row.framing == requestedFraming(for: key) {
                 hitCount += 1
             } else {
                 missCount += 1
@@ -259,7 +273,7 @@ public actor StitchCoordinator {
             let pk = pkStringTuple(key)
             let requested = requestedRankByPK[pk] ?? 0   // memoized in step 5b
             if let row = byPK[pk], row.qualityRank >= requested, seamGeometryOK(row),
-               row.framing == requestedFraming {
+               row.framing == requestedFraming(for: key) {
                 hit += 1
                 urls.append(contentsOf: unitURLs(for: row, idx: idx, keys: keys,
                                                  flockRoot: request.flockRoot))

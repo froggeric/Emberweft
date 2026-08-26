@@ -80,12 +80,15 @@ public struct ArtifactRow: Codable, Sendable, Equatable {
     /// geometry matches — mixing geometries in one timeline breaks phase
     /// continuity. Rows written before the fix decode as 1 and re-render.
     public var geom: Int
-    /// Framing mode the artifact's files were rendered with (0 = faithful /
-    /// legacy pre-M6.6 framing, 1 = normalized M6.6 framing). An EXACT gate
-    /// (like `codec`): a generate/stitch request only HITs rows whose framing
-    /// matches `request.settings.framing` — mixing framings in one archive
-    /// crops differently at the same resolution. Rows written before M6.6
-    /// decode as 0 and re-render for normalized requests.
+    /// Framing mode the artifact's files were rendered with, as the per-key
+    /// `FlockFramingGate` value (M6.7: 0 = faithful / legacy pre-M6.6, 1 =
+    /// normalized UNROTATED — landscape/square shard or portrait-authored
+    /// genome, 2 = normalized ROTATED — portrait shard × landscape-authored
+    /// genome). An EXACT gate (like `codec`): a generate/stitch request only
+    /// HITs rows whose framing equals the gate the request DERIVES for the
+    /// same key — mixing framings in one archive crops differently at the same
+    /// resolution. Rows written before M6.6 decode as 0 and re-render for
+    /// normalized requests.
     public var framing: Int
     public var thumb: String?           // relative jpeg path
     public var width: Int
@@ -132,5 +135,24 @@ public struct FlockSnapshot: Codable, Sendable, Equatable {
     public var artifactCount: Int
     public init(shardCount: Int, artifactCount: Int) {
         self.shardCount = shardCount; self.artifactCount = artifactCount
+    }
+}
+
+/// M6.7 D7: the framing hit-gate — ONE shared derivation for all four
+/// consumers (ArchiveRenderer row + mdta writes, StitchCoordinator +
+/// GenerateCoordinator compares). Canvas dims come from the SHARD/ROW, never
+/// `settings.resolution` (not guaranteed shard-aligned at the compare sites —
+/// the v0.6.0 default-resolution crash class); authored dims come from the
+/// unit's A flame (per key). Pure + deterministic (rule #2).
+///   0 = faithful / legacy
+///   1 = normalized UNROTATED (landscape or square shard; a portrait-authored
+///       genome on a portrait shard)
+///   2 = normalized ROTATED (portrait shard × landscape-authored genome)
+// internal (consumed only inside FlameFlock + via @testable tests).
+enum FlockFramingGate {
+    static func value(normalized: Bool, canvasW: Int, canvasH: Int,
+                      authoredW: Int, authoredH: Int) -> Int {
+        guard normalized else { return 0 }
+        return (canvasH > canvasW && authoredW > authoredH) ? 2 : 1
     }
 }

@@ -232,7 +232,7 @@ final class ArchiveRendererTests: XCTestCase {
         let settings = archiveSettings(matching: shard)
         let items = ArchiveRenderer.makeMetadata(stem: "248=00628=248=00628", shard: shard,
                                                  settings: settings, seed: 42, sourceSha: "abc",
-                                                 spp: 4)
+                                                 spp: 4, framingGate: 1)
         // Title via `.common` keyspace + commonKeyTitle.
         let title = items.first { $0.keySpace == .common }
         XCTAssertNotNil(title)
@@ -445,16 +445,19 @@ final class ArchiveRendererTests: XCTestCase {
     func testUnitFlamesNormalizesBothEndpointsWhenNormalized() throws {
         let A = try parseSierpinski()                       // authored 320×200, scale 100
         let B = try parseSierpinski()
-        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: B, renderWidth: 48, framing: .normalized)
+        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: B, renderWidth: 48, renderHeight: 32,
+                                                 framing: .normalized)
         XCTAssertEqual(nA.camera.scale, 100.0 * 48.0 / 320.0, accuracy: 1e-9)
         XCTAssertEqual(try XCTUnwrap(nB).camera.scale, 100.0 * 48.0 / 320.0, accuracy: 1e-9)
-        XCTAssertNil(ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: 48, framing: .normalized).B,
+        XCTAssertNil(ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: 48, renderHeight: 32,
+                                                framing: .normalized).B,
                      "loop: B stays nil")
     }
 
     func testUnitFlamesFaithfulPassesEndpointsThrough() throws {
         let A = try parseSierpinski()
-        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: A, renderWidth: 48, framing: .faithful)
+        let (nA, nB) = ArchiveRenderer.unitFlames(A: A, B: A, renderWidth: 48, renderHeight: 32,
+                                                 framing: .faithful)
         XCTAssertEqual(nA, A, "faithful = verbatim genomes (CLI mastering-parity mode)")
         XCTAssertEqual(nB, A)
     }
@@ -466,7 +469,8 @@ final class ArchiveRendererTests: XCTestCase {
         let shard = shardSpec()
         func tag(_ settings: ExportSettings) -> String? {
             ArchiveRenderer.makeMetadata(stem: "248=00628=248=00628", shard: shard,
-                                         settings: settings, seed: 1, sourceSha: nil, spp: 4)
+                                         settings: settings, seed: 1, sourceSha: nil, spp: 4,
+                                         framingGate: settings.framing == .normalized ? 1 : 0)
                 .first { ($0.key as? String) == "emberweft.framing" }?.value as? String
         }
         var normalized = archiveSettings(matching: shard)
@@ -547,6 +551,66 @@ final class ArchiveRendererTests: XCTestCase {
                        "rebuild must restore framing 0 from the emberweft.framing tag")
     }
 
+    /// Portrait twin of `testRenderLoopFramingTagRoundTripsThroughRebuild`
+    /// (spec §8's mdta round-trip for gate 2): `renderLoop` at a PORTRAIT shard
+    /// (width 32 / height 48 — constructed EXPLICITLY; `shardSpec(name:)`
+    /// hardcodes 48×32 landscape, and a W<H name alone does not make a shard
+    /// portrait) with framing `.normalized` + the landscape-authored sierpinski
+    /// fixture ⇒ the file tags `emberweft.framing == "2"`, the live row records
+    /// framing 2, and `FlockCatalog.rebuild(from:)` after discarding
+    /// flock.sqlite restores framing 2 (a gate-2 row survives a rebuild — it
+    /// can never silently decay into a 0/1 legacy HIT).
+    ///
+    /// Same scoping as the landscape twin: the render's `FlockCatalog` (an
+    /// actor holding an open sqlite connection) is RELEASED before `rebuild`
+    /// moves flock.sqlite.
+    func testRenderLoopPortraitFramingGateTwoRoundTripsThroughRebuild() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shard = ShardSpec(name: "32x48_30fps", width: 32, height: 48, fps: 30,
+                              loopSeconds: 0.4, transSeconds: 0.27,
+                              loopFrames: 12, transFrames: 8,
+                              isCanonical: false, codec: .h264)
+
+        // Phase 1 (scoped): render a normalized rotated portrait loop; report
+        // the FILE tag + the live row.
+        func renderAndRead() async throws -> (tag: String?, row: Int?) {
+            let catalog = try FlockCatalog(root: root)
+            try await catalog.upsertShard(shard)
+            var normalized = archiveSettings(matching: shard)
+            normalized.framing = .normalized
+            let A = try parseSierpinski()   // 320×200 landscape ⇒ gate 2 (rotated)
+            let coord = ExportCoordinator(backend: .cpu)
+            let renderer = ArchiveRenderer()
+            try await renderer.renderLoop(A: A, aGen: "248", aId: "00628", shard: shard,
+                                          settings: normalized, coordinator: coord, catalog: catalog,
+                                          backend: .cpu, useOffMainMetal: false,
+                                          flockRoot: root, sourceSha: nil)
+            let out = try FlockNaming.archiveFileURL(flockRoot: root, shardDir: shard.name,
+                                                     aGen: "248", aId: "00628",
+                                                     bGen: "248", bId: "00628", ext: "mov")
+            let all = try await AVURLAsset(url: out).load(.metadata)
+            let tag = all.first {
+                $0.keySpace == AVMetadataKeySpace(rawValue: "mdta")
+                    && ($0.key as? String) == "emberweft.framing"
+            }?.value as? String
+            let row = try await catalog.lookup(aGen: "248", aId: "00628",
+                                               bGen: "248", bId: "00628", shard: shard.name)?.framing
+            return (tag, row)
+        }
+        let phase1 = try await renderAndRead()
+        XCTAssertEqual(phase1.tag, "2", "a rotated portrait artifact must tag 2")
+        XCTAssertEqual(phase1.row, 2, "the live row must mirror the gate-2 tag")
+
+        // Rebuild discards flock.sqlite and restores framing FROM THE TAG.
+        try await FlockCatalog.rebuild(from: root)
+        let fresh = try FlockCatalog(root: root)
+        let rebuilt = try await fresh.lookup(aGen: "248", aId: "00628",
+                                             bGen: "248", bId: "00628", shard: shard.name)
+        XCTAssertEqual(try XCTUnwrap(rebuilt).framing, 2,
+                       "rebuild must restore framing 2 from the emberweft.framing tag")
+    }
+
     /// Plan-level wiring pin: the CORE plan built by renderLoop from a
     /// normalized render carries the rescaled scale at frame 0 (blend 0 = pure A).
     /// This is the honest byte-level pin for the flock path — the .mov container
@@ -555,6 +619,7 @@ final class ArchiveRendererTests: XCTestCase {
         let A = try parseSierpinski()
         let shard = shardSpec()
         let (nA, _) = ArchiveRenderer.unitFlames(A: A, B: nil, renderWidth: shard.width,
+                                                 renderHeight: shard.height,
                                                  framing: .normalized)
         let plan = ArchiveRenderer.makeLoopCorePlan(A: nA, loopFrames: shard.loopFrames,
             transFrames: shard.transFrames, seed: 1, temporalSamples: 1)
