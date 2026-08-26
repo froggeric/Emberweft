@@ -41,13 +41,14 @@ final class FlockCatalogTests: XCTestCase {
 
     // MARK: - Schema
 
-    func testSchemaCreatedOnInitAndSchemaVersionThree() async throws {
+    func testSchemaCreatedOnInitAndSchemaVersionFour() async throws {
         let root = makeRoot()
         let cat = try FlockCatalog(root: root)
-        // flock_meta.schema_version == "3" (v2 = seam-aware geometry columns;
-        // v3 = the framing exact hit-gate column; read via the same connection).
+        // flock_meta.schema_version == "4" (v2 = seam-aware geometry columns;
+        // v3 = the framing exact hit-gate column; v4 = the framing-gate value
+        // domain extension 0/1/2 — a re-stamp; read via the same connection).
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "3")
+        XCTAssertEqual(v, "4")
         // The 4 tables exist (counts don't throw).
         let snap = await cat.snapshot()
         XCTAssertEqual(snap.shardCount, 0)
@@ -56,10 +57,11 @@ final class FlockCatalogTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("flock.sqlite").path))
     }
 
-    /// v1 → v2 in-place migration: a pre-seam-geometry catalog (schema_version
-    /// "1", no `wrap_file`/`geom` columns) opens cleanly, bumps to "2", and its
-    /// legacy rows decode with `geom == 1` (the exact hit-gate value that makes
-    /// a seam-aware stitch re-render them instead of splicing mixed geometries).
+    /// v1 → v2 (and on to v4) in-place migration: a pre-seam-geometry catalog
+    /// (schema_version "1", no `wrap_file`/`geom` columns) opens cleanly,
+    /// cascades to the current version, and its legacy rows decode with
+    /// `geom == 1` (the exact hit-gate value that makes a seam-aware stitch
+    /// re-render them instead of splicing mixed geometries).
     func testSchemaV1MigratesInPlaceWithLegacyGeometry() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -97,7 +99,7 @@ final class FlockCatalogTests: XCTestCase {
         // Opening with the current binary migrates in place.
         let cat = try FlockCatalog(root: root)
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "3", "a v1 catalog cascades 1→2→3 in one open")
+        XCTAssertEqual(v, "4", "a v1 catalog cascades 1→2→3→4 in one open")
         // The legacy row survived and decodes as geometry 1 (legacy monolithic)
         // + framing 0 (legacy/faithful).
         let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
@@ -269,12 +271,16 @@ final class FlockCatalogTests: XCTestCase {
 
     /// Writes a real HEVC `.mov` (one black frame) carrying the `emberweft.*`
     /// mdta tags, then returns the `ArtifactRow` rebuild should derive from it.
+    /// `shard`/`resolution` (both defaulted to the legacy 1920×1080 fixture)
+    /// let the naturalSize test place files in other shard dirs.
     @discardableResult
     private func writeTaggedMOV(at url: URL, aId: String, bId: String,
-                                sourceSha: String, seed: Int) async throws -> ArtifactRow {
+                                sourceSha: String, seed: Int,
+                                shard: String = "1920x1080_30fps",
+                                resolution: ExportSettings.Resolution = .p1080) async throws -> ArtifactRow {
         var settings = ExportSettings()
         settings.codec = .hevc; settings.container = .mov
-        settings.resolution = .p1080; settings.fps = 30
+        settings.resolution = resolution; settings.fps = 30
         let tags = Self.emberweftTags(spp: "30", ts: "1", smoothing: "off",
                                       smoothingHw: "0", qualityRank: "30.0",
                                       sourceSha: sourceSha, seed: String(seed),
@@ -293,9 +299,9 @@ final class FlockCatalogTests: XCTestCase {
         let stem = url.deletingPathExtension().lastPathComponent
         return ArtifactRow(
             aGen: "248", aId: aId, bGen: "248", bId: bId,
-            shard: "1920x1080_30fps", kind: kind,
-            file: "1920x1080_30fps/mpeg/\(stem).mov", thumb: nil,
-            width: 1920, height: 1080, fps: 30, loopFrames: 450, transFrames: 360,
+            shard: shard, kind: kind,
+            file: "\(shard)/mpeg/\(stem).mov", thumb: nil,
+            width: w, height: h, fps: 30, loopFrames: 450, transFrames: 360,
             spp: 30, temporal: 1, smoothing: "off", smoothingHw: 0,
             qualityRank: 30.0, bytes: bytes, renderedAt: renderedAt,
             sourceSha: sourceSha, seed: seed, codec: .hevc)
@@ -368,13 +374,50 @@ final class FlockCatalogTests: XCTestCase {
         try FileManager.default.createDirectory(at: mpegB, withIntermediateDirectories: true)
         _ = try await writeTaggedMOV(at: mpegA.appendingPathComponent("248=00628=248=00628.mov"),
                                      aId: "00628", bId: "00628", sourceSha: "sha-a", seed: 1)
+        // The shard-B file must MATCH its dir's dims (M6.7 D15 skips a
+        // naturalSize-mismatched file — the fixture's point is that BOTH dirs
+        // are walked, so shard B holds a genuine 720p artifact).
         _ = try await writeTaggedMOV(at: mpegB.appendingPathComponent("248=00628=248=00628.mov"),
-                                     aId: "00628", bId: "00628", sourceSha: "sha-b", seed: 2)
+                                     aId: "00628", bId: "00628", sourceSha: "sha-b", seed: 2,
+                                     shard: "1280x720_24fps", resolution: .p720)
         try await FlockCatalog.rebuild(from: root)
         let cat = try FlockCatalog(root: root)
         let snap = await cat.snapshot()
         XCTAssertEqual(snap.shardCount, 2)
         XCTAssertEqual(snap.artifactCount, 2)
+    }
+
+    /// M6.7 D15: a file whose track naturalSize disagrees with its shard dir
+    /// is SKIPPED (never cataloged as a silent HIT).
+    func testRebuildSkipsMismatchedNaturalSize() async throws {
+        let root = makeRoot()
+        let mpeg = root.appendingPathComponent("1080x1350_30fps/mpeg")
+        try FileManager.default.createDirectory(at: mpeg, withIntermediateDirectories: true)
+        // A genuine 1080×1920 (vertical 9:16) file sitting in a 1080×1350
+        // (4:5 portrait) shard dir — the misplaced/backup-restored-mixed case.
+        _ = try await writeTaggedMOV(at: mpeg.appendingPathComponent("248=00628=248=00628.mov"),
+                                     aId: "00628", bId: "00628", sourceSha: "sha-mismatch", seed: 111,
+                                     shard: "1080x1350_30fps", resolution: .vertical1080)
+        // A dims-matching sibling (1080×1350) catalogs normally.
+        _ = try await writeTaggedMOV(at: mpeg.appendingPathComponent("248=00628=248=03194.mov"),
+                                     aId: "00628", bId: "03194", sourceSha: "sha-match", seed: 222,
+                                     shard: "1080x1350_30fps", resolution: .portrait4x5)
+        try await FlockCatalog.rebuild(from: root)
+
+        let cat = try FlockCatalog(root: root)
+        let snap = await cat.snapshot()
+        XCTAssertEqual(snap.shardCount, 1)
+        XCTAssertEqual(snap.artifactCount, 1)   // only the matching sibling
+        // The mismatched file has NO row ⇒ its key MISSes and re-renders at
+        // the correct path; the sibling catalogs with the shard's dims.
+        let mismatched = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "00628",
+                                              shard: "1080x1350_30fps")
+        XCTAssertNil(mismatched, "a naturalSize-mismatched file must not be cataloged")
+        let match = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                         shard: "1080x1350_30fps")
+        let m = try XCTUnwrap(match, "the dims-matching sibling catalogs normally")
+        XCTAssertEqual(m.width, 1080)
+        XCTAssertEqual(m.height, 1350)
     }
 
     // MARK: - Rebuild (corrupt catalog recovery)
@@ -471,10 +514,11 @@ final class FlockCatalogTests: XCTestCase {
 
     // MARK: - M6.6 schema v3 (framing exact hit-gate)
 
-    /// v2 → v3 in-place migration: a pre-framing catalog (schema_version "2",
-    /// `wrap_file`/`geom` present, no `framing` column) opens cleanly, bumps to
-    /// "3", and its rows decode with `framing == 0` (legacy/faithful — the
-    /// value that makes a normalized request MISS and re-render).
+    /// v2 → v3 (and on to v4) in-place migration: a pre-framing catalog
+    /// (schema_version "2", `wrap_file`/`geom` present, no `framing` column)
+    /// opens cleanly, cascades to "4", and its rows decode with `framing == 0`
+    /// (legacy/faithful — the value that makes a normalized request MISS and
+    /// re-render).
     func testV2CatalogMigratesToFraming() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -512,7 +556,7 @@ final class FlockCatalogTests: XCTestCase {
 
         let cat = try FlockCatalog(root: root)
         let v = try await cat.schemaVersion()
-        XCTAssertEqual(v, "3", "a v2 catalog must migrate to v3 on open")
+        XCTAssertEqual(v, "4", "a v2 catalog must cascade to v4 on open")
         // The v2 row survived and decodes as framing 0 (legacy/faithful).
         let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
                                        shard: shardName)
@@ -547,21 +591,87 @@ final class FlockCatalogTests: XCTestCase {
         XCTAssertEqual(batch.first?.framing, 1)
     }
 
-    /// A NEWER schema (v4) throws `schemaVersionUnsupported` on open.
-    func testSchemaV4ThrowsUnsupported() async throws {
+    /// M6.7: v3→v4 is a version RE-STAMP only — no ALTER (the framing column
+    /// has existed since v3; its INTEGER already spans gate values 0/1/2).
+    func testV3ToV4IsVersionRestampOnly() async throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let v4 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
-        try v4.exec("""
+        // Hand-build a v3 catalog (the M6.6 framing-gate schema — the v2 CREATE
+        // block plus the framing column), seeded '3', with one framing=1 row.
+        let v3 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        try v3.exec("""
             CREATE TABLE flock_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO flock_meta(key,value) VALUES('schema_version','4');
+            CREATE TABLE shards (name TEXT PRIMARY KEY, width INTEGER NOT NULL, height INTEGER NOT NULL,
+              fps INTEGER NOT NULL, loop_seconds REAL NOT NULL, trans_seconds REAL NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, is_canonical INTEGER NOT NULL,
+              codec TEXT NOT NULL);
+            CREATE TABLE sheep (gen TEXT NOT NULL, id TEXT NOT NULL, origin TEXT NOT NULL,
+              source_ref TEXT, source_sha TEXT, display_name TEXT, added_at INTEGER NOT NULL,
+              PRIMARY KEY (gen, id));
+            CREATE TABLE artifacts (
+              a_gen TEXT NOT NULL, a_id TEXT NOT NULL, b_gen TEXT NOT NULL, b_id TEXT NOT NULL,
+              shard TEXT NOT NULL, kind TEXT NOT NULL, file TEXT NOT NULL, wrap_file TEXT,
+              geom INTEGER NOT NULL DEFAULT 1, framing INTEGER NOT NULL DEFAULT 0, thumb TEXT,
+              width INTEGER NOT NULL, height INTEGER NOT NULL, fps INTEGER NOT NULL,
+              loop_frames INTEGER NOT NULL, trans_frames INTEGER NOT NULL, spp INTEGER NOT NULL,
+              temporal INTEGER NOT NULL, smoothing TEXT NOT NULL, smoothing_hw INTEGER NOT NULL DEFAULT 0,
+              quality_rank REAL NOT NULL, bytes INTEGER NOT NULL, rendered_at INTEGER NOT NULL,
+              source_sha TEXT, seed INTEGER NOT NULL, codec TEXT NOT NULL,
+              PRIMARY KEY (a_gen, a_id, b_gen, b_id, shard),
+              FOREIGN KEY (shard) REFERENCES shards(name));
+            INSERT INTO flock_meta(key,value) VALUES('schema_version','3');
+            INSERT INTO shards VALUES('\(shardName)',1920,1080,30,15.0,12.0,450,360,1,'hevc');
+            INSERT INTO artifacts(a_gen,a_id,b_gen,b_id,shard,kind,file,wrap_file,geom,framing,thumb,width,height,fps,
+              loop_frames,trans_frames,spp,temporal,smoothing,smoothing_hw,quality_rank,bytes,
+              rendered_at,source_sha,seed,codec)
+            VALUES('248','00628','248','03194','\(shardName)','edge',
+                   'x/mpeg/a.mov',NULL,2,1,NULL,1920,1080,30,450,360,30,1,'off',0,30.0,1,0,NULL,7,'hevc');
+            """)
+
+        // Opening with the current binary re-stamps to v4 — no ALTER, no row
+        // changes.
+        let cat = try FlockCatalog(root: root)
+        let v = try await cat.schemaVersion()
+        XCTAssertEqual(v, "4")
+        // The pre-inserted framing-1 row survives untouched, and no column was
+        // added: PRAGMA table_info(artifacts) column-name list == the v3 set.
+        let row = try await cat.lookup(aGen: "248", aId: "00628", bGen: "248", bId: "03194",
+                                       shard: shardName)
+        let r = try XCTUnwrap(row, "the v3 row must survive the re-stamp")
+        XCTAssertEqual(r.framing, 1, "framing values ride across the bump unchanged")
+        XCTAssertEqual(r.geom, 2)
+        XCTAssertEqual(r.seed, 7)
+        // A fresh raw connection reads the post-migration table shape: the
+        // column list is exactly the v3 set (a duplicate-column ALTER would
+        // have failed the open outright — this pins that none was attempted).
+        let check = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        let cur = try check.query("PRAGMA table_info(artifacts)")
+        var names: [String] = []
+        while cur.next() { names.append(cur.text(1)) }
+        XCTAssertEqual(names, [
+            "a_gen", "a_id", "b_gen", "b_id", "shard", "kind", "file", "wrap_file",
+            "geom", "framing", "thumb", "width", "height", "fps", "loop_frames",
+            "trans_frames", "spp", "temporal", "smoothing", "smoothing_hw",
+            "quality_rank", "bytes", "rendered_at", "source_sha", "seed", "codec",
+        ])
+    }
+
+    /// A NEWER schema (v5) throws `schemaVersionUnsupported` on open.
+    func testSchemaV5ThrowsUnsupported() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let v5 = try SQLiteConnection(root.appendingPathComponent("flock.sqlite"))
+        try v5.exec("""
+            CREATE TABLE flock_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO flock_meta(key,value) VALUES('schema_version','5');
             """)
         do {
             _ = try FlockCatalog(root: root)
-            XCTFail("a v4 catalog must throw schemaVersionUnsupported")
+            XCTFail("a v5 catalog must throw schemaVersionUnsupported")
         } catch let e as FlockCatalogError {
-            XCTAssertEqual(e, .schemaVersionUnsupported(4))
+            XCTAssertEqual(e, .schemaVersionUnsupported(5))
         }
     }
 

@@ -115,26 +115,53 @@ public actor FlockCatalog {
         //   (legacy), so a seam-aware stitch simply re-renders them.
         //   v2 → v3 (M6.6 framing normalization): `artifacts` gains `framing`
         //   (0 = faithful/legacy, 1 = normalized — an EXACT hit-gate alongside
-        //   `geom`). v1 rows cascade 1→2→3 in one open (the loop re-reads the
-        //   version after each step) and decode as framing 0.
+        //   `geom`). v1 rows cascade 1→2→3→4 in one open (the loop re-reads
+        //   the version after each step) and decode as framing 0.
+        //   v3 → v4 (M6.7 vertical presets): a version RE-STAMP ONLY — the
+        //   framing column has existed since v3 and its INTEGER already spans
+        //   the gate values 0/1/2; no ALTER (a duplicate-column ADD would
+        //   fail on every existing catalog). The bump (a) refuses pre-M6.7
+        //   binaries the whole catalog (schemaVersionUnsupported — protecting
+        //   gate-2 portrait rows from an old build's framing==1 MISS →
+        //   re-render → upgrade-overwrite clobber), and (b) marks the
+        //   gate-value domain extension. Each step runs inside
+        //   BEGIN IMMEDIATE … COMMIT (a crash between an ALTER and its
+        //   version UPDATE would otherwise re-run the ALTER on reopen and
+        //   die on a duplicate column).
         let cur = try conn.query("SELECT value FROM flock_meta WHERE key='schema_version'")
         var v = ""
         if cur.next() && !cur.isNull(0) { v = cur.text(0) }
         if v.isEmpty {
-            try conn.run("INSERT INTO flock_meta(key,value) VALUES('schema_version','3')")
+            try conn.run("INSERT INTO flock_meta(key,value) VALUES('schema_version','4')")
         } else {
-            while v != "3" {
+            while v != "4" {
                 if v == "1" {
+                    try conn.exec("BEGIN IMMEDIATE")
                     try conn.exec("ALTER TABLE artifacts ADD COLUMN wrap_file TEXT")
                     try conn.exec("ALTER TABLE artifacts ADD COLUMN geom INTEGER NOT NULL DEFAULT 1")
                     try conn.run("UPDATE flock_meta SET value='2' WHERE key='schema_version'")
+                    try conn.exec("COMMIT")
                 } else if v == "2" {
+                    try conn.exec("BEGIN IMMEDIATE")
                     try conn.exec("ALTER TABLE artifacts ADD COLUMN framing INTEGER NOT NULL DEFAULT 0")
                     try conn.run("UPDATE flock_meta SET value='3' WHERE key='schema_version'")
+                    try conn.exec("COMMIT")
+                } else if v == "3" {
+                    // M6.7 v4: a version RE-STAMP ONLY — the framing column has
+                    // existed since v3 and its INTEGER already spans the gate
+                    // values 0/1/2; no ALTER (a duplicate-column ADD would fail
+                    // on every existing catalog). The bump (a) refuses pre-M6.7
+                    // binaries the whole catalog (schemaVersionUnsupported —
+                    // protecting gate-2 portrait rows from an old build's
+                    // framing==1 MISS → re-render → upgrade-overwrite clobber),
+                    // and (b) marks the gate-value domain extension.
+                    try conn.exec("BEGIN IMMEDIATE")
+                    try conn.run("UPDATE flock_meta SET value='4' WHERE key='schema_version'")
+                    try conn.exec("COMMIT")
                 } else {
                     throw FlockCatalogError.schemaVersionUnsupported(Int(v) ?? 0)
                 }
-                // Re-read: a v1 catalog must cascade 1→2→3 in this same open.
+                // Re-read: a v1 catalog must cascade 1→2→3→4 in this same open.
                 let step = try conn.query("SELECT value FROM flock_meta WHERE key='schema_version'")
                 v = (step.next() && !step.isNull(0)) ? step.text(0) : ""
             }
@@ -479,7 +506,25 @@ public actor FlockCatalog {
                 guard let (aGen, aId, bGen, bId) = FlockNaming.decode(stem: stem) else {
                     continue   // unparseable stem — skip (not an error)
                 }
-                let tags = await readMdtaTags(at: url)
+                let (tags, naturalSize) = await readMdtaAndSize(at: url)
+                // M6.7 D15 — verify file reality: a genuine portrait file
+                // misplaced in the wrong shard dir (or a backup-restored mixed
+                // tree) must not catalog as a silent HIT. Mismatch ⇒ skip +
+                // log; the shard MISSes and re-renders at the correct path.
+                // (nil track size = unreadable asset — previous behavior.)
+                // NSLog is a DELIBERATE one-off deviation from the silent-
+                // library convention: the spec (D15) requires mismatches be
+                // logged, the unified log gives Console.app visibility for
+                // this maintenance operation, and the CLI/GUI rebuild callers
+                // own their user-facing output. Do not add further logging to
+                // FlameFlock on this precedent.
+                if let sz = naturalSize,
+                   sz != CGSize(width: CGFloat(parsed.width), height: CGFloat(parsed.height)) {
+                    NSLog("FlockCatalog.rebuild: skipping %@ (track %dx%d ≠ shard %dx%d)",
+                          url.lastPathComponent, Int(sz.width), Int(sz.height),
+                          parsed.width, parsed.height)
+                    continue
+                }
                 let spp = Int(tags["emberweft.spp"] ?? "") ?? 0
                 let temporal = Int(tags["emberweft.ts"] ?? "") ?? 1
                 let smoothing = tags["emberweft.smoothing"] ?? "off"
@@ -489,9 +534,11 @@ public actor FlockCatalog {
                 let seed = Int(tags["emberweft.seed"] ?? "") ?? 0
                 let renderedAt = parseRendered(tags["emberweft.rendered"])
                 let geom = Int(tags["emberweft.geom"] ?? "") ?? 1
-                // M6.6 framing gate: 0 = faithful/legacy, 1 = normalized. The
-                // `emberweft.framing` tag lands in T7 — a legacy file (no tag)
-                // defaults 0, so a normalized request re-renders it.
+                // M6.7 framing gate (0/1/2): 0 = faithful/legacy, 1 =
+                // normalized UNROTATED, 2 = normalized ROTATED (portrait shard
+                // × landscape-authored genome). A legacy file (no
+                // `emberweft.framing` tag) decodes 0, so a normalized request
+                // re-renders it.
                 let framing = Int(tags["emberweft.framing"] ?? "") ?? 0
                 let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
                 let kind: ArtifactRow.Kind = (aGen == bGen && aId == bId) ? .loop : .edge
@@ -530,12 +577,15 @@ public actor FlockCatalog {
 
     /// Read embedded `emberweft.*` tags via `AVURLAsset.load(.metadata)`
     /// filtered to keyspace `mdta` + key prefix `emberweft.` (NOT
-    /// `.commonMetadata`, which carries only common-key equivalents). Symmetric
-    /// to ArchiveRenderer.makeMetadata (T9). Keyed on unique string tags — no
-    /// ordering concern (rule #2 is about FP accumulation; this is a lookup map).
-    private static func readMdtaTags(at url: URL) async -> [String: String] {
+    /// `.commonMetadata`, which carries only common-key equivalents), plus the
+    /// first video track's `naturalSize` for the D15 rebuild cross-check (nil
+    /// when the asset has no readable video track). Symmetric to
+    /// ArchiveRenderer.makeMetadata (T9). Keyed on unique string tags — no
+    /// ordering concern (rule #2 is about FP accumulation; this is a lookup
+    /// map).
+    private static func readMdtaAndSize(at url: URL) async -> (tags: [String: String], naturalSize: CGSize?) {
         let asset = AVURLAsset(url: url)
-        guard let items = try? await asset.load(.metadata) else { return [:] }
+        guard let items = try? await asset.load(.metadata) else { return ([:], nil) }
         var tags: [String: String] = [:]
         for item in items {
             guard item.keySpace == AVMetadataKeySpace(rawValue: "mdta"),
@@ -548,7 +598,8 @@ public actor FlockCatalog {
                 tags[key] = value
             }
         }
-        return tags
+        let size = try? await asset.loadTracks(withMediaType: .video).first?.load(.naturalSize)
+        return (tags, size)
     }
 
     private static func parseRendered(_ iso: String?) -> Int {
