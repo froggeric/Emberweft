@@ -9,6 +9,9 @@ implications of porting flam3) is the owner's decision and under review.
 
 ## [Unreleased]
 
+### Added
+- Orientation-aware framing (`FlameKit.Framing.apply`): portrait canvases rotate landscape-authored genomes +90° and anchor the authored height, so every genome keeps its authored composition sideways; portrait- and square-authored genomes are never rotated.
+
 ## [0.6.1] - 2026-08-18
 
 Framing at last: every genome now keeps its authored composition at every
