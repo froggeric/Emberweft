@@ -381,7 +381,11 @@ private enum SheetResolutionTier: String, CaseIterable, Identifiable {
         case .p1080:   self = .p1080
         case .p1440:   self = .p1440
         case .p4k:     self = .p4k
-        case .custom:  self = .custom
+        // M6.7 compile bridge: the four social cases map to Custom until
+        // Task 7 lands the full 9-case tier enum (the picker's allCases
+        // is unchanged, so no new tier is advertised early; a vertical
+        // resolution decoded from a checkpoint displays as Custom).
+        default:       self = .custom
         }
     }
 }

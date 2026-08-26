@@ -175,19 +175,13 @@ public final class VideoEncoder: @unchecked Sendable {
     /// it does NOT use the table — the call site omits `AVVideoAverageBitRateKey`
     /// (ProRes is a fixed data-rate codec). The `fps≥60 × 1.5` multiplier is
     /// kept (double the frames → double the bits for the same per-frame quality).
-    /// MUST stay in sync with `ExportCoordinator.autoBitrateMbps` (the disk-
-    /// precheck mirror).
+    /// Delegates to ExportBitrate (D13) — the single source; no mirror to keep
+    /// in sync.
     private static func autoBitrate(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
-        if codec.isProRes { return 0 }
-        let hevc: [ExportSettings.Resolution: Int] = [.p720: 25, .p1080: 50, .p1440: 80, .p4k: 150]
-        let h264: [ExportSettings.Resolution: Int] = [.p720: 40, .p1080: 80, .p1440: 130, .p4k: 240]
-        let isHEVC = codec == .hevc
-        let table = isHEVC ? hevc : h264
-        let fallback = isHEVC ? 50 : 80
-        let big = isHEVC ? 150 : 240
-        let base = table[res] ?? (res.width * res.height >= 3_840 * 2160 ? big : fallback)
-        let fpsMult = fps >= 60 ? 1.5 : 1.0
-        return Int(Double(base) * fpsMult) * 1_000_000
+        // M6.7 D13: delegates to the single pixel-band source (same values as
+        // pre-M6.7 for every landscape named case; `.custom` now classifies by
+        // pixels instead of the flat 50/80 fallback).
+        ExportBitrate.mbps(codec: codec, width: res.width, height: res.height, fps: fps) * 1_000_000
     }
 
     /// Maps the user-facing `Codec` to AVFoundation's `AVVideoCodecType`. ProRes

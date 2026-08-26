@@ -1407,18 +1407,10 @@ public actor ExportCoordinator: ExportCoordinating {
     /// precheck (kept here so it does not depend on instantiating a
     /// `VideoEncoder`). ProRes returns 0 here — the disk estimate for ProRes is
     /// computed from the known data rate in `diskPrecheck` (the bitrate table
-    /// does not apply). MUST stay in sync with `VideoEncoder.autoBitrate`.
-    private static func autoBitrateMbps(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
-        if codec.isProRes { return 0 }
-        let hevc: [ExportSettings.Resolution: Int] = [.p720: 25, .p1080: 50, .p1440: 80, .p4k: 150]
-        let h264: [ExportSettings.Resolution: Int] = [.p720: 40, .p1080: 80, .p1440: 130, .p4k: 240]
-        let isHEVC = codec == .hevc
-        let table = isHEVC ? hevc : h264
-        let fallback = isHEVC ? 50 : 80
-        let big = isHEVC ? 150 : 240
-        let base = table[res] ?? (res.width * res.height >= 3_840 * 2160 ? big : fallback)
-        let fpsMult = fps >= 60 ? 1.5 : 1.0
-        return Int(Double(base) * fpsMult)
+    /// does not apply). Delegates to ExportBitrate (D13) — the single source;
+    /// no mirror to keep in sync.
+    static func autoBitrateMbps(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
+        ExportBitrate.mbps(codec: codec, width: res.width, height: res.height, fps: fps)
     }
 }
 

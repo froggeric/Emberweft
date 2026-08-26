@@ -200,4 +200,41 @@ final class VideoEncoderTests: XCTestCase {
         let frames = try await decodeFrames(out)
         XCTAssertEqual(frames.count, n, "decoded ProRes frame count must equal appended count")
     }
+
+    // MARK: - M6.7 portrait preset dims
+
+    /// One uniform frame at arbitrary dims (the portrait sweep below builds
+    /// frames at each preset size; `gradient` above is fixed at 64×48). Same
+    /// `RGBA8Image` construction as `gradient`.
+    private static func blackFrame(width: Int, height: Int) -> RGBA8Image {
+        RGBA8Image(width: width, height: height,
+                   pixels: [UInt8](repeating: 0, count: width * height * 4))
+    }
+
+    /// M6.7: one-frame round-trip at each portrait preset dim × codec —
+    /// asserts writer completion AND track naturalSize == requested dims (a
+    /// fleet-variance pin; all four dims verified encoding cleanly on this
+    /// machine 2026-08-25, including the even-not-mod-4 1350).
+    func testPortraitPresetDimsRoundTrip() async throws {
+        let dims: [(w: Int, h: Int)] = [(720, 1280), (1080, 1920), (1080, 1350), (1080, 1080)]
+        for codec in [ExportSettings.Codec.h264, .hevc] {
+            try XCTSkipUnless(VideoEncoder.canEncode(codec), "\(codec) unavailable on this host")
+            for d in dims {
+                let out = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("m67-sweep-\(d.w)x\(d.h)-\(codec.rawValue)-\(UUID().uuidString).mov")
+                defer { try? FileManager.default.removeItem(at: out) }
+                var s = ExportSettings()
+                s.codec = codec; s.container = .mov
+                s.resolution = .custom(width: d.w, height: d.h); s.fps = 30
+                let enc = try VideoEncoder(settings: s, outputURL: out)
+                try enc.start()
+                try await enc.append(Self.blackFrame(width: d.w, height: d.h), atFrame: 0)
+                try await enc.finish()
+                let track = try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first
+                let size = try await XCTUnwrap(track).load(.naturalSize)
+                XCTAssertEqual(Int(size.width), d.w, "\(codec) \(d.w)x\(d.h)")
+                XCTAssertEqual(Int(size.height), d.h, "\(codec) \(d.w)x\(d.h)")
+            }
+        }
+    }
 }

@@ -70,14 +70,36 @@ public struct ExportSettings: Codable, Sendable, Equatable {
     }
 
     public enum Resolution: Codable, Sendable, Equatable, Hashable {
-        case p720, p1080, p1440, p4k, custom(width: Int, height: Int)
+        case p720, p1080, p1440, p4k
+        /// M6.7 social presets (D2): orientation is DERIVED from the final
+        /// dims — never stored — so `.custom` inherits the same semantics.
+        case vertical720, vertical1080, portrait4x5, square1080
+        case custom(width: Int, height: Int)
         public var width: Int {
-            switch self { case .p720: 1280; case .p1080: 1920; case .p1440: 2560;
-                         case .p4k: 3840; case .custom(let w, _): w } }
+            switch self {
+            case .p720: 1280; case .p1080: 1920; case .p1440: 2560; case .p4k: 3840
+            case .vertical720: 720; case .vertical1080: 1080
+            case .portrait4x5: 1080; case .square1080: 1080
+            case .custom(let w, _): w
+            }
+        }
         public var height: Int {
-            switch self { case .p720: 720; case .p1080: 1080; case .p1440: 1440;
-                         case .p4k: 2160; case .custom(_, let h): h } }
+            switch self {
+            case .p720: 720; case .p1080: 1080; case .p1440: 1440; case .p4k: 2160
+            case .vertical720: 1280; case .vertical1080: 1920
+            case .portrait4x5: 1350; case .square1080: 1080
+            case .custom(_, let h): h
+            }
+        }
+        /// Derived orientation (D2): `h > w` portrait, `w == h` square, else
+        /// landscape. Pure; used by framing, the flock gate, and the GUI.
+        public var orientation: CanvasOrientation {
+            height > width ? .portrait : (width == height ? .square : .landscape)
+        }
     }
+
+    /// Canvas orientation derived from final render dims (M6.7 D2).
+    public enum CanvasOrientation: Sendable, Equatable { case landscape, square, portrait }
 }
 
 /// M6 quality source. Named tiers are deferred to the GUI export-sheet slice.
