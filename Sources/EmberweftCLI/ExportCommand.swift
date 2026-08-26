@@ -127,7 +127,15 @@ extension EmberweftCLI {
                     bitrate = v; i += 2
                 case "--resolution":
                     guard let v = value() else { return missing("--resolution") }
-                    resolution = v.lowercased(); resolutionExplicit = true; anyRecipeFlagExplicit = true; i += 2
+                    resolution = v.lowercased()
+                    // M6.7 (D9): validate up front — no silent .p1080 fallback. Inline
+                    // in the arm (the --fps/--framing style) so the BATCH path (which
+                    // dispatches at :346 with the same parsed local) is covered too.
+                    if ResolutionParsers.parse(resolution) == nil {
+                        EmberweftCLI.err("error: --resolution must be 720p|1080p|1440p|4k|vertical720|vertical1080|portrait4x5|square1080 or WxH (two positive even ints, width 16...7680, height 16...4320)\n")
+                        return 2
+                    }
+                    resolutionExplicit = true; anyRecipeFlagExplicit = true; i += 2
                 case "--fps":
                     guard let v = value() else { return missing("--fps") }
                     let n = Int(v) ?? -1
@@ -500,9 +508,13 @@ extension EmberweftCLI {
             // (identity) — the single-genome animate byte-identity pins hold.
             // With an explicit --resolution the factors are non-identity,
             // matching the coordinator paths exactly.
-            let planFlames = settings.framing == .normalized
-                ? renderable.map { Framing.normalize(flame: $0, renderWidth: pw) }
-                : renderable
+            // M6.7: the mastering path applies the SAME orientation-aware
+            // transform as buildRenderContext (landscape behavior identical to
+            // the M6.6 normalize call it replaces).
+            let planFlames = renderable.map {
+                Framing.apply(flame: $0, renderWidth: pw, renderHeight: ph,
+                              normalized: settings.framing == .normalized)
+            }
             var schedule = Schedule(librarySize: renderable.count, framesPerSegment: framesPerSegment,
                                     transitionFramesPerSegment: transitionFramesPerSegment,
                                     selector: Sequential(seed: seed), seed: seed)
@@ -659,6 +671,37 @@ extension EmberweftCLI {
         let temporalSamples: Int?
     }
 
+    /// M6.7 D9: --resolution parsing. Named tokens (landscape + social) or an
+    /// explicit `WxH` — two positive EVEN integers within the GUI sheet steppers'
+    /// bounds (16...7680 × 16...4320; the CLI is never more permissive than the
+    /// GUI). Evenness = the encoder's 4:2:0 chroma requirement (VideoToolbox
+    /// SILENTLY CROPS odd dims — 1081×1921 encodes as a 1080×1920 track — so a
+    /// malformed WxH must never reach the encoder). nil ⇒ the flag site exits 2.
+    enum ResolutionParsers {
+        static func parse(_ s: String) -> ExportSettings.Resolution? {
+            switch s.lowercased() {
+            case "720p": return .p720
+            case "1080p": return .p1080
+            case "1440p": return .p1440
+            case "4k": return .p4k
+            case "vertical720": return .vertical720
+            case "vertical1080": return .vertical1080
+            case "portrait4x5": return .portrait4x5
+            case "square1080": return .square1080
+            default: break
+            }
+            // omittingEmptySubsequences: false — "1080xx1920" must be 3 parts (nil),
+            // not the 2 parts Swift's default (true) yields by dropping empties.
+            let parts = s.lowercased().split(separator: "x", omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  let w = Int(parts[0]), let h = Int(parts[1]),
+                  (16...7680).contains(w), (16...4320).contains(h),
+                  w % 2 == 0, h % 2 == 0
+            else { return nil }
+            return .custom(width: w, height: h)
+        }
+    }
+
     /// Shared `ExportSettings` resolution for the single and batch paths (Task 7
     /// extraction: the batch path needs the same codec/quality/temporal cap logic
     /// as the single path, so the two cannot drift). `renderable`/`fallbackFlame`
@@ -699,12 +742,9 @@ extension EmberweftCLI {
             : .spp(Int(quality) ?? fallbackFlame.quality.samplesPerPixel)
         let bitrateEnum: ExportSettings.Bitrate = bitrate == "auto" ? .auto : .mbps(Int(bitrate) ?? 10)
         let resolutionEnum: ExportSettings.Resolution
-        switch resolution {
-        case "720p": resolutionEnum = .p720
-        case "1080p": resolutionEnum = .p1080
-        case "1440p": resolutionEnum = .p1440
-        case "4k": resolutionEnum = .p4k
-        default: resolutionEnum = .p1080     // unknown → .p1080 (original line 390)
+        switch ResolutionParsers.parse(resolution) {
+        case .some(let r): resolutionEnum = r
+        case .none: resolutionEnum = .p1080   // unreachable via CLI — the flag site exits 2
         }
         let backendEnum: ExportCoordinator.Backend = backend == "metal" ? .metal : .cpu
 
