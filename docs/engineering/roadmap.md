@@ -335,7 +335,7 @@ archive.
 > sideways at exact scale (a 1920×1080 genome on 1080×1920 is factor 1.0).
 > Portrait- and square-authored genomes are never rotated. Engine parity
 > unchanged (`FlameKit.Framing.swift` only); animate↔export byte-identity
-> preserved. Spec:
+> preserved on landscape and square canvases. Spec:
 > [`docs/superpowers/specs/2026-08-25-m6.7-vertical-social-presets-design.md`](../superpowers/specs/2026-08-25-m6.7-vertical-social-presets-design.md);
 > plan:
 > [`docs/superpowers/plans/2026-08-25-m6.7-vertical-social-presets.md`](../superpowers/plans/2026-08-25-m6.7-vertical-social-presets.md).

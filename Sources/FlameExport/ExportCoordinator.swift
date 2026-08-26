@@ -1409,12 +1409,11 @@ public actor ExportCoordinator: ExportCoordinating {
         }
     }
 
-    /// Mirrors `VideoEncoder.autoBitrate` (Mbps, pre-`*1_000_000`) for the disk
-    /// precheck (kept here so it does not depend on instantiating a
-    /// `VideoEncoder`). ProRes returns 0 here — the disk estimate for ProRes is
-    /// computed from the known data rate in `diskPrecheck` (the bitrate table
-    /// does not apply). Delegates to ExportBitrate (D13) — the single source;
-    /// no mirror to keep in sync.
+    /// The disk-precheck's bitrate (Mbps, pre-`*1_000_000`) — kept here so it
+    /// does not depend on instantiating a `VideoEncoder`. ProRes returns 0
+    /// here — the disk estimate for ProRes is computed from the known data
+    /// rate in `diskPrecheck` (the bitrate table does not apply). Delegates
+    /// to ExportBitrate (D13) — the single source; no mirror to keep in sync.
     static func autoBitrateMbps(codec: ExportSettings.Codec, res: ExportSettings.Resolution, fps: Int) -> Int {
         ExportBitrate.mbps(codec: codec, width: res.width, height: res.height, fps: fps)
     }
