@@ -198,9 +198,15 @@ public actor ExportCoordinator: ExportCoordinating {
         // site for runJob / runLongFormJob / runResumableBody, so resume
         // re-normalizes deterministically from the re-parsed sources. Pure
         // genome-level transform; RenderParams/seed untouched (rule #2).
-        let flames = job.settings.framing == .normalized
-            ? job.flames.map { Framing.normalize(flame: $0, renderWidth: max(1, res.width)) }
-            : job.flames
+        // M6.7: the orientation-aware matrix (spec §3). Non-portrait canvases
+        // delegate to the M6.6 cells inside `apply` — byte-identical to the
+        // previous conditional `normalize` map. Resume re-derives
+        // deterministically from the re-parsed sources + decoded resolution.
+        let flames = job.flames.map {
+            Framing.apply(flame: $0, renderWidth: max(1, res.width),
+                          renderHeight: max(1, res.height),
+                          normalized: job.settings.framing == .normalized)
+        }
         let (spp, os) = job.settings.quality.resolvedSamplesPerPixel(for: job.flames[0])
         let params = RenderParams(seed: job.seed, width: max(1, res.width), height: max(1, res.height),
                                   oversample: os, samplesPerPixel: spp)
