@@ -72,12 +72,15 @@ private let defaultShard = ShardPresets.canonicalDefault
 
 // MARK: - Shared shard menu
 
-/// A shard picker in two sections: **Standard** (the `ShardPresets.sensible`
-/// canonical profiles — always offered, even on a fresh archive with no shard
-/// rows) and **In your archive** (the catalog's shards, minus duplicates of the
-/// presets matched by name). A `Menu` (not a `Picker`) so the selection does not
-/// require `ShardSpec: Hashable` (FlameFlock keeps its value type as-is; only
-/// additive readers are added there).
+/// A shard picker in three sections: **Standard** + **Vertical** (the
+/// `ShardPresets.sensible` canonical profiles, split by the shared
+/// `ShardPresets.isVertical` predicate — grouping is a view concern, D14, so
+/// membership stays flat in FlameFlock; square shards stay in Standard since
+/// `isVertical` is false when h == w; always offered, even on a fresh archive
+/// with no shard rows) and **In your archive** (the catalog's shards, minus
+/// duplicates of the presets matched by name). A `Menu` (not a `Picker`) so the
+/// selection does not require `ShardSpec: Hashable` (FlameFlock keeps its value
+/// type as-is; only additive readers are added there).
 ///
 /// Selecting a Standard preset that has no catalog row yet just works: the tab
 /// upserts the selected `ShardSpec` at the start of generate/stitch (the
@@ -92,7 +95,12 @@ private struct ShardMenu: View {
     var body: some View {
         Menu {
             Section("Standard") {
-                ForEach(ShardPresets.sensible, id: \.name) { s in
+                ForEach(ShardPresets.sensible.filter { !ShardPresets.isVertical($0) }, id: \.name) { s in
+                    Button(shardLabel(s)) { shard = s }
+                }
+            }
+            Section("Vertical") {
+                ForEach(ShardPresets.sensible.filter { ShardPresets.isVertical($0) }, id: \.name) { s in
                     Button(shardLabel(s)) { shard = s }
                 }
             }
@@ -938,7 +946,7 @@ private struct BrowseTab: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 6).fill(.quaternary)
                 if let img = thumbs[row.file] {
-                    Image(nsImage: img).resizable().scaledToFill()
+                    Image(nsImage: img).resizable().scaledToFit()
                         .frame(height: 100).clipped().cornerRadius(6)
                 } else {
                     Image(systemName: row.kind == .loop ? "arrow.triangle.2.circlepath" : "arrow.right.square")

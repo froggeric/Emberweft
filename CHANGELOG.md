@@ -16,6 +16,7 @@ implications of porting flam3) is the owner's decision and under review.
 - Exports at vertical resolutions render the authored composition rotated 90° with the same normalized framing (faithful mode rotates without rescaling).
 - Flock archive: portrait shard presets (720×1280 / 1080×1920 / 1080×1350 / 1080×1080) and a per-artifact framing gate that distinguishes rotated portrait material.
 - Catalog schema v4 (a version re-stamp; older builds are refused the archive instead of mis-reading portrait material) and a rebuild integrity check that skips video files sitting in the wrong resolution folder.
+- GUI: vertical/square tiers in the export sheet, Standard/Vertical shard sections, and letterboxed portrait thumbnails in Browse.
 
 ## [0.6.1] - 2026-08-18
 

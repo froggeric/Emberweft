@@ -292,6 +292,10 @@ struct ExportSheet: View {
                 case .p1080: model.exportManager.resolution = .p1080
                 case .p1440: model.exportManager.resolution = .p1440
                 case .p4k:   model.exportManager.resolution = .p4k
+                case .vertical720: model.exportManager.resolution = .vertical720
+                case .vertical1080: model.exportManager.resolution = .vertical1080
+                case .portrait4x5: model.exportManager.resolution = .portrait4x5
+                case .square1080: model.exportManager.resolution = .square1080
                 case .custom:
                     model.exportManager.resolution = .custom(width: customWidth, height: customHeight)
                 }
@@ -362,30 +366,34 @@ struct ExportSheet: View {
 /// dims), so the Picker iterates these tiers and the `resolutionTier` binding
 /// maps each to a concrete resolution.
 private enum SheetResolutionTier: String, CaseIterable, Identifiable {
-    case p720, p1080, p1440, p4k, custom
+    case p720, p1080, p1440, p4k, vertical720, vertical1080, portrait4x5, square1080, custom
 
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .p720:    "720p"
-        case .p1080:   "1080p"
-        case .p1440:   "1440p"
-        case .p4k:     "4K"
-        case .custom:  "Custom"
+        case .p720: "720p"
+        case .p1080: "1080p"
+        case .p1440: "1440p"
+        case .p4k: "4K"
+        case .vertical720: "Vertical 720p"
+        case .vertical1080: "Vertical 1080p"
+        case .portrait4x5: "Portrait 4:5"
+        case .square1080: "Square 1080"
+        case .custom: "Custom"
         }
     }
 
     init(_ r: ExportSettings.Resolution) {
         switch r {
-        case .p720:    self = .p720
-        case .p1080:   self = .p1080
-        case .p1440:   self = .p1440
-        case .p4k:     self = .p4k
-        // M6.7 compile bridge: the four social cases map to Custom until
-        // Task 7 lands the full 9-case tier enum (the picker's allCases
-        // is unchanged, so no new tier is advertised early; a vertical
-        // resolution decoded from a checkpoint displays as Custom).
-        default:       self = .custom
+        case .p720: self = .p720
+        case .p1080: self = .p1080
+        case .p1440: self = .p1440
+        case .p4k: self = .p4k
+        case .vertical720: self = .vertical720
+        case .vertical1080: self = .vertical1080
+        case .portrait4x5: self = .portrait4x5
+        case .square1080: self = .square1080
+        case .custom: self = .custom
         }
     }
 }

@@ -119,8 +119,15 @@ struct SettingsView: View {
                 // presets are offered here; any other catalog shard can still be
                 // picked inside each tab.
                 Picker("Default shard", selection: defaultShardBinding) {
-                    ForEach(ShardPresets.sensible, id: \.name) { s in
-                        Text(shardMenuLabel(s)).tag(s.name)
+                    Section("Standard") {
+                        ForEach(ShardPresets.sensible.filter { !ShardPresets.isVertical($0) }, id: \.name) {
+                            Text(shardMenuLabel($0)).tag($0.name)
+                        }
+                    }
+                    Section("Vertical") {
+                        ForEach(ShardPresets.sensible.filter { ShardPresets.isVertical($0) }, id: \.name) {
+                            Text(shardMenuLabel($0)).tag($0.name)
+                        }
                     }
                 }
                 .help("The shard the Flock Generate and Stitch tabs start from (resolution, frame rate, and canonical 15 s / 12 s pace). Unknown shard names fall back to the 1080p default.")
