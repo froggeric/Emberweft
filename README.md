@@ -77,8 +77,9 @@ Apple Silicon's unified memory lets Metal compute shaders read and write the ren
 | M6 | ✅ Done | Export pipeline + codecs (engine + CLI v0.4.0; GUI export studio v0.5.0; pause/resume v0.5.1; temporal smoothing v0.5.2) |
 | **v0.6.1** | ✅ Done | **M6.6 resolution-independent framing:** every genome keeps its authored composition at every output resolution (archive, export, thumbnails, previews); `--framing` on `export`/`flock`; non-1080p-shard GUI crash fix; AppKit-native context menus |
 | **v0.6.0** | ✅ Done | **M6.5 flock archive + stitching:** pre-rendered loop/edge archive (HEVC `.mov`), Generate (Path A) + Stitch (Path B, no-reencode concat), `flock.sqlite` catalog, `emberweft flock` CLI, decoupled one-shot export |
+| M6.7 | ✅ Done | **Vertical/social presets** (complete, unreleased): 720×1280 / 1080×1920 / 1080×1350 / 1080×1080 across export + flock archive — portrait canvases rotate landscape-authored genomes +90° and anchor the authored height; CLI `--resolution` tokens + validated `WxH`; catalog framing gate v4 |
 | M7 | Planned | Music-video / audio-reactive (offline + realtime VJ) |
-| M8 | Planned | 4K/HDR, vertical/social presets, local genetics/breeding |
+| M8 | Planned | 4K/HDR, local genetics/breeding (vertical/social presets shipped in M6.7) |
 
 See full details in [docs/engineering/roadmap.md](docs/engineering/roadmap.md).
 
@@ -166,6 +167,7 @@ swift run -c release emberweft export --jobs manifest.json --out /tmp/batch/ --f
 ```
 
 - `--codec prores-422-hq|h264|hevc` (GUI default ProRes 422 HQ mastering, `.mov`; H.264/HEVC for `.mp4`; HEVC falls back to H.264 on unsupported hardware, or errors with `--strict-backend`). `--transition-frames N`.
+- `--resolution 720p|1080p|1440p|4k|vertical720|vertical1080|portrait4x5|square1080|WxH` — named presets plus explicit even dimensions (e.g. `1080x1920`, bounded 16…7680 × 16…4320). Vertical/portrait canvases rotate a landscape-authored genome 90° and anchor its authored height, so the composition carries sideways at exact scale (portrait- and square-authored genomes are never rotated); invalid values error instead of silently rendering at 1080p.
 - `--quality genome` (faithful default, byte-matches `animate`) or `--quality N` (samples-per-pixel).
 - `--framing normalized` (default) re-anchors each genome's `scale` to the output width so the composition is identical at every resolution; `--framing faithful` uses the raw authored scale (byte-matches `animate`). The GUI export sheet has the same Framing picker (Normalized default / Authored).
 - `--temporal-samples N` for motion blur (defaults to the genome's value; essential for seamless transitions).
@@ -297,4 +299,4 @@ Full details: [docs/license-and-attribution.md](docs/license-and-attribution.md)
 
 ---
 
-**M0–M4 + M6 + M6.1 + M6.5 + M6.6 are complete (v0.6.1):** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, temporal smoothing for low-spp exports), the flock archive + stitching (pre-rendered loop/edge archive, Generate + Stitch with no-reencode concat, `emberweft flock` CLI), and resolution-independent framing (M6.6: a pure width normalization of each genome's authored `scale`, applied everywhere except `animate` and the renderers, which stay faithful) all work today. **M5** (the macOS screensaver bundle, which will consume the archive) is next: see the [roadmap](docs/engineering/roadmap.md).
+**M0–M4 + M6 + M6.1 + M6.5 + M6.6 + M6.7 are complete:** the CPU reference renderer, the Metal compute renderer, animation + realtime playback, motion-blurred real-genome parity, the full native SwiftUI studio (sidebar browser, multi-select, tri-state sentiment, search/filter, drag-drop import, collections, non-modal playback with configurable preview presets + live FPS), the full video-export studio (GUI sheet + `emberweft export` CLI, ProRes mastering, eased pacing, temporal smoothing for low-spp exports), the flock archive + stitching (pre-rendered loop/edge archive, Generate + Stitch with no-reencode concat, `emberweft flock` CLI), resolution-independent framing (M6.6: a pure width normalization of each genome's authored `scale`, applied everywhere except `animate` and the renderers, which stay faithful), and vertical/social presets (M6.7: 720×1280 / 1080×1920 / 1080×1350 / 1080×1080 across export and the flock archive — a portrait canvas rotates a landscape-authored genome 90° and anchors its authored height, so the composition carries sideways at exact scale) all work today. **M5** (the macOS screensaver bundle, which will consume the archive) is next: see the [roadmap](docs/engineering/roadmap.md).

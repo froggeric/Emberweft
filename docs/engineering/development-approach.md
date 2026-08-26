@@ -13,7 +13,7 @@ This document is the agreed development strategy. It governs *how* the project i
 3. **CLI-first.** A headless `emberweft` executable ships before any UI, forcing a clean engine/UI boundary and enabling CI-driven image tests.
 4. **Test-driven.** Every slice starts with a failing test (the golden/parity tests *are* the "red" for the renderers).
 5. **Source-available, not open source.** PolyForm Noncommercial code + CC-BY-NC seed library (see [license-and-attribution.md](../license-and-attribution.md)).
-6. **YAGNI.** Editor UI, genetics, HDR, vertical presets, and flock import are deferred until the core renderer is solid.
+6. **YAGNI.** Editor UI, genetics, HDR, and flock import are deferred until the core renderer is solid.
 
 ## Methodology
 
@@ -42,7 +42,7 @@ Each slice is independently testable and shippable. Nothing proceeds until the p
 | **S9** | macOS screensaver bundle (`EmberweftScreenSaver`). | Launch + low-power tests. |
 | **S10** | **`FlameExport`** — AVFoundation offline/long-form export, codecs. | Round-trip encode/decode; determinism. |
 | **S11** | Music-video / audio-reactive (offline + realtime VJ). | Audio-feature + sync tests. |
-| **S12** | 4K/HDR, vertical/social presets, local genetics/breeding. | Format coverage; HDR pipeline checks. |
+| **S12** | 4K/HDR, local genetics/breeding (vertical/social presets shipped in S10.7 / M6.7). | Format coverage; HDR pipeline checks. |
 
 S0–S6 are the **core**: a correct, oracle-validated, Metal-accelerated renderer with a CLI. Everything from S7 on is productization on top of that proven core.
 
@@ -112,4 +112,4 @@ Full detail in [testing.md](testing.md). In brief:
 
 ## Deferred (post-S6, YAGNI)
 
-Flame editor UI · local genetics/breeding · HDR pipeline · vertical/social-format presets · Infinidream / Electric-Sheep flock import · multi-screen gallery · collaborative/social control.
+Flame editor UI · local genetics/breeding · HDR pipeline · Infinidream / Electric-Sheep flock import · multi-screen gallery · collaborative/social control. (Vertical/social-format presets shipped in M6.7 / S10.7, pulled forward from this list.)

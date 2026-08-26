@@ -67,27 +67,7 @@ Users may specify arbitrary resolutions up to **(preliminary)** 7680 × 4320 (8K
 
 ### Flame Camera Adaptation
 
-The [genome](../rendering/genome-format.md) defines a virtual camera with center position, scale, and rotation parameters. To adapt a sheep (typically authored at 16:9) to other aspect ratios without cropping:
-
-```swift
-func adaptCamera(genome: Genome, targetAspect: Float) -> Camera {
-    let sourceAspect = 16.0 / 9.0
-    let scaleFactor = targetAspect > sourceAspect 
-        ? targetAspect / sourceAspect  // Wider: zoom out
-        : sourceAspect / targetAspect  // Narrower: zoom in
-    
-    return Camera(
-        center: genome.camera.center,
-        scale: genome.camera.scale * scaleFactor,
-        rotation: genome.camera.rotation
-    )
-}
-```
-
-**Derivation:**
-- The attractor's bounding box is defined in normalized coordinate space [-1, 1]
-- Pixel-per-unit is recalculated as `min(width, height) / (2 * scale)`
-- This ensures the attractor always fits regardless of aspect
+The [genome](../rendering/genome-format.md) defines a virtual camera with center position, scale, and rotation parameters. Aspect adaptation is a **framing** concern, implemented in `FlameKit.Framing` (not an aspect-zoom of the camera): a genome's `scale` is normalized to the output width (M6.6), and a portrait canvas rotates a landscape-authored genome +90° while anchoring its authored height, so the authored composition carries sideways at exact scale (M6.7). Portrait- and square-authored genomes are never rotated. See the M6.7 spec, [`docs/superpowers/specs/2026-08-25-m6.7-vertical-social-presets-design.md`](../superpowers/specs/2026-08-25-m6.7-vertical-social-presets-design.md) (§2–§3: why camera rotation is the right lever, the orientation matrix, and the rejected alternatives — including the old zoom-to-cover sketch this page used to carry, which crops the authored composition and fights authorial intent).
 
 ### Letterboxing and Pillarboxing
 

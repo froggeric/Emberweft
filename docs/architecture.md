@@ -67,7 +67,17 @@ FlameKit provides the data model for fractal flame genomes:
   - `Framing` — the pure M6.6 width normalization: a genome's `camera.scale`
     is absolute pixels-per-unit authored for its `size`, so rendering at
     another width rescales it by `renderWidth / size.x` (identity at the
-    authored width; degenerate headers pass through unchanged). Consumed at
+    authored width; degenerate headers pass through unchanged). M6.7 adds the
+    orientation-aware sibling `Framing.apply(flame:renderWidth:renderHeight:framing:)`:
+    orientation is derived from the final canvas dims (`h > w` portrait,
+    `w == h` square — never stored), and a portrait canvas rotates a
+    landscape-authored genome **+90°** while anchoring its authored *height*
+    (`scale × canvasW / size.y`), so the authored composition carries sideways
+    at exact scale (a 1920×1080 genome on 1080×1920 is factor 1.0). Portrait
+    and square-authored genomes are never rotated (identity / width anchor);
+    the rotation applies in faithful mode too (a portrait canvas means *raw
+    scale, sideways*), and the degenerate-header guard wraps it. `normalize`
+    stays for the landscape-only preview/thumbnail surfaces. Consumed at
     the export/flock/preview entry points via `ExportSettings.framing`; the
     renderers and `animate` never apply it.
 
@@ -202,7 +212,7 @@ FlameExport handles long-form output:
 
 Export runs offscreen compute (no `MTKView`), fully CPU-detached from rendering.
 
-### FlameFlock (Flock Archive — M6.5/M6.6)
+### FlameFlock (Flock Archive — M6.5–M6.7)
 
 **Purpose:** A local archive of pre-rendered loop/edge videos that makes long
 compositions cheap: **Generate** pre-bakes material into the archive,
@@ -216,7 +226,12 @@ while user genomes get minted ids in reserved flock `900000`. `FlameFlock`
 links the system `sqlite3` directly (Apple SDKs only — no SwiftPM
 dependency). Archive renders go through `FlameExport.renderSegmentRange`
 (single-sourced with the one-shot export path) and always render with
-normalized framing (M6.6).
+normalized framing (M6.6) — orientation-aware since M6.7: portrait shards
+(`ShardPresets.sensible` includes 720×1280 / 1080×1920 / 1080×1350 /
+1080×1080) render through the same `Framing.apply` matrix, and a per-artifact
+framing gate (catalog v4: `0` legacy/faithful · `1` normalized unrotated ·
+`2` normalized rotated, derived by one shared `FlockFramingGate` from the
+shard dims) keeps stitches from mixing orientations.
 
 #### Artifact geometry: core + wrap / ext (seam-aware, geometry v2)
 
