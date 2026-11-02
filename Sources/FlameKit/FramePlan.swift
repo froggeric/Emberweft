@@ -57,13 +57,22 @@ public struct FramePlan: Sendable {
         let mapping = schedule.frameToBlend(globalFrame: globalFrame)
         let segment = schedule.segments[mapping.segmentId]
         let fps = Double(segment.framesPerSegment)
-        let (raw, sumfilt): ([(delta: Double, weight: Double)], Double) = temporalSamples > 1
-            ? TemporalFilter.samples(
+        // Hoisted once (pure value reads) and split out of the ternary: the
+        // 26B118 SDK type-checker crashes on the old single labeled↔unlabeled
+        // tuple expression ("failed to produce diagnostic"). Behavior is
+        // unchanged — same reads, same values, same branch.
+        let quality = flames[segment.fromSheep].quality
+        var raw: [(delta: Double, weight: Double)]
+        var sumfilt: Double
+        if temporalSamples > 1 {
+            (raw, sumfilt) = TemporalFilter.samples(
                 temporalSamples,
-                type: flames[segment.fromSheep].quality.temporalFilterType,
-                width: flames[segment.fromSheep].quality.temporalFilterWidth,
-                exp:    flames[segment.fromSheep].quality.temporalFilterExp)
-            : ([(delta: 0.0, weight: 1.0)], 1.0)
+                type: quality.temporalFilterType,
+                width: quality.temporalFilterWidth,
+                exp: quality.temporalFilterExp)
+        } else {
+            (raw, sumfilt) = ([(delta: 0.0, weight: 1.0)], 1.0)
+        }
         let temporal = raw.map { (delta: $0.delta / fps, weight: $0.weight) }
 
         let flames = self.flames
