@@ -111,28 +111,43 @@ struct LibraryView: View {
         // Menu-bar request handlers (C2): the commands bump AppModel counters;
         // these translate them into the view-owned flows. Attached at body
         // level (not detailChrome) so they stay live on every destination.
-        .onChange(of: model.openDirectoryRequest) { _, _ in openImporter = true }
-        .onChange(of: model.importFilesRequest) { _, _ in importPanel = true }
+        // Presentations (panels, popovers, sheets) are deferred one run-loop
+        // turn — presenting while the menu is tearing down drops the
+        // presentation (same family as the AppKitContextMenu deferral).
+        .onChange(of: model.openDirectoryRequest) { _, _ in
+            Task { @MainActor in openImporter = true }
+        }
+        .onChange(of: model.importFilesRequest) { _, _ in
+            Task { @MainActor in importPanel = true }
+        }
         .onChange(of: model.newCollectionRequest) { _, _ in
-            creatingCollectionEntries = []
-            createText = defaultCollectionName()
+            Task { @MainActor in
+                creatingCollectionEntries = []
+                createText = defaultCollectionName()
+            }
         }
         .onChange(of: model.saveSelectionAsCollectionRequest) { _, _ in
-            creatingCollectionEntries = model.selection
-                .sorted { GenomeCollectionAppOrder.key($0) < GenomeCollectionAppOrder.key($1) }
-                .map(CollectionEntry.init)
-            createText = defaultCollectionName()
+            Task { @MainActor in
+                creatingCollectionEntries = model.selection
+                    .sorted { GenomeCollectionAppOrder.key($0) < GenomeCollectionAppOrder.key($1) }
+                    .map(CollectionEntry.init)
+                createText = defaultCollectionName()
+            }
         }
         .onChange(of: model.playSelectionRequest) { _, _ in
             if model.selection.count == 1, let entry = model.selection.first {
-                openWindow(value: PlaybackRoute(entry))
+                Task { @MainActor in openWindow(value: PlaybackRoute(entry)) }
             }
         }
         .onChange(of: model.toggleSidebarRequest) { _, _ in
             columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
         }
-        .onChange(of: model.filterPopoverRequest) { _, _ in showFilterPopover.toggle() }
-        .onChange(of: model.keyboardHelpRequest) { _, _ in showKeyboardHelp = true }
+        .onChange(of: model.filterPopoverRequest) { _, _ in
+            Task { @MainActor in showFilterPopover.toggle() }
+        }
+        .onChange(of: model.keyboardHelpRequest) { _, _ in
+            Task { @MainActor in showKeyboardHelp = true }
+        }
         .onChange(of: model.findRequest) { _, _ in searchFocused = true }
         .fileImporter(isPresented: $importPanel,
                       allowedContentTypes: [.data],

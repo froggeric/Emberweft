@@ -141,6 +141,12 @@ struct SelectionBar: View {
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
         .shadow(radius: 6, y: 2)
+        // File > Export… ⇧⌘E (C2): the menu triggers the SAME load-then-sheet
+        // flow as the Export… button (this bar is mounted whenever a selection
+        // exists — the menu item is disabled otherwise).
+        .onChange(of: model.exportRequest) { _, _ in
+            Task { await loadSelectionForExport() }
+        }
         .sheet(isPresented: $showCreateSheet) {
             NameCollectionSheet(title: "New Collection",
                                  confirmLabel: "Create",

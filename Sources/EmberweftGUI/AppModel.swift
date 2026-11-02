@@ -361,6 +361,21 @@ final class AppModel {
     func clearSelection() { selection.removeAll(); selectionAnchor = nil }
     func isSelected(_ entry: LibraryEntry) -> Bool { selection.contains(entry) }
 
+    /// One-shot menu-bar → view requests (C2). App-level `.commands` closures
+    /// cannot reach view state (sheets, popovers, focus, `openWindow`), so each
+    /// command bumps a counter and the owning view reacts via `.onChange`.
+    /// Int counters (not Bools) so a repeated request always fires.
+    var openDirectoryRequest = 0            // File > Open Directory… ⌘O
+    var importFilesRequest = 0              // File > Import Genomes… ⇧⌘I
+    var exportRequest = 0                   // File > Export… ⇧⌘E (SelectionBar flow)
+    var newCollectionRequest = 0            // File > New Collection… ⇧⌘N (empty)
+    var saveSelectionAsCollectionRequest = 0 // Genome > Add to > New Collection…
+    var playSelectionRequest = 0            // Genome > Play ⌘↓
+    var toggleSidebarRequest = 0            // View > Toggle Sidebar ⌃⌘S
+    var filterPopoverRequest = 0            // View > Filter ⇧⌘F
+    var findRequest = 0                     // Edit > Find > Search ⌘F
+    var keyboardHelpRequest = 0             // Help > Keyboard Shortcuts ⌘?
+
     /// Bulk-set sentiment over a selection (iterate a SORTED sequence — rule #2:
     /// never accumulate over the hashed `Set`). `scheduleSave` coalesces the writes.
     func applySentiment(_ value: Int, to entries: Set<LibraryEntry>) {
