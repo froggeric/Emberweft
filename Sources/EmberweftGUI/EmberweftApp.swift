@@ -7,9 +7,27 @@ import EmberweftUI
 /// shell (e.g. Claude Code) keeps keyboard focus and the window isn't fully
 /// interactive (no keyboard events, no click-through).
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The AppModel, wired by the main window's onAppear (the adaptor
+    /// constructs the delegate before any model exists).
+    weak var model: AppModel?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Quit guard (the lifecycle gap): ⌘Q/logout during a multi-hour render
+    /// used to kill the in-flight chunk with no warning. Checkpoints keep the
+    /// completed work, so confirm with an honest "Pause & Quit" — the export
+    /// resumes from its checkpoint on the next launch.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model,
+              QuitGuard.renderInProgress(export: model.exportManager, flock: model.flockModel)
+        else { return .terminateNow }
+        QuitGuard.confirmQuit(export: model.exportManager, flock: model.flockModel) { reply in
+            NSApp.reply(toApplicationShouldTerminate: reply)
+        }
+        return .terminateLater
     }
 }
 
@@ -22,6 +40,7 @@ struct EmberweftApp: App {
         WindowGroup("Emberweft") {
             LibraryView()
                 .environment(model)
+                .onAppear { appDelegate.model = model }
                 .task { await model.loadBundle() }
                 .task { await model.reloadDirectorySources() }
                 .task { await model.rescanImported() }

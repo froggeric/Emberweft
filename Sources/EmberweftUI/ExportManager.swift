@@ -21,6 +21,16 @@ public enum ExportState: Sendable, Equatable {
     case failed(String)
     case cancelled
     case paused(out: URL, checkpoint: URL, reason: String?)
+
+    /// True while quitting would interrupt or abandon live work (the quit
+    /// guard + dock badge ask; `.paused` counts — quitting a paused run
+    /// abandons its in-flight chunk exactly like a running one).
+    public var isInFlight: Bool {
+        switch self {
+        case .running, .pausing, .cancelling, .paused: return true
+        case .idle, .completed, .failed, .cancelled: return false
+        }
+    }
 }
 
 /// A single normalized progress sample for the banner (spec §4.4). Pure value
@@ -107,8 +117,17 @@ public enum BackendChoice: String, Sendable, CaseIterable, Hashable {
 @MainActor
 @Observable
 public final class ExportManager {
-    public private(set) var state: ExportState = .idle
+    public private(set) var state: ExportState = .idle {
+        didSet { onStateChange?(state) }
+    }
     public private(set) var snapshot: ExportProgressSnapshot = .empty
+
+    /// System-integration hook (the notifications gap): fired on EVERY state
+    /// transition, mirroring the `rememberedCheckpointURL` write-back hook
+    /// pattern — the VM stays unit-testable without AppKit; AppModel installs
+    /// the OS-notification bridge. Fires on equal-value reassignment too
+    /// (idempotent handlers only).
+    public var onStateChange: (@MainActor (ExportState) -> Void)?
 
     /// A transient label for the source (display name / count), for the banner.
     public private(set) var sourceLabel: String = ""

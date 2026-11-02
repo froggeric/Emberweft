@@ -243,6 +243,56 @@ final class AppModel {
             guard let catalog else { return FlockSnapshot(shardCount: 0, artifactCount: 0) }
             return await catalog.snapshot()
         }
+
+        // System integration (the notifications gap): bridge terminal export/
+        // flock states to OS notifications (provisional authorization, posted
+        // only while the app is backgrounded) and mirror live progress in the
+        // dock badge. The VMs stay AppKit-free; this is the same hook pattern
+        // as writeRememberedCheckpointURL above.
+        exportManager.onStateChange = { [weak self] state in
+            if let n = CompletionNotifications.exportNotification(for: state) {
+                CompletionNotifications.post(title: n.title, body: n.body)
+            }
+            self?.refreshBadgeTimer()
+        }
+        flockModel.onRunFinished = { title, body in
+            CompletionNotifications.post(title: title, body: body)
+        }
+
+        // Storage management (the thumb-cache gap): prune the disk cache to
+        // its 1 GB budget at launch, oldest-first (deterministic order).
+        Task.detached(priority: .utility) { [thumbnailService] in
+            await thumbnailService.pruneDiskCache()
+        }
+    }
+
+    // MARK: - Dock badge (notifications gap)
+
+    /// 1 Hz dock-badge updater, running ONLY while a render is live. Started/
+    /// stopped from export state transitions; self-stops when nothing runs.
+    private var badgeTimer: Timer?
+
+    private func refreshBadgeTimer() {
+        let active = exportManager.state.isInFlight || flockModel.hasActiveRun
+        if active && badgeTimer == nil {
+            badgeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let fraction = CompletionNotifications.overallProgress(
+                        export: self.exportManager, flock: self.flockModel)
+                    CompletionNotifications.updateDockBadge(fraction: fraction)
+                    if fraction == nil { self.stopBadgeTimer() }
+                }
+            }
+        } else if !active {
+            stopBadgeTimer()
+        }
+    }
+
+    private func stopBadgeTimer() {
+        badgeTimer?.invalidate()
+        badgeTimer = nil
+        CompletionNotifications.updateDockBadge(fraction: nil)
     }
 
     /// Liked genomes (sentiment == +1) across all loaded sections. Folder order

@@ -75,9 +75,49 @@ public final class FlockModel {
 
     // MARK: - Observed state (spec §13.1)
 
-    public private(set) var generateState: GenerateUIState = .idle
-    public private(set) var stitchState: StitchUIState = .idle
+    /// System-integration hook (the notifications gap): fired when a
+    /// generate/stitch run reaches a terminal COMPLETED/FAILED state (cancel
+    /// is user-initiated and already known). AppModel installs the
+    /// OS-notification bridge; the model stays AppKit-free and unit-testable.
+    public var onRunFinished: (@MainActor (_ title: String, _ body: String) -> Void)?
+
+    public private(set) var generateState: GenerateUIState = .idle {
+        didSet {
+            // System-integration hook (the notifications gap): terminal
+            // completed/failed states only — cancel is user-initiated.
+            switch generateState {
+            case .completed(let rendered, let skipped):
+                onRunFinished?("Flock generate finished",
+                               skipped > 0
+                               ? "\(rendered) units rendered, \(skipped) skipped."
+                               : "\(rendered) units rendered.")
+            case .failed(let msg):
+                onRunFinished?("Flock generate failed", msg)
+            default:
+                break
+            }
+        }
+    }
+    public private(set) var stitchState: StitchUIState = .idle {
+        didSet {
+            switch stitchState {
+            case .completed(let url):
+                onRunFinished?("Stitch finished", url.lastPathComponent)
+            case .failed(let msg):
+                onRunFinished?("Stitch failed", msg)
+            default:
+                break
+            }
+        }
+    }
     public private(set) var browseState: BrowseUIState = .loading
+
+    /// True while a generate or stitch run is live (quit guard + dock badge).
+    public var hasActiveRun: Bool { flockActivity != nil }
+
+    /// Overall run fraction for the dock badge, from the live activity
+    /// summary (nil ⇒ indeterminate).
+    public var overallRunFraction: Double? { flockActivity?.fraction }
 
     /// User-facing backend picker, resolved via `MetalRenderer.isAvailable` (the
     /// probe runs on the MainActor — `FlockModel` is `@MainActor`, so it is
