@@ -15,14 +15,39 @@ struct LibraryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openWindow) private var openWindow
     @State private var openImporter = false
-    @State private var filter = LibraryFilter()
+    /// Drag-hover feedback for the file/folder drop target (Finder-import gap).
+    @State private var isDropTargeted = false
+    /// Arrange state (the sort gap): sort order + group-by-folder toggle +
+    /// the shuffle seed (re-picking Random re-rolls it). `displayedEntries`
+    /// is the ONE cached filtered+sorted array — the grid, the count caption,
+    /// and ⌘A all read it (search used to re-filter 3× per keystroke).
+    @SceneStorage("library.sort") private var sortStorage: String?
+    @State private var sort: LibrarySort = .name {
+        didSet { sortStorage = sort.rawValue }
+    }
+    @SceneStorage("library.groupByFolder") private var groupByFolder = false
+    @State private var shuffleSeed: UInt64 = 1
+    @State private var displayedEntries: [LibraryEntry] = []
+    /// Session restoration (the @SceneStorage gap): the workspace reopens where
+    /// it was left — destination, filter (incl. search text) persist across
+    /// relaunches via scene storage, synced from the @State below (didSet →
+    /// storage; onAppear ← storage).
+    @SceneStorage("library.filter") private var filterStorage: LibraryFilter?
+    @State private var filter = LibraryFilter() {
+        didSet { filterStorage = filter }
+    }
     @State private var importToast: String?
     @State private var showFilterPopover = false
     @State private var showKeyboardHelp = false
 
     /// Sidebar destination (B7). `List(selection:)` drives which entries the
     /// detail grid shows. Defaults to `.all` (the unified grid landing).
-    @State private var destination: SidebarDestination = .all
+    /// Persisted for session restoration (folders/collections restore by
+    /// path/uuid — unresolvable values fall back to `.all` on decode).
+    @SceneStorage("library.destination") private var destinationStorage: String?
+    @State private var destination: SidebarDestination = .all {
+        didSet { destinationStorage = destination.id }
+    }
     /// Pending folder for the remove-from-library confirmation dialog.
     /// `nil` ⇒ dialog hidden. Set by a folder row's remove control.
     @State private var pendingRemoval: URL?
@@ -123,6 +148,14 @@ struct LibraryView: View {
         // title/search toolbar row fight for width. 720 keeps sidebar-min +
         // one card column + the toolbar legible.
         .frame(minWidth: 720, minHeight: 480)
+        // Session restoration (the @SceneStorage gap): reopen where the user
+        // left — destination + filter (incl. search) from scene storage.
+        .onAppear { restoreSessionState() }
+        // Single cached arrange pass (sort gap + search-perf gap): re-runs on
+        // destination/filter/sort/seed change; task cancellation = debounce.
+        .task(id: arrangeKey) {
+            await recomputeDisplayedEntries()
+        }
         // Persist prefs (density, opened folders, etc.) on any change — spec §5.7
         // ("no extra plumbing": the onChange save is the persistence hook).
         .onChange(of: model.prefs) { _, _ in
@@ -561,8 +594,26 @@ struct LibraryView: View {
         content()
             .searchable(text: $filter.searchText, prompt: "Search genomes")
             .searchFocused($searchFocused)
-            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
                 handleDrop(providers); return true
+            }
+            // Drop feedback (the Finder-import gap): a highlight ring +
+            // caption while a drag hovers, so the destination's acceptance is
+            // visible BEFORE the drop (drag-and-drop.md).
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.accentColor, lineWidth: 2)
+                        .overlay(alignment: .bottom) {
+                            Text("Drop to add genomes or folders")
+                                .font(.callout)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(.bottom, 18)
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             // The selection bar insets the scroll content (it used to OVERLAY
             // the bottom row, hiding the cards being acted on); the transient
@@ -721,14 +772,35 @@ struct LibraryView: View {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         case .ready(let entries):
-            let filtered = applyFilter(filter, to: entries,
-                                       metadata: { model.metadataStore.metadata(for: $0) },
-                                       facet: { model.facets.facet(for: $0) })
-            if filtered.isEmpty {
+            // displayedEntries is computed by the single cached pass (see
+            // `arrangeKey`); the base count only feeds the empty-state branch.
+            if displayedEntries.isEmpty {
                 filteredEmptyState(hadEntries: !entries.isEmpty)
+            } else if groupByFolder && destination == .all {
+                // Group-by-folder (the sort gap): section headers above
+                // per-source grids. Cells still index the FLAT array
+                // (`in: displayedEntries`) so keyboard nav stays one space.
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(groupedBySource(displayedEntries), id: \.name) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(group.name) — \(group.entries.count)")
+                                .font(.headline).foregroundStyle(.secondary)
+                            LazyVGrid(columns: grid, spacing: 16) {
+                                ForEach(group.entries) { entry in
+                                    cell(entry, in: displayedEntries, proxy: proxy)
+                                }
+                            }
+                        }
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, w in
+                    gridWidth = w
+                }
             } else {
                 LazyVGrid(columns: grid, spacing: 16) {
-                    ForEach(filtered) { entry in cell(entry, in: filtered, proxy: proxy) }
+                    ForEach(displayedEntries) { entry in
+                        cell(entry, in: displayedEntries, proxy: proxy)
+                    }
                 }
                 // Column count for ↑/↓ focus movement (mirrors the adaptive
                 // grid's own slot math — see `gridColumnCount`).
@@ -737,6 +809,69 @@ struct LibraryView: View {
                 }
             }
         }
+    }
+
+    /// The single arrange pass's identity: any change re-runs it (SwiftUI
+    /// cancels the previous task — which is also the search debounce).
+    private var arrangeKey: String {
+        "\(destination.id)|\(filter)|\(sort.rawValue)|\(shuffleSeed)"
+    }
+
+    /// One filtered+sorted pass over the destination's entries, debounced
+    /// ~150 ms (rapid keystrokes collapse; the old path ran 3+ synchronous
+    /// passes per keystroke — grid, caption, ⌘A — hitching at library scale).
+    /// Rating-sort refreshes on the next arrange-key change (filter/search/
+    /// destination/re-shuffle), not live per click — documented v1 behavior.
+    private func recomputeDisplayedEntries() async {
+        try? await Task.sleep(for: .milliseconds(150))
+        guard case .ready(let entries) = currentLoadState else {
+            displayedEntries = []
+            return
+        }
+        let filtered = applyFilter(filter, to: entries,
+                                   metadata: { model.metadataStore.metadata(for: $0) },
+                                   facet: { model.facets.facet(for: $0) })
+        displayedEntries = arrange(filtered)
+    }
+
+    /// Apply the sort to a filtered array. `.name` keeps source order (already
+    /// name/path-sorted — rule #2); `.rating` is a stable liked→neutral→disliked;
+    /// `.random` is a SEEDED Fisher–Yates (deterministic for a given seed).
+    private func arrange(_ entries: [LibraryEntry]) -> [LibraryEntry] {
+        switch sort {
+        case .name:
+            return entries
+        case .rating:
+            return entries.sorted {
+                model.metadataStore.metadata(for: $0).sentiment
+                    > model.metadataStore.metadata(for: $1).sentiment
+            }
+        case .random:
+            var rng = ShuffleRNG(seed: shuffleSeed)
+            return entries.shuffled(using: &rng)
+        }
+    }
+
+    /// Deterministic per-source sections for group-by-folder (bundle, then
+    /// folders by path, then imported) — rule #2 (ordered array, no Set iter).
+    private func groupedBySource(_ entries: [LibraryEntry]) -> [(name: String, entries: [LibraryEntry])] {
+        var bundle: [LibraryEntry] = []
+        var byDir: [String: [LibraryEntry]] = [:]
+        var imported: [LibraryEntry] = []
+        for e in entries {
+            switch e.source {
+            case .bundle: bundle.append(e)
+            case .directory(let url): byDir[url.lastPathComponent, default: []].append(e)
+            case .imported: imported.append(e)
+            }
+        }
+        var out: [(String, [LibraryEntry])] = []
+        if !bundle.isEmpty { out.append(("Library", bundle)) }
+        for (name, list) in byDir.sorted(by: { $0.key < $1.key }) {
+            out.append((name, list))
+        }
+        if !imported.isEmpty { out.append(("Imported", imported)) }
+        return out.map { (name: $0.0, entries: $0.1) }
     }
 
     /// A collection's detail surface: the SAME `LazyVGrid` of `ThumbnailCell`
@@ -1234,10 +1369,7 @@ struct LibraryView: View {
     private func countSubtitle(for state: LoadState) -> String {
         guard case .ready(let entries) = state else { return "" }
         if filter.isEmpty { return "\(entries.count) items" }
-        let filtered = applyFilter(filter, to: entries,
-                                   metadata: { model.metadataStore.metadata(for: $0) },
-                                   facet: { model.facets.facet(for: $0) })
-        return "\(filtered.count)/\(entries.count) items"
+        return "\(displayedEntries.count)/\(entries.count) items"
     }
 
     // MARK: - Keyboard shortcuts (hidden buttons)
@@ -1373,9 +1505,48 @@ struct LibraryView: View {
                         .buttonStyle(.borderless)
                 }
             }
+
+            // Coverage disclosure (the facet-filter gap): category and hue
+            // match only genomes whose facet is already computed (thumbnails
+            // the user has scrolled past). On a freshly opened folder the
+            // controls would silently match nothing — say what they can see.
+            Divider()
+            Picker("Sort", selection: Binding(
+                get: { sort },
+                set: { newValue in
+                    if newValue == .random { shuffleSeed &+= 1 }   // re-pick re-rolls
+                    sort = newValue
+                })) {
+                ForEach(LibrarySort.allCases, id: \.rawValue) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .help("Name keeps the archive order. Rating surfaces your liked genomes. Random re-rolls every time you pick it — filename order carries no meaning for discovery.")
+            if destination == .all {
+                Toggle("Group by folder", isOn: $groupByFolder)
+                    .help("Section the unified grid by source — the bundled library, each opened folder, and imports.")
+
+            }
+
+            if let coverage = facetCoverage, coverage.partial {
+                Text("Category and palette filters cover \(coverage.scanned) of \(coverage.total) genomes scanned so far — browse the grid to improve coverage.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
         .frame(minWidth: 240)
+    }
+
+    /// How many of the current view's entries the facet-dependent filters
+    /// (category/hue) can actually match. Nil when not in a `.ready` state.
+    /// Pure count over the ordered entries array (rule #2).
+    private var facetCoverage: (scanned: Int, total: Int, partial: Bool)? {
+        guard case .ready(let entries) = currentLoadState else { return nil }
+        let scanned = entries.filter {
+            model.facets.facet(for: $0) != nil || $0.rank != nil
+        }.count
+        return (scanned, entries.count, scanned < entries.count)
     }
 
     // MARK: - Active-filter chips (A3)
@@ -1668,7 +1839,24 @@ struct LibraryView: View {
             var urls: [URL] = []
             for p in providers { if let u = await Self.loadDroppedURL(p) { urls.append(u) } }
             guard !urls.isEmpty else { return }
-            performImport(urls)
+            // Folder/file symmetry (the Finder-import gap): the file importer
+            // takes ONLY folders while the drop took ONLY loose .flam3 files —
+            // dragging the gen-248 archive folder in toasted "Nothing
+            // imported". Folders now become sidebar sources (same as Open
+            // Directory…); files keep the import path.
+            let folders = urls.filter { $0.hasDirectoryPath }
+            let files = urls.filter { !$0.hasDirectoryPath }
+            for folder in folders {
+                await model.openDirectory(folder)
+            }
+            if !folders.isEmpty && files.isEmpty {
+                importToast = folders.count == 1
+                    ? "Added “\(folders[0].lastPathComponent)” to the sidebar."
+                    : "Added \(folders.count) folders to the sidebar."
+            }
+            if !files.isEmpty {
+                performImport(files)
+            }
         }
     }
 
@@ -1698,13 +1886,8 @@ struct LibraryView: View {
 
     /// All entries currently displayed (post-filter) in the ACTIVE destination's
     /// grid — the target of Select All.
-    private var allFiltered: [LibraryEntry] {
-        let entries: [LibraryEntry]
-        if case .ready(let e) = currentLoadState { entries = e } else { entries = [] }
-        return applyFilter(filter, to: entries,
-                           metadata: { model.metadataStore.metadata(for: $0) },
-                           facet: { model.facets.facet(for: $0) })
-    }
+    /// ⌘A target — the cached displayed array (one pass, not a fresh filter).
+    private var allFiltered: [LibraryEntry] { displayedEntries }
 
     private var grid: [GridItem] {
         [GridItem(.adaptive(minimum: model.prefs.density.gridMinimum), spacing: 16)]
@@ -1739,6 +1922,29 @@ private enum SidebarDestination: Hashable, Identifiable {
 
     /// Always-present destinations (the sidebar "Library" section + ⌘1…⌘4).
     static let builtIn: [SidebarDestination] = [.all, .library, .liked, .imported]
+
+    /// Decode a persisted destination (`id`-shaped string — session
+    /// restoration). Unresolvable values (a malformed uuid/path) return nil
+    /// and the caller falls back to `.all`.
+    static func fromStorage(_ s: String) -> SidebarDestination? {
+        switch s {
+        case "all": return .all
+        case "library": return .library
+        case "liked": return .liked
+        case "imported": return .imported
+        case "flock": return .flock
+        default: break
+        }
+        if s.hasPrefix("folder:"),
+           !String(s.dropFirst("folder:".count)).isEmpty {
+            return .folder(URL(fileURLWithPath: String(s.dropFirst("folder:".count))))
+        }
+        if s.hasPrefix("collection:"),
+           let id = UUID(uuidString: String(s.dropFirst("collection:".count))) {
+            return .collection(id)
+        }
+        return nil
+    }
 
     var id: String {
         switch self {
@@ -1839,5 +2045,65 @@ private struct HoverGate<Content: View>: View {
 
     var body: some View {
         content(hovered).onHover { hovered = $0 }
+    }
+}
+
+
+/// Session restoration (the @SceneStorage gap): rehydrate destination +
+/// filter from scene storage. First launch has nil storage (defaults win).
+private extension LibraryView {
+    func restoreSessionState() {
+        if let stored = filterStorage { filter = stored }
+        if let stored = destinationStorage, let d = SidebarDestination.fromStorage(stored) {
+            destination = d
+        }
+        if let stored = sortStorage, let s = LibrarySort(rawValue: stored) {
+            sort = s
+        }
+    }
+}
+
+/// JSON-backed RawRepresentable so `LibraryFilter` rides @SceneStorage
+/// (retroactive: the type is EmberweftUI's, the conformance is GUI plumbing).
+extension LibraryFilter: RawRepresentable {
+    public var rawValue: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let s = String(data: data, encoding: .utf8) else { return "{}" }
+        return s
+    }
+
+    public init?(rawValue: String) {
+        guard let data = rawValue.data(using: .utf8),
+              let f = try? JSONDecoder().decode(LibraryFilter.self, from: data)
+        else { return nil }
+        self = f
+    }
+}
+
+
+/// Grid arrange order (the sort gap). `name` = the source's lexicographic
+/// order; `rating` = liked → neutral → disliked (stable); `random` = seeded
+/// Fisher–Yates (re-picking Random re-rolls the seed).
+private enum LibrarySort: String, CaseIterable {
+    case name, rating, random
+
+    var label: String {
+        switch self {
+        case .name: return "Name"
+        case .rating: return "Rating"
+        case .random: return "Random"
+        }
+    }
+}
+
+/// Tiny deterministic LCG for the seeded shuffle (UI ordering only — rule #2's
+/// computation-determinism scope is untouched; the seed makes a given shuffle
+/// reproducible).
+private struct ShuffleRNG: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed == 0 ? 1 : seed }
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
     }
 }

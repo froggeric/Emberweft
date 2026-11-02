@@ -2,7 +2,7 @@ import Foundation
 
 /// A pure, serializable filter over `[LibraryEntry]`. Semantics documented so the
 /// UI matches the tests exactly.
-public struct LibraryFilter: Sendable, Hashable {
+public struct LibraryFilter: Sendable, Hashable, Codable {
 
     /// Matches `LibraryEntry.displayName`, case-insensitive (substring).
     public var searchText: String = ""
