@@ -17,6 +17,11 @@ implications of porting flam3) is the owner's decision and under review.
 - Flock archive: portrait shard presets (720×1280 / 1080×1920 / 1080×1350 / 1080×1080) and a per-artifact framing gate that distinguishes rotated portrait material.
 - Catalog schema v4 (a version re-stamp; older builds are refused the archive instead of mis-reading portrait material) and a rebuild integrity check that skips video files sitting in the wrong resolution folder.
 - GUI: vertical/square tiers in the export sheet, Standard/Vertical shard sections, and letterboxed portrait thumbnails in Browse.
+- GUI: library grid cards are now real accessibility elements — VoiceOver can browse the grid, open a genome, change its rating, and select or deselect it without a pointer (activate opens; Select, Like, Neutral, Dislike, and Remove from Collection are named rotor actions).
+
+### Fixed
+- Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
+- GUI: the hidden selection tick on unselected cards no longer intercepts clicks in the top-right corner of a card or exposes a phantom "Select" element.
 
 ## [0.6.1] - 2026-08-18
 

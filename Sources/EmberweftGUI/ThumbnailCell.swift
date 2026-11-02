@@ -87,9 +87,19 @@ struct ThumbnailCell: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .opacity(selected ? 1 : (isHovered ? 0.9 : 0))
-        .accessibilityLabel(selected ? "Selected" : "Select")
+        .opacity(selected ? 1 : (tickVisible ? 0.9 : 0))
+        // Invisible controls must be inert: opacity alone removes the tick
+        // from neither the hit-test tree nor the accessibility tree, so the
+        // hidden button used to swallow top-right clicks and could surface a
+        // phantom "Select" element. Gate both on the visibility the opacity
+        // already uses.
+        .allowsHitTesting(tickVisible)
+        .accessibilityHidden(!tickVisible)
+        .accessibilityLabel(selected ? "Deselect" : "Select")
     }
+
+    /// Whether the tick is actually shown (selected or hovered).
+    private var tickVisible: Bool { selected || isHovered }
 
     @ViewBuilder
     private var content: some View {

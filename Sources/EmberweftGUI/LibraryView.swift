@@ -754,7 +754,30 @@ struct LibraryView: View {
             .overlay(AppKitContextMenu {
                 cellMenuInCollection(entry, collection: c, storedIndex: storedIndex)
             })
+            // Same combined actionable element as `cell` (C1), plus the
+            // collection-only remove action (the context menu's Remove,
+            // reachable without a pointer right-click).
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(cellAccessibilityLabel(entry))
+            .accessibilityAddTraits(model.isSelected(entry)
+                ? [.isButton, .isSelected] : .isButton)
+            .accessibilityHint("Opens playback")
+            .accessibilityAction { openWindow(value: PlaybackRoute(entry)) }
+            .accessibilityAction(named: Text(model.isSelected(entry) ? "Deselect" : "Select")) {
+                model.toggleInSelection(entry)
+            }
+            .accessibilityAction(named: Text("Like")) {
+                model.metadataStore.setSentiment(1, for: entry)
+            }
+            .accessibilityAction(named: Text("Neutral")) {
+                model.metadataStore.setSentiment(0, for: entry)
+            }
+            .accessibilityAction(named: Text("Dislike")) {
+                model.metadataStore.setSentiment(-1, for: entry)
+            }
+            .accessibilityAction(named: Text("Remove from Collection")) {
+                model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
+            }
     }
 
     /// NSMenu for a cell inside a collection grid (Play / sentiment / reorder /
@@ -1188,7 +1211,28 @@ struct LibraryView: View {
     private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
         cellCore(entry, in: filtered)
             .overlay(AppKitContextMenu { cellMenu(entry) })
+            // One combined, actionable accessibility element per card (C1):
+            // VoiceOver can browse the grid, activate to open, and reach every
+            // hover/context-menu capability (select, rating) as a named action,
+            // so nothing in the grid depends on a pointer hover.
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(cellAccessibilityLabel(entry))
+            .accessibilityAddTraits(model.isSelected(entry)
+                ? [.isButton, .isSelected] : .isButton)
+            .accessibilityHint("Opens playback")
+            .accessibilityAction { openWindow(value: PlaybackRoute(entry)) }
+            .accessibilityAction(named: Text(model.isSelected(entry) ? "Deselect" : "Select")) {
+                model.toggleInSelection(entry)
+            }
+            .accessibilityAction(named: Text("Like")) {
+                model.metadataStore.setSentiment(1, for: entry)
+            }
+            .accessibilityAction(named: Text("Neutral")) {
+                model.metadataStore.setSentiment(0, for: entry)
+            }
+            .accessibilityAction(named: Text("Dislike")) {
+                model.metadataStore.setSentiment(-1, for: entry)
+            }
     }
 
     /// NSMenu for a grid cell (Play / sentiment / add-to-collection). Snapshot
