@@ -145,7 +145,7 @@ struct SettingsView: View {
                             await model.flockModel.refreshBrowse()
                             shardSizes = await loadShardSizes()
                         } catch {
-                            rebuildError = String(describing: error)
+                            rebuildError = FlockModel.friendlyRebuildFailure(error)
                         }
                     }
                 }
@@ -199,7 +199,7 @@ struct SettingsView: View {
     /// line.
     @ViewBuilder private var flockSizeReadout: some View {
         if let err = rebuildError {
-            Text("Rebuild failed: \(err)")
+            Text(err)
                 .font(.caption).foregroundStyle(.red).lineLimit(2)
         } else {
             switch model.flockModel.browseState {
@@ -209,7 +209,7 @@ struct SettingsView: View {
                 Text("Archive empty — 0 shards · 0 artifacts.")
                     .font(.caption).foregroundStyle(.secondary)
             case .failed(let msg):
-                Text("Catalog error: \(msg)").font(.caption).foregroundStyle(.red).lineLimit(2)
+                Text(msg).font(.caption).foregroundStyle(.red).lineLimit(2)
             case .loaded(let snap):
                 VStack(alignment: .leading, spacing: 2) {
                     // Integer sum over an ordered array (rule #2).

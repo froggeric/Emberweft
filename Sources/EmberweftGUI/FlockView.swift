@@ -352,10 +352,17 @@ private struct GenerateTab: View {
 
     var body: some View {
         Form {
-            Section("Render shard") {
+            // "Render Format" (not "shard" — the storage-layer term appeared in
+            // a section title with no in-UI definition; the help line defines
+            // what the control actually picks).
+            Section("Render Format") {
                 ShardMenu(catalog: catalog, shard: $shard)
-                    .help("Resolution + frame rate + pace for the generated material.")
+                    .help("Resolution, frame rate, and pace for the generated material.")
+                    // Mid-run edits silently don't apply (the request captured
+                    // the shard at press time) — match the other controls.
+                    .disabled(running)
                 ShardPaceSteppers(shard: $shard)
+                    .disabled(running)
             }
             Section("Source genomes") {
                 HStack {
@@ -441,7 +448,7 @@ private struct GenerateTab: View {
         case .resolving:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+                Text("Checking the archive…").font(.caption).foregroundStyle(.secondary)
             }
         case .running(let skip, let render, let total, let eta):
             VStack(alignment: .leading, spacing: 4) {
@@ -470,7 +477,7 @@ private struct GenerateTab: View {
                 Text("Cancelling…").font(.caption).foregroundStyle(.secondary)
             }
         case .failed(let msg):
-            Text("Failed: \(msg)").font(.caption).foregroundStyle(.red)
+            Text(msg).font(.caption).foregroundStyle(.red)
         case .cancelled:
             Text("Cancelled. Completed units stay in the archive (re-run Generate to resume).")
                 .font(.caption).foregroundStyle(.secondary)
@@ -587,11 +594,14 @@ private struct StitchTab: View {
 
     var body: some View {
         Form {
-            Section("Render shard") {
+            // Same "Render Format" rename + mid-run lock as the Generate tab.
+            Section("Render Format") {
                 ShardMenu(catalog: catalog, shard: $shard)
+                    .disabled(running)
                 // The SAME shared steppers as the Generate tab (one source of
                 // truth for ranges/step + the non-canonical-name recompute).
                 ShardPaceSteppers(shard: $shard)
+                    .disabled(running)
             }
             Section("Timeline") {
                 Stepper("Loop repetitions: \(loopReps)", value: $loopReps, in: 1...5)
@@ -603,18 +613,42 @@ private struct StitchTab: View {
                 HStack {
                     FlockSourceMenu(label: "Choose Sequence…", catalog: catalog) { loaded in
                         sequence = loaded
-                        loadError = loaded.count < 2
-                            ? "Pick at least 2 genomes for a transition." : nil
+                        loadError = loaded.isEmpty
+                            ? "Pick at least 1 genome." : nil
                     }
                     Text("\(sequence.count) genome\(sequence.count == 1 ? "" : "s")  ·  \(segmentCount) segments  ·  \(timelineDuration)")
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
+                // The list IS the edit surface for order/membership (it used to
+                // be display-only — the only way to change order was re-picking
+                // the whole source). Caption says why it matters.
                 if !sequence.isEmpty {
-                    List(sequence) { f in
-                        Text("\(f.displayName)  —  \(f.flameID)").font(.callout)
+                    Text("Order determines the video — drag rows, or right-click to move or remove.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    List {
+                        ForEach(Array(sequence.enumerated()), id: \.element.id) { index, f in
+                            Text("\(f.displayName)  —  \(f.flameID)").font(.callout)
+                                .contextMenu {
+                                    Button("Move Up") { moveSequence(at: index, by: -1) }
+                                        .disabled(index == 0)
+                                    Button("Move Down") { moveSequence(at: index, by: 1) }
+                                        .disabled(index == sequence.count - 1)
+                                    Divider()
+                                    Button("Remove", role: .destructive) { sequence.remove(at: index) }
+                                }
+                        }
+                        .onMove { from, to in sequence.move(fromOffsets: from, toOffset: to) }
+                        .onDelete { offsets in sequence.remove(atOffsets: offsets) }
                     }
                     .frame(minHeight: 100, maxHeight: 200)
+                }
+                // count == 1 is VALID (a lone loop stitches fine) — an
+                // informational caption, not a red error next to an enabled
+                // button (the old "< 2" message contradicted the action).
+                if sequence.count == 1 {
+                    Text("1 genome stitches as a lone loop — add a second genome for a transition.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if let loadError { Text(loadError).font(.caption).foregroundStyle(.red) }
             }
@@ -634,7 +668,7 @@ private struct StitchTab: View {
             Section {
                 stitchPlan
                 HStack {
-                    Button("Stitch → Video…") { stitch() }
+                    Button("Stitch Video…") { stitch() }
                         .buttonStyle(.borderedProminent)
                         .disabled(sequence.count < 1 || !canRun)
                     // Visible ONLY while running (v0.5.9 fix: the old `if canRun`
@@ -662,6 +696,14 @@ private struct StitchTab: View {
             shard = await resolveInitialShard(pref: appModel.prefs.flockDefaultShard,
                                               catalog: catalog)
         }
+    }
+
+    /// Move a sequence row by ±1 (the context-menu fallback for pointer users
+    /// who don't drag). Bounds-checked; no-op at the edges.
+    private func moveSequence(at index: Int, by delta: Int) {
+        let to = index + delta
+        guard sequence.indices.contains(index), sequence.indices.contains(to) else { return }
+        sequence.move(fromOffsets: IndexSet(integer: index), toOffset: to > index ? to + 1 : to)
     }
 
     /// Timeline slot count (reps-aware): `N·r` loop slots (each flame's loop
@@ -710,7 +752,7 @@ private struct StitchTab: View {
         case .resolving:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Resolving…").font(.caption).foregroundStyle(.secondary)
+                Text("Checking the archive…").font(.caption).foregroundStyle(.secondary)
             }
         case .running(let hit, let generated, let total, let eta):
             // Bar denominator is STATE-driven (hit + miss from the plan), not the
@@ -762,7 +804,7 @@ private struct StitchTab: View {
                 }
             }
         case .failed(let msg):
-            Text("Failed: \(msg)").font(.caption).foregroundStyle(.red)
+            Text(msg).font(.caption).foregroundStyle(.red)
         case .cancelled:
             Text("Cancelled. Rendered segments stay in the archive (re-run Stitch to finish).")
                 .font(.caption).foregroundStyle(.secondary)
@@ -913,7 +955,7 @@ private struct BrowseTab: View {
         case .loading:
             Text("Loading…").font(.caption).foregroundStyle(.secondary)
         case .failed(let msg):
-            Text("Catalog: \(msg)").font(.caption).foregroundStyle(.red)
+            Text(msg).font(.caption).foregroundStyle(.red)
         }
     }
 
@@ -921,16 +963,16 @@ private struct BrowseTab: View {
     private var browseGrid: some View {
         if shards.isEmpty {
             ContentUnavailableView(
-                "No shards yet",
+                "Archive is empty",
                 systemImage: "bird",
-                description: Text("Generate material to populate the archive, or Rebuild from existing \(flockRoot.path) files.")
+                description: Text("Generate material to fill it, or rebuild from videos already in the archive folder.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if stats.count == 0 {
             ContentUnavailableView(
-                "No artifacts in \(selectedShardName ?? "shard")",
+                "No videos in this format",
                 systemImage: "shippingbox",
-                description: Text("This shard has no rendered material.")
+                description: Text("The format “\(selectedShardName ?? "")” has no rendered material yet.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -992,18 +1034,47 @@ private struct BrowseTab: View {
             VStack(spacing: 1) {
                 Text(row.kind == .loop ? "loop \(row.aId)" : "\(row.aId)→\(row.bId)")
                     .font(.caption2).lineLimit(1)
-                Text("\(row.spp) spp · \(humanBytes(row.bytes))")
-                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                // caption2 (10 pt, scales with text size) — the old fixed
+                // 9 pt system font sat below the macOS minimum and ignored
+                // larger-text settings. "samples/px" per the app-wide language
+                // pass (no bare "spp").
+                Text("\(row.spp) samples/px · \(humanBytes(row.bytes))")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
+        // Double-click previews the video (Quick Look) — a video archive you
+        // can't watch forced every "what does this look like?" question out to
+        // Finder. Preview + existing actions also surface as context items.
+        .onTapGesture(count: 2) { QuickLookPresenter.shared.present(flockRoot.appendingPathComponent(row.file)) }
         .overlay(AppKitContextMenu {
             let menu = NSMenu()
+            menu.addItem(NSMenuItem("Preview") {
+                QuickLookPresenter.shared.present(flockRoot.appendingPathComponent(row.file))
+            })
             menu.addItem(NSMenuItem("Show in Finder") { reveal(row) })
             menu.addItem(NSMenuItem("Move to Trash", destructive: true) {
                 pendingDelete = row
             })
             return menu
         })
+        // One combined element (a11y finding): the image + captions form one
+        // artifact; name it and expose the actions as named accessibility
+        // actions instead of an unlabeled image.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(a11yLabel(for: row))
+        .accessibilityHint("Double-click to preview")
+        .accessibilityAction(named: "Preview") {
+            QuickLookPresenter.shared.present(flockRoot.appendingPathComponent(row.file))
+        }
+        .accessibilityAction(named: "Show in Finder") { reveal(row) }
+        .accessibilityAction(named: "Move to Trash") { pendingDelete = row }
+    }
+
+    /// Spoken label for one artifact cell (kind + id + quality + size).
+    private func a11yLabel(for row: ArtifactRow) -> String {
+        let kind = row.kind == .loop ? "Loop" : "Transition"
+        let pair = row.kind == .loop ? row.aId : "\(row.aId) to \(row.bId)"
+        return "\(kind) \(pair), \(row.spp) samples per pixel, \(humanBytes(row.bytes))"
     }
 
     /// Refresh snapshot + shard list (catalog reads). Deterministic SQL order.
@@ -1042,7 +1113,9 @@ private struct BrowseTab: View {
                 error = nil
             }
         } catch {
-            await MainActor.run { self.error = String(describing: error) }
+            await MainActor.run {
+                self.error = FlockModel.friendlyFailure(error, action: "Loading the archive")
+            }
         }
     }
 
@@ -1054,7 +1127,7 @@ private struct BrowseTab: View {
                 try await FlockCatalog.rebuild(from: flockRoot)
                 await refresh()
             } catch {
-                await MainActor.run { self.error = "Rebuild failed: \(error)" }
+                await MainActor.run { self.error = FlockModel.friendlyRebuildFailure(error) }
             }
             await MainActor.run { rebuilding = false }
         }

@@ -26,6 +26,53 @@ import FlameFlock
 @Observable
 public final class FlockModel {
 
+    // MARK: - Plain-language failure copy (raw-error-dump finding)
+
+    /// User-facing message for a failed generate/stitch/browse (the failure
+    /// paths used to surface `String(describing:)` — type names like
+    /// "FlockCatalogError.execFailed(...)" as the entire UI message). Maps the
+    /// domains these flows actually throw to guidance with a next step; the
+    /// raw error belongs in the debug log, not the label. `action` names the
+    /// operation for the default lead ("Generate failed." / "Stitch failed." /
+    /// "Loading the archive failed.").
+    public static func friendlyFailure(_ error: Error, action: String) -> String {
+        switch error {
+        case FlockCatalogError.schemaVersionUnsupported(let version):
+            return "This archive was written by a newer version of Emberweft (catalog version \(version)). "
+                + "Rebuild the catalog to fix it: Settings → Flock Archive → Rebuild."
+        case FlockCatalogError.openFailed, FlockCatalogError.execFailed,
+             FlockCatalogError.prepareFailed, FlockCatalogError.stepFailed:
+            return "Couldn't read the archive database. Try Rebuild Catalog in Settings → Flock Archive; "
+                + "if the archive folder moved, update it there first."
+        default:
+            // Keep the specific cause (its localizedDescription — a plain
+            // message, not the `String(describing:)` type dump) ahead of the
+            // generic guidance: "Stitch failed: disk gone. Check the archive
+            // folder in Settings and try again."
+            let detail = error.localizedDescription
+            return detail.isEmpty
+                ? "\(action) failed. Check the archive folder in Settings and try again."
+                : "\(action) failed: \(detail). Check the archive folder in Settings and try again."
+        }
+    }
+
+    /// Rebuild-path sibling: the run/general guidance ("try Rebuild") would be
+    /// circular when the rebuild itself failed, so this variant stops at the
+    /// disk/folder checks.
+    public static func friendlyRebuildFailure(_ error: Error) -> String {
+        switch error {
+        case FlockCatalogError.schemaVersionUnsupported(let version):
+            return "This archive was written by a newer version of Emberweft (catalog version \(version)). "
+                + "Use a newer Emberweft or re-create the archive."
+        case FlockCatalogError.openFailed, FlockCatalogError.execFailed,
+             FlockCatalogError.prepareFailed, FlockCatalogError.stepFailed:
+            return "Couldn't rebuild the archive database. Check that the archive folder is on a "
+                + "connected disk and its video files are readable."
+        default:
+            return "Rebuild failed. Check the archive folder in Settings and try again."
+        }
+    }
+
     // MARK: - Observed state (spec §13.1)
 
     public private(set) var generateState: GenerateUIState = .idle
@@ -181,7 +228,7 @@ public final class FlockModel {
             } catch is CancellationError {
                 self.generateState = .cancelled
             } catch {
-                self.generateState = .failed(String(describing: error))
+                self.generateState = .failed(Self.friendlyFailure(error, action: "Generate"))
             }
             self.generateTask = nil
             self.generateCoord = nil
@@ -282,7 +329,7 @@ public final class FlockModel {
             } catch is CancellationError {
                 self.stitchState = .cancelled
             } catch {
-                self.stitchState = .failed(String(describing: error))
+                self.stitchState = .failed(Self.friendlyFailure(error, action: "Stitch"))
             }
             self.stitchTask = nil
             self.stitchCoord = nil
@@ -338,7 +385,7 @@ public final class FlockModel {
                 browseState = .loaded(snap)
             }
         } catch {
-            browseState = .failed(String(describing: error))
+            browseState = .failed(Self.friendlyFailure(error, action: "Loading the archive"))
         }
     }
 
