@@ -1188,7 +1188,7 @@ struct LibraryView: View {
             Image(systemName: "questionmark.circle")
         }
         .popover(isPresented: $showKeyboardHelp) {
-            KeyboardHelpView()
+            KeyboardHelpView(context: .library)
         }
         .accessibilityLabel("Keyboard shortcuts")
     }

@@ -22,7 +22,20 @@ struct PlaybackWindow: View {
                 .background(Color.black)
                 .contentShape(Rectangle())
                 .onTapGesture { vm.togglePlaying() }
-                .accessibilityAdjustableAction { _ in vm.togglePlaying() }
+                // The whole surface is one adjustable element (a11y medium):
+                // named + stateful (was an unnamed adjustable filling the
+                // window), and VO-up/down map to play/pause by direction
+                // instead of toggling blindly.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Preview")
+                .accessibilityValue(vm.isPlaying ? "Playing" : "Paused")
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment: if !vm.isPlaying { vm.togglePlaying() }
+                    case .decrement: if vm.isPlaying { vm.togglePlaying() }
+                    @unknown default: vm.togglePlaying()
+                    }
+                }
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -81,11 +94,14 @@ struct PlaybackWindow: View {
             get: { loadError != nil }, set: { if !$0 { loadError = nil } })) {
             Button("Close") { dismiss() }
         } message: { Text(loadError ?? "") }
-        .alert("Degenerate genome", isPresented: $degenerate) {
-            Button("Open anyway", role: .destructive) { Task { await forceStart() } }
-            Button("Cancel", role: .cancel) { dismiss() }
+        .alert("This genome would render blank", isPresented: $degenerate) {
+            Button("Open Anyway", role: .destructive) { Task { await forceStart() } }
+            Button("Close", role: .cancel) { dismiss() }
         } message: {
-            Text("\"\(entry.displayName)\" has a NaN/degenerate camera and will render solid black.")
+            // Plain language (H8): "NaN/degenerate camera" is renderer jargon —
+            // say what the user will see (a black image) and whose fault it is
+            // (the file's, ~1.4% of the wild ES archive is affected).
+            Text("The file for “\(entry.displayName)” has invalid camera values, so it would draw as a solid black image. The file itself is damaged — this isn’t a problem with Emberweft.")
         }
     }
 
@@ -134,7 +150,7 @@ struct PlaybackWindow: View {
         }
         .buttonStyle(.borderless)
         .popover(isPresented: $showKeyboardHelp) {
-            KeyboardHelpView(includesLibrary: false)
+            KeyboardHelpView(context: .playback)
         }
         .accessibilityLabel("Keyboard shortcuts")
     }

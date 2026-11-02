@@ -186,9 +186,9 @@ struct SelectionBar: View {
             }
         } message: {
             if exportItems.isEmpty {
-                Text("None of the \(exportSkipCount) selected genome\(exportSkipCount == 1 ? "" : "s") could be loaded for export (unparseable or degenerate).")
+                Text("None of the \(exportSkipCount) selected genome\(exportSkipCount == 1 ? "" : "s") could be opened for export — their files are unreadable or damaged.")
             } else {
-                Text("Skipped \(exportSkipCount) genome\(exportSkipCount == 1 ? "" : "s") that could not be loaded or rendered. \(exportItems.count) will be exported.")
+                Text("Skipped \(exportSkipCount) genome\(exportSkipCount == 1 ? "" : "s") whose files couldn't be opened or rendered. \(exportItems.count) will be exported.")
             }
         }
     }

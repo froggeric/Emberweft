@@ -31,6 +31,7 @@ struct CollectionPlaybackWindow: View {
     @State private var collectionDeleted = false
     @State private var collectionName = ""
     @State private var showPreviewQuality = false
+    @State private var showKeyboardHelp = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +48,19 @@ struct CollectionPlaybackWindow: View {
                     .background(Color.black)
                     .contentShape(Rectangle())
                     .onTapGesture { vm.togglePlaying() }
+                    // Mirror of the single-genome window's surface a11y
+                    // (a11y medium): this surface previously exposed NOTHING
+                    // actionable — no adjustable action, no label.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Preview")
+                    .accessibilityValue(vm.isPlaying ? "Playing" : "Paused")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: if !vm.isPlaying { vm.togglePlaying() }
+                        case .decrement: if vm.isPlaying { vm.togglePlaying() }
+                        @unknown default: vm.togglePlaying()
+                        }
+                    }
                 bar
             }
         }
@@ -138,6 +152,18 @@ struct CollectionPlaybackWindow: View {
 
             Text(collectionName).font(.headline).lineLimit(1)
             Spacer(minLength: 0)
+            // Same shortcuts affordance the single-genome window carries
+            // (this window has its own set — Space, R, Esc).
+            Button {
+                showKeyboardHelp.toggle()
+            } label: {
+                Image(systemName: "questionmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .popover(isPresented: $showKeyboardHelp) {
+                KeyboardHelpView(context: .sequence)
+            }
+            .accessibilityLabel("Keyboard shortcuts")
             Button("Close") { close() }
         }
         .padding(10)

@@ -27,6 +27,8 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: the library toolbar packs Filter and Help against the search field at the window's trailing edge (they floated mid-toolbar), the thumbnail progress readout no longer displaces the sidebar toggle while rendering, and "Open Directory…" is the first row of the sidebar's Folders section.
 - GUI: VoiceOver announces transient results — the import toast's outcome (including why files were skipped) and the selection count when the selection bar appears.
 - GUI: dropping a selection into a collection now animates cards into their new order instead of snapping.
+- GUI: both playback surfaces are labeled, stateful adjustable elements for VoiceOver (VO up/down start and pause playback); the collection playback window gains the ? shortcuts button the other windows have.
+- GUI: the shortcut sheet is one scoped table — it now shows the real rating keys (= and -, not + and −), documents the sequence window's R (restart), and groups mouse actions under a separate Pointer heading.
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
@@ -38,6 +40,7 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: dragging the scrub slider (or arrow-stepping) while playing now seeks live — the render loop is reseeded from the new position instead of silently overriding the drag every frame.
 - GUI: the thumbnail progress bar in the toolbar now completes and hides — it measured rendered thumbnails against every genome in the library, so it stalled part-full forever (below-fold cards don't render until scrolled). It now tracks the cards actually on screen and disappears once they're all filled in.
 - GUI: an empty collection now explains the two real ways to fill it (the selection bar's Save as Collection… / Add to, or a card's Add to Collection menu) instead of describing a drag that isn't possible on an empty grid.
+- GUI: "degenerate genome" jargon replaced with plain language — the playback alert now says the file is damaged and would draw as a solid black image (and that it isn't an Emberweft problem), the card tooltip and export-skip alerts say "unreadable or damaged" instead of "unparseable or degenerate".
 
 ## [0.6.1] - 2026-08-18
 

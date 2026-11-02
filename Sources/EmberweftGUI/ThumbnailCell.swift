@@ -130,7 +130,7 @@ struct ThumbnailCell: View {
                 Color.black
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.white.opacity(0.4))
-                    .help("Degenerate / unreadable genome")
+                    .help("Couldn't render this genome — its file is unreadable or damaged")
             }
         }
     }
