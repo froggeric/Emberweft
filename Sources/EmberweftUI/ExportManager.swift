@@ -76,6 +76,16 @@ public enum BackendChoice: String, Sendable, CaseIterable, Hashable {
     case auto
     case cpu
     case metal
+
+    /// Title-case picker label (the Flock picker used to `.uppercased()` the
+    /// raw value — the only all-caps controls in the app).
+    public var displayName: String {
+        switch self {
+        case .auto: "Auto"
+        case .cpu: "CPU"
+        case .metal: "Metal"
+        }
+    }
 }
 
 /// The testable export view-model (spec §4.4 / G2). `@MainActor @Observable`,

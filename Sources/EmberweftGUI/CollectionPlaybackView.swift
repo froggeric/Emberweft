@@ -34,7 +34,7 @@ struct CollectionPlaybackWindow: View {
     @State private var showKeyboardHelp = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let err = windowError {
                 ContentUnavailableView(
                     err.title,
@@ -43,25 +43,28 @@ struct CollectionPlaybackWindow: View {
                 )
                 .frame(minWidth: 480, minHeight: 320)
             } else {
-                FlameUIView(vm.sinkView)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-                    .contentShape(Rectangle())
-                    .onTapGesture { vm.togglePlaying() }
-                    // Mirror of the single-genome window's surface a11y
-                    // (a11y medium): this surface previously exposed NOTHING
-                    // actionable — no adjustable action, no label.
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Preview")
-                    .accessibilityValue(vm.isPlaying ? "Playing" : "Paused")
-                    .accessibilityAdjustableAction { direction in
-                        switch direction {
-                        case .increment: if !vm.isPlaying { vm.togglePlaying() }
-                        case .decrement: if vm.isPlaying { vm.togglePlaying() }
-                        @unknown default: vm.togglePlaying()
+                ImmersivePlaybackChrome {
+                    FlameUIView(vm.sinkView)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
+                        .contentShape(Rectangle())
+                        .onTapGesture { vm.togglePlaying() }
+                        // Mirror of the single-genome window's surface a11y
+                        // (a11y medium): this surface previously exposed NOTHING
+                        // actionable — no adjustable action, no label.
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Preview")
+                        .accessibilityValue(vm.isPlaying ? "Playing" : "Paused")
+                        .accessibilityAdjustableAction { direction in
+                            switch direction {
+                            case .increment: if !vm.isPlaying { vm.togglePlaying() }
+                            case .decrement: if vm.isPlaying { vm.togglePlaying() }
+                            @unknown default: vm.togglePlaying()
+                            }
                         }
-                    }
-                bar
+                } bar: {
+                    bar
+                }
             }
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -78,9 +81,10 @@ struct CollectionPlaybackWindow: View {
         }
         .task(id: collectionId) { await load() }
         .onChange(of: previewKey) {
-            // Rebuild the dispatcher with the new params; resume if was playing
-            // (the dispatcher captures params + paces to targetFPS at build time).
-            vm.updateParams(prefs: model.prefs)
+            // Rebuild the dispatcher with the new params and resume IN PLACE
+            // (the dispatcher captures params + paces to targetFPS at build
+            // time; the rebuilt one seeks back to the current frame).
+            Task { await vm.updateParams(prefs: model.prefs) }
         }
         .onChange(of: model.exportManager.state) { _, newState in
             // Pause the realtime preview when an export starts (frees the GPU for
@@ -89,15 +93,14 @@ struct CollectionPlaybackWindow: View {
             if newState == .running { vm.pause() }
         }
         .onDisappear { vm.beginStop() }
-        // Keyboard: Space toggles play/pause, R restarts, Esc closes.
+        // Keyboard: Space toggles play/pause, R restarts. Esc no longer closes
+        // the window (nonstandard mapping — ⌘W / traffic light close it).
         .background {
             Group {
                 Button("Play/Pause") { vm.togglePlaying() }
                     .keyboardShortcut(" ", modifiers: [])
                 Button("Restart") { vm.restart() }
                     .keyboardShortcut("r", modifiers: [])
-                Button("Close") { close() }
-                    .keyboardShortcut(.escape, modifiers: [])
             }
             .hidden()
         }
@@ -150,10 +153,13 @@ struct CollectionPlaybackWindow: View {
 
             Divider().frame(height: 22)
 
+            // Truncates first (transport-overflow finding); the duplicate
+            // "Close" text button is gone (traffic light / ⌘W close).
             Text(collectionName).font(.headline).lineLimit(1)
+                .layoutPriority(-1)
             Spacer(minLength: 0)
             // Same shortcuts affordance the single-genome window carries
-            // (this window has its own set — Space, R, Esc).
+            // (this window has its own set — Space, R).
             Button {
                 showKeyboardHelp.toggle()
             } label: {
@@ -164,7 +170,6 @@ struct CollectionPlaybackWindow: View {
                 KeyboardHelpView(context: .sequence)
             }
             .accessibilityLabel("Keyboard shortcuts")
-            Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)

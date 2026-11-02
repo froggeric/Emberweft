@@ -26,15 +26,21 @@ struct FlockView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
-                Picker("Backend", selection: $flock.backendChoice) {
-                    ForEach(BackendChoice.allCases, id: \.self) { b in
-                        Text(b.rawValue.uppercased()).tag(b)
+                // Scoped to the panes that render (Generate/Stitch) — Browse
+                // never renders, so the picker was an unused control there.
+                // Title-case labels (AUTO/CPU/METAL were the only all-caps
+                // controls in the app) and intrinsic width (the fixed 150 pt
+                // clipped at larger text sizes).
+                if tab != .browse {
+                    Picker("Backend", selection: $flock.backendChoice) {
+                        ForEach(BackendChoice.allCases, id: \.self) { b in
+                            Text(b.displayName).tag(b)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .padding(.trailing, 8)
+                    .help("Render backend. Auto falls back to CPU if Metal is unavailable.")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 150)
-                .padding(.trailing, 8)
-                .help("Render backend. Auto falls back to CPU if Metal is unavailable.")
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
 
@@ -50,7 +56,7 @@ struct FlockView: View {
                 StitchTab()
                     .tabItem { Label("Stitch", systemImage: "film") }
                     .tag(FlockTab.stitch)
-                BrowseTab()
+                BrowseTab(switchToGenerate: { tab = .generate })
                     .tabItem { Label("Browse", systemImage: "square.grid.2x2") }
                     .tag(FlockTab.browse)
             }
@@ -862,6 +868,10 @@ private struct StitchTab: View {
 // MARK: - Browse tab
 
 private struct BrowseTab: View {
+    /// Routes the empty state's "Generate Material" CTA to the Generate tab
+    /// (the tab selection lives in the parent FlockView).
+    var switchToGenerate: () -> Void
+
     @Environment(AppModel.self) private var appModel
     @Environment(FlockModel.self) private var flockModel
 
@@ -964,11 +974,18 @@ private struct BrowseTab: View {
     @ViewBuilder
     private var browseGrid: some View {
         if shards.isEmpty {
-            ContentUnavailableView(
-                "Archive is empty",
-                systemImage: "bird",
-                description: Text("Generate material to fill it, or rebuild from videos already in the archive folder.")
-            )
+            // Actions, not just instructions (an empty state that names two
+            // things to do but offers no button to do either is a dead end);
+            // the archive path lives in the tooltip, not the sentence.
+            ContentUnavailableView {
+                Label("Archive is empty", systemImage: "bird")
+            } description: {
+                Text("Generate material to fill it, or rebuild the catalog from videos already in the archive folder.")
+            } actions: {
+                Button("Generate Material") { switchToGenerate() }
+                Button("Rebuild Catalog") { rebuild() }
+                    .help("Re-scan \(flockRoot.path) and rebuild flock.sqlite.")
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if stats.count == 0 {
             ContentUnavailableView(
@@ -986,14 +1003,18 @@ private struct BrowseTab: View {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.adaptive(minimum: 180), spacing: 12),
-                                              count: 4),
-                              spacing: 12) {
+                    // One card anatomy per window (dual-grid finding): the
+                    // Library grid's metrics — radius 8, spacing 16, padding
+                    // 20, plain adaptive columns (the old `Array(repeating:count: 4)`
+                    // froze 4 columns, so the adaptive minimum was inert and
+                    // the grid never densified at wide windows).
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 16)],
+                              spacing: 16) {
                         ForEach(rows, id: \.file) { row in
                             artifactCell(row)
                         }
                     }
-                    .padding(14)
+                    .padding(20)
                 }
             }
             HStack {
@@ -1009,7 +1030,7 @@ private struct BrowseTab: View {
                 Text(humanBytes(stats.bytes))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            .padding(.horizontal, 20).padding(.vertical, 8)
         }
     }
 
@@ -1023,10 +1044,12 @@ private struct BrowseTab: View {
     private func artifactCell(_ row: ArtifactRow) -> some View {
         VStack(spacing: 4) {
             ZStack {
-                RoundedRectangle(cornerRadius: 6).fill(.quaternary)
+                // radius 8 — the Library card radius (was 6, one of the two
+                // card systems in one window).
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
                 if let img = thumbs[row.file] {
                     Image(nsImage: img).resizable().scaledToFit()
-                        .frame(height: 100).clipped().cornerRadius(6)
+                        .frame(height: 100).clipped().cornerRadius(8)
                 } else {
                     Image(systemName: row.kind == .loop ? "arrow.triangle.2.circlepath" : "arrow.right.square")
                         .imageScale(.large).foregroundStyle(.secondary)

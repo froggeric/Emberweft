@@ -16,7 +16,7 @@ struct PlaybackWindow: View {
     @State private var showPreviewQuality = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        ImmersivePlaybackChrome {
             FlameUIView(vm.sinkView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
@@ -36,6 +36,7 @@ struct PlaybackWindow: View {
                     @unknown default: vm.togglePlaying()
                     }
                 }
+        } bar: {
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -67,16 +68,16 @@ struct PlaybackWindow: View {
             if newState == .running { vm.pause() }
         }
         .onDisappear { vm.beginStop() }
-        // Keyboard: Space toggles play/pause, Esc closes.
+        // Keyboard: Space toggles play/pause. Esc no longer closes the window
+        // (a cancel-habit keypress losing the whole window; ⌘W and the traffic
+        // light close it, as everywhere else on macOS).
         .background {
-            // Hidden buttons carry the keyboard shortcuts: Space/Esc + set-semantics
-            // sentiment (+ = like, - = dislike, 0 = neutral) for the playing genome,
-            // and ←/→ to scrub one frame.
+            // Hidden buttons carry the keyboard shortcuts: Space +
+            // set-semantics sentiment (+ = like, - = dislike, 0 = neutral) for
+            // the playing genome, and ←/→ to scrub one frame.
             Group {
                 Button("Play/Pause") { vm.togglePlaying() }
                     .keyboardShortcut(" ", modifiers: [])
-                Button("Close") { close() }
-                    .keyboardShortcut(.escape, modifiers: [])
                 Button("Like") { model.metadataStore.setSentiment(1, for: entry) }
                     .keyboardShortcut("=", modifiers: [])
                 Button("Dislike") { model.metadataStore.setSentiment(-1, for: entry) }
@@ -132,11 +133,15 @@ struct PlaybackWindow: View {
 
             Divider().frame(height: 22)
 
+            // Truncates FIRST (layoutPriority −1): the name is context, while
+            // play + slider + FPS are the never-collapsing core the transport
+            // overflow finding protects. The duplicate text "Close" button is
+            // gone — the traffic light and ⌘W already close the window.
             Text(entry.displayName).font(.headline).lineLimit(1)
+                .layoutPriority(-1)
             SentimentBar(entry: entry).frame(width: 160)
             Divider().frame(height: 22)
             keyboardHelpButton
-            Button("Close") { close() }
         }
         .padding(10)
         .background(.bar)

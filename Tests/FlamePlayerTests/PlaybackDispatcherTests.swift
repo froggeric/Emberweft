@@ -251,4 +251,60 @@ final class PlaybackDispatcherTests: XCTestCase {
         async let proof: Void = d.run(frameCount: 2)
         _ = await proof
     }
+
+    // MARK: - seek (position preservation across a dispatcher rebuild)
+
+    /// The sequence window's quality popover REBUILDS the dispatcher (params
+    /// are captured at build time) — `seek(to:)` is what lets the rebuild
+    /// continue at the same playlist position instead of restarting at
+    /// genome 0. Pins: a sought dispatcher's FIRST rendered frame is the
+    /// sought frame, mapping to the SAME segment/kind/blend the original
+    /// timeline had there.
+    func testSeekMakesNextRenderedFrameContinueAtTheSoughtFrame() async {
+        // Reference run: frames 0…5.
+        let (a, _, _, sinkA, _) = makeDispatcher(N: 4, librarySize: 3)
+        await a.run(frameCount: 6)
+        let ref = await sinkA.infos
+        XCTAssertEqual(ref.map(\.globalFrame), Array(0...5))
+
+        // Rebuilt dispatcher seeks to 5 → renders frame 5 next.
+        let (b, _, _, sinkB, _) = makeDispatcher(N: 4, librarySize: 3)
+        await b.seek(to: 5)
+        await b.run(frameCount: 1)
+        let got = await sinkB.infos
+        XCTAssertEqual(got.count, 1)
+        XCTAssertEqual(got[0].globalFrame, 5)
+        XCTAssertEqual(got[0].segmentId, ref[5].segmentId)
+        XCTAssertEqual(got[0].kind, ref[5].kind)
+        XCTAssertEqual(got[0].blend, ref[5].blend, accuracy: 1e-12)
+    }
+
+    /// The origin is BACK-DATED by the seek, so the run paces at +1 frame
+    /// interval — without it, frame N's deadline would be `now + N/fps` and
+    /// the rebuilt dispatcher would sit silent for the whole skipped span.
+    func testSeekBackDatesOriginSoPacingContinuesImmediately() async {
+        final class DeadlineClock: PlaybackClock, @unchecked Sendable {
+            private let t = OSAllocatedUnfairLock(initialState: 100.0)
+            private let d = OSAllocatedUnfairLock(initialState: [Double]())
+            func now() -> Double { t.withLock { $0 } }
+            var deadlines: [Double] { d.withLock { $0 } }
+            func sleep(until deadline: Double) async {
+                d.withLock { $0.append(deadline) }
+                t.withLock { if deadline > $0 { $0 = deadline } }
+            }
+        }
+        let clock = DeadlineClock()
+        let sched = Schedule(librarySize: 3, framesPerSegment: 4,
+                             selector: Sequential(seed: 7), seed: 7)
+        let params = RenderParams(seed: 1, width: 1, height: 1, oversample: 1, samplesPerPixel: 1)
+        let d = PlaybackDispatcher(
+            schedule: sched, sheepProvider: FakeSheepProvider(librarySize: 3),
+            renderer: CapturingRenderer(), sink: CapturingSink(),
+            clock: clock, params: params, targetFPS: 30)
+        await d.seek(to: 5)
+        await d.run(frameCount: 1)
+        // Deadline for the post-step frame (6) = (now − 5/30) + 6/30 = now + 1/30.
+        XCTAssertEqual(clock.deadlines.count, 1)
+        XCTAssertEqual(clock.deadlines[0], 100.0 + 1.0 / 30.0, accuracy: 1e-9)
+    }
 }

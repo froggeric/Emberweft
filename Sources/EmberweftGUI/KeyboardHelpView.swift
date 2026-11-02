@@ -113,12 +113,14 @@ struct KeyboardHelpView: View {
         .init(key: "=", action: "Like", scope: .playback),
         .init(key: "0", action: "Neutral", scope: .playback),
         .init(key: "-", action: "Dislike", scope: .playback),
-        .init(key: "Esc", action: "Close window", scope: .playback),
+        .init(key: "⌘W", action: "Close window", scope: .playback),
+        .init(key: "⇧⌘H", action: "Hide or show controls", scope: .playback),
 
         // Collection sequence window.
         .init(key: "Space", action: "Play / pause", scope: .sequence),
         .init(key: "R", action: "Restart from the first genome", scope: .sequence),
-        .init(key: "Esc", action: "Close window", scope: .sequence),
+        .init(key: "⌘W", action: "Close window", scope: .sequence),
+        .init(key: "⇧⌘H", action: "Hide or show controls", scope: .sequence),
 
         // Pointer actions (library grid).
         .init(key: "Click", action: "Select a card", scope: .pointerLibrary),

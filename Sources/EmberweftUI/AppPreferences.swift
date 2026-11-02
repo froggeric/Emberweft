@@ -345,6 +345,15 @@ public struct AppPreferences: Codable, Sendable, Equatable {
 
     public enum Backend: String, Codable, CaseIterable, Sendable {
         case cpu, metal
+
+        /// Title-case picker label (pickers used to `.uppercased()` the raw
+        /// value — the only all-caps controls in the app).
+        public var displayName: String {
+            switch self {
+            case .cpu: "CPU"
+            case .metal: "Metal"
+            }
+        }
     }
 
     /// Realtime-preview quality preset (M4 final). `.custom` defers to the

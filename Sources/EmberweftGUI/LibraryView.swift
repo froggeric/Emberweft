@@ -12,6 +12,7 @@ import EmberweftUI
 /// selection model, the drop handler, and the `?`/`⌘?` keyboard help.
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openWindow) private var openWindow
     @State private var openImporter = false
     @State private var filter = LibraryFilter()
@@ -111,6 +112,11 @@ struct LibraryView: View {
                     }
                 }
         }
+        // The main window had no floor (the playback windows do): it could be
+        // dragged to a sliver where the 190 pt sidebar, the card grid, and the
+        // title/search toolbar row fight for width. 720 keeps sidebar-min +
+        // one card column + the toolbar legible.
+        .frame(minWidth: 720, minHeight: 480)
         // Persist prefs (density, opened folders, etc.) on any change — spec §5.7
         // ("no extra plumbing": the onChange save is the persistence hook).
         .onChange(of: model.prefs) { _, _ in
@@ -440,7 +446,7 @@ struct LibraryView: View {
             Label {
                 Text("Flock")
             } icon: {
-                Image(systemName: "bird.fill")
+                Image(systemName: "bird")
             }
             Spacer(minLength: 0)
             if let activity = model.flockModel.flockActivity {
@@ -559,7 +565,7 @@ struct LibraryView: View {
                 if !model.selection.isEmpty {
                     SelectionBar(activeCollection: activeCollection)
                         .padding(.bottom, 10)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .overlay(alignment: .bottom) {
@@ -579,9 +585,9 @@ struct LibraryView: View {
                 ExportProgressSurface()
                     .padding(.top, 10)
             }
-            .animation(.snappy, value: model.selection.isEmpty)
-            .animation(.snappy, value: filter)
-            .animation(.snappy, value: destination)
+            .animation(reduceMotion ? nil : .snappy, value: model.selection.isEmpty)
+            .animation(reduceMotion ? nil : .snappy, value: filter)
+            .animation(reduceMotion ? nil : .snappy, value: destination)
             // Keyboard focus follows the visible grid: a destination or filter
             // change can remove the focused entry, so drop stale focus instead
             // of leaving it pointed at a cell that no longer exists.
@@ -825,8 +831,8 @@ struct LibraryView: View {
                 }
                 // Post-drop re-layout slides cards into place (was instant);
                 // the drop-target pulse keeps its own faster animation.
-                .animation(.snappy, value: c.entries)
-                .animation(.snappy(duration: 0.15), value: dropTargetStoredIndex)
+                .animation(reduceMotion ? nil : .snappy, value: c.entries)
+                .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: dropTargetStoredIndex)
             }
         }
     }
@@ -1278,14 +1284,14 @@ struct LibraryView: View {
             HStack(spacing: 6) {
                 ForEach(facets) { facet in
                     chipButton(for: facet)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
                 }
                 Spacer(minLength: 8)
                 Button("Clear All") { filter = LibraryFilter() }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
             }
-            .animation(.snappy, value: facets)
+            .animation(reduceMotion ? nil : .snappy, value: facets)
         }
     }
 
@@ -1643,9 +1649,13 @@ private enum SidebarDestination: Hashable, Identifiable {
         switch self {
         case .all:      return "square.grid.2x2"
         case .library:  return "books.vertical"
-        case .liked:    return "star"
+        // Thumbs-up, not star: liking is thumbs-up everywhere else in the app
+        // (SentimentBar, chips, menus) — one vocabulary, one glyph.
+        case .liked:    return "hand.thumbsup"
         case .imported: return "tray.and.arrow.down"
-        case .flock:    return "bird.fill"
+        // Outline like every other sidebar row — bird.fill was the only filled
+        // symbol in the sidebar (read as a selected/accent state).
+        case .flock:    return "bird"
         case .folder:   return "folder"
         case .collection: return "list.bullet.rectangle"
         }

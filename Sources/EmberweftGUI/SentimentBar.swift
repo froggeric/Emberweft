@@ -8,6 +8,7 @@ import FlameKit
 /// on cards and (compact) in the playback transport.
 struct SentimentBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let entry: LibraryEntry
 
     private var sentiment: Int { model.metadataStore.metadata(for: entry).sentiment }
@@ -28,7 +29,7 @@ struct SentimentBar: View {
 
     private func segment(_ value: Int, _ icon: String, _ tint: Color, _ label: String) -> some View {
         let active = sentiment == value
-        return Button {
+        let button = Button {
             model.metadataStore.setSentiment(value, for: entry)
         } label: {
             Image(systemName: active ? "\(icon).fill" : icon)
@@ -39,11 +40,19 @@ struct SentimentBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .symbolEffect(.bounce, value: active)
         .accessibilityLabel(label)
         // State must be conveyed, not just identity (a11y medium): VoiceOver
         // announces which rating is active.
         .accessibilityAddTraits(active ? .isSelected : [])
+        // Bounce is decorative — drop it entirely under Reduce Motion rather
+        // than substituting a lesser animation.
+        return Group {
+            if reduceMotion {
+                button
+            } else {
+                button.symbolEffect(.bounce, value: active)
+            }
+        }
     }
 }
 

@@ -8,6 +8,7 @@ import FlameKit
 /// display + the in-cell controls (sentiment bar, selection tick).
 struct ThumbnailCell: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let entry: LibraryEntry
     let selected: Bool
     /// Thumbnail frame. `.grid` (default) is the 16:9 card used by the library
@@ -89,8 +90,8 @@ struct ThumbnailCell: View {
             }
         }
         .onHover { isHovered = $0 }
-        .animation(.snappy(duration: 0.12), value: isHovered)
-        .animation(.snappy(duration: 0.12), value: isFocused)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: isHovered)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: isFocused)
         .task(id: entry.id, priority: .utility) { await load() }
     }
 

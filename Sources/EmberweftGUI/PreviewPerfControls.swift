@@ -276,6 +276,9 @@ struct PreviewPerfCluster: View {
             FPSReadout(measuredFPS: measuredFPS,
                        targetFPS: targetFPS,
                        isPlaying: isPlaying)
+                // The band semantics lived only inside the popover's footer —
+                // a first-time amber readout had no on-the-spot explanation.
+                .help("Framerate vs the \(Int(targetFPS)) fps target — green: at target; amber: playable but juddery; red: can't keep up")
             trigger
         }
     }
@@ -283,14 +286,17 @@ struct PreviewPerfCluster: View {
     private var trigger: some View {
         Button { showPopover.toggle() } label: {
             ZStack(alignment: .topTrailing) {
+                // Custom tints the GLYPH (22 pt, a shape+color cue readable
+                // with color-vision deficiency) — the old 6 pt yellow dot was
+                // a color-only cue near the acuity floor, one hue off the FPS
+                // amber in the same cluster.
                 Image(systemName: "slider.horizontal.3")
-                if prefs.previewPreset == .custom {
-                    Circle().fill(.yellow).frame(width: 6, height: 6).offset(x: 6, y: -4)
-                }
+                    .foregroundStyle(prefs.previewPreset == .custom ? Color.yellow : Color.primary)
             }
             .frame(width: 22, height: 22)
         }
         .buttonStyle(.borderless)
+        .help("Preview quality: \(prefs.previewPreset.label)")
         .popover(isPresented: $showPopover) {
             PreviewQualityPopover(prefs: $prefs)
         }

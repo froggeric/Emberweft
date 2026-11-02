@@ -194,6 +194,19 @@ public actor PlaybackDispatcher {
         }
     }
 
+    /// Seek the timeline to `frame` WITHOUT rendering — position preservation
+    /// across a dispatcher REBUILD (the sequence window's preview-quality
+    /// popover rebuilds the dispatcher on every param change; without this the
+    /// playlist restarts at genome 0). Back-dates the wall-clock origin so the
+    /// next `run(...)` paces at +1 frame interval instead of sleeping out the
+    /// skipped span. Deterministic: `frameToBlend` maps the sought frame to
+    /// the same segment/blend the old timeline had.
+    public func seek(to frame: Int) {
+        precondition(frame >= 0, "frame must be >= 0")
+        globalFrame = frame
+        startTime = frame > 0 ? clock.now() - Double(frame) / targetFPS : nil
+    }
+
     /// Teardown: cancel + settle any in-flight prefetch. Idempotent.
     ///
     /// `FlameUI` calls this in its teardown (Swift 6 disallows async work in

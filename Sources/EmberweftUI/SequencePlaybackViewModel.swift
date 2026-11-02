@@ -174,23 +174,28 @@ public final class SequencePlaybackViewModel {
 
     /// Apply new preview params (preset/quality/target-FPS/backend change from the
     /// preview-quality popover). The dispatcher captures params at build time and
-    /// paces to `targetFPS`, so a live swap isn't supported — this rebuilds it with
-    /// the new params and RESUMES if the user was playing (position resets to the
-    /// first genome; the FPS readout then reflects the new quality). If paused,
-    /// the rebuild is staged and applies on the next `play()`.
-    public func updateParams(prefs: AppPreferences) {
+    /// paces to `targetFPS`, so a live swap isn't supported — this rebuilds it
+    /// with the new params and RESUMES IN PLACE (the same contract as the
+    /// single-genome window): the current global frame is captured before
+    /// teardown and the rebuilt dispatcher `seek`s back to it, so a display
+    /// setting no longer yanks the playlist back to genome 1. If paused, the
+    /// rebuild is staged (at the same position) and applies on `play()`.
+    public func updateParams(prefs: AppPreferences) async {
         let wasPlaying = isPlaying
+        let resumeFrame = currentGlobalFrame
         self.params = prefs.previewParams()
         self.renderer = Self.makeRenderer(backend: prefs.backend)
         self.targetFPS = Double(prefs.targetFPS)
         runTask?.cancel(); runTask = nil
         dispatcher = nil
         isPlaying = false
-        position = 0
         fpsMeter.reset()
         measuredFPS = 0
         guard !flames.isEmpty else { return }
         buildDispatcher()
+        if let d = dispatcher, resumeFrame > 0 {
+            await d.seek(to: resumeFrame)
+        }
         if wasPlaying { play() }
     }
 
@@ -220,12 +225,17 @@ public final class SequencePlaybackViewModel {
     /// sheep index for the transport readout. `info.blend ∈ (0, 1]`.
     fileprivate func consumeFrame(_ info: FrameInfo) {
         position = info.blend
+        currentGlobalFrame = info.globalFrame
         // Loop segment ids are even; the sheep for loop segment `s` is `s/2`.
         if info.kind == .loop { currentSheep = info.segmentId / 2 % max(sheepCount, 1) }
         if let measured = fpsMeter.record(now: fpsClock.now()) {
             measuredFPS = measured
         }
     }
+
+    /// Last-displayed global timeline frame (the resume point `updateParams`
+    /// preserves across a dispatcher rebuild).
+    private var currentGlobalFrame: Int = 0
 
     // MARK: - Run loop
 
