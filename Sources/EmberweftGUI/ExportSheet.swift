@@ -60,14 +60,20 @@ struct ExportSheet: View {
         @Bindable var model = model    // two-way bindings to model.exportManager
         @Bindable var em = model.exportManager   // $em.codec etc. (reference type)
         return VStack(spacing: 0) {
+            // Title names the task (the sheet used to open straight into
+            // "Source / Video / Motion" headers — the word Export appeared only
+            // on the button). Matches the NSSavePanel's own "Export Video".
+            Text("Export Video")
+                .font(.title3.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.top, 16)
             Form {
                 Section("Source") {
-                    LabeledContent("Source") {
-                        Text(sourceSummary)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+                    // No LabeledContent("Source") — the section header already
+                    // says it; the row label repeated it twice back to back.
+                    Text(sourceSummary)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Section("Video") {
@@ -117,12 +123,6 @@ struct ExportSheet: View {
                           : "Output container.")
                     Stepper("FPS \(em.fps)", value: $em.fps, in: 1...120)
                         .help("Output framerate (also drives frames-per-segment with loop duration).")
-                    Picker("Backend", selection: $em.backendChoice) {
-                        ForEach(BackendChoice.allCases, id: \.self) {
-                            Text($0.sheetLabel).tag($0)
-                        }
-                    }
-                    .help("Auto uses Metal when available and falls back to CPU. The image is identical either way; CPU is slower.")
                     Picker("Framing", selection: $em.framingChoice) {
                         Text("Same at Every Size").tag(ExportSettings.FramingMode.normalized)
                         Text("As Authored").tag(ExportSettings.FramingMode.faithful)
@@ -137,8 +137,6 @@ struct ExportSheet: View {
                     Stepper("Transition duration \(String(format: "%.1f", em.transitionDurationSeconds)) s",
                             value: $em.transitionDurationSeconds, in: 0.1...120, step: 0.5)
                         .help("Transition length in seconds. Shorter than loop keeps transitions brief. Transition frames = round(duration × FPS).")
-                    Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
-                        .help(temporalHelp)
                     Toggle("Smooth Motion", isOn: temporalSmoothingBinding)
                         .disabled(em.qualityChoice == .genomeDefault)
                         .help(smoothingHelp)
@@ -147,20 +145,55 @@ struct ExportSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Stepper("Seed \(seed)", value: $seed, in: 0...1_000_000_000)
-                        .help("Deterministic render seed. Same seed + genome + params = identical output.")
-                    Stepper("Pause safety every \(em.checkpointIntervalFrames) frames",
-                            value: $em.checkpointIntervalFrames, in: 5...300)
-                        .help("How often completed work is checkpointed for pause/resume. Smaller = less re-render on resume, at the cost of more encoder sessions.")
+                }
+
+                // Progressive disclosure: the decisions above (resolution,
+                // quality, codec, durations) shape the DELIVERABLE; these four
+                // shape how it is computed. Collapsed by default so the sheet
+                // opens on the choices a creative actually makes.
+                Section {
+                    DisclosureGroup("Advanced") {
+                        Picker("Backend", selection: $em.backendChoice) {
+                            ForEach(BackendChoice.allCases, id: \.self) {
+                                Text($0.sheetLabel).tag($0)
+                            }
+                        }
+                        .help("Auto uses Metal when available and falls back to CPU. The image is identical either way; CPU is slower.")
+                        Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
+                            .help(temporalHelp)
+                        // Field + stepper pair: the seed range (0…1e9) is far
+                        // beyond stepper navigation, and re-enterering an exact
+                        // prior seed is the whole point of exposing it.
+                        LabeledContent("Seed") {
+                            HStack(spacing: 4) {
+                                TextField("Seed", value: $seed, format: .number)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 120)
+                                    .help("Deterministic render seed. Same seed + genome + params = identical output.")
+                                Stepper("", value: $seed, in: 0...1_000_000_000)
+                                    .labelsHidden()
+                            }
+                        }
+                        Stepper("Pause safety every \(em.checkpointIntervalFrames) frames",
+                                value: $em.checkpointIntervalFrames, in: 5...300)
+                            .help("How often completed work is checkpointed for pause/resume. Smaller = less re-render on resume, at the cost of more encoder sessions.")
+                    }
                 }
             }
             .formStyle(.grouped)
 
             if let notice = metalNotice {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 20).padding(.bottom, 6)
+                // Orange GLYPH + .secondary text: orange caption text alone
+                // measured ~2.2:1 on the light sheet (4.5:1 required at this
+                // size). The color marks status; the text stays readable.
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(notice)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption)
+                .padding(.horizontal, 20).padding(.bottom, 6)
             }
             if let notice = codecNotice {
                 Text(notice)
@@ -170,16 +203,29 @@ struct ExportSheet: View {
             }
 
             Divider()
-            HStack {
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.escape, modifiers: [])
-                Spacer()
-                Button("Choose Destination & Export") {
-                    Task { await startExport() }
+            VStack(spacing: 8) {
+                HStack {
+                    Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.escape, modifiers: [])
+                    Spacer()
+                    // Ellipsis: the button first opens the save panel (more
+                    // input required) — the macOS convention for exactly this.
+                    Button("Choose Destination & Export…") {
+                        Task { await startExport() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: [])
+                    .disabled(!canStart)
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: [])
-                .disabled(!canStart)
+                // A disabled primary button with no reason is a wall (the user
+                // reads the form, forms an intent, hits a dead button). Name
+                // the gate: the manager is busy while a run is in flight.
+                if !canStart, model.exportManager.state != .idle {
+                    Text("An export is already in progress — pause or stop it before starting another.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(16)
         }

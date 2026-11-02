@@ -160,19 +160,23 @@ struct ExportProgressSurface: View {
     }
 
     /// One compact status line: phase — frame / total (fps, elapsed, ETA) [batch
-    /// job]. The ETA token is appended after elapsed: "estimating…" during
-    /// cold-start (fewer than `coldStartFloor` rendering samples), "~Xh Ym
+    /// job]. The fps + elapsed tokens render ONLY on single-job runs — batch
+    /// events carry no real elapsed/fps (they'd read as a frozen "0.0 fps 0 s"
+    /// for the whole run). The ETA token is appended after elapsed: "estimating…"
+    /// during cold-start (fewer than `coldStartFloor` rendering samples), "~Xh Ym
     /// remaining" once the EMA converges, or "Finalizing…" on non-rendering
     /// phases (encoding/concatenating/finalizing — the render ETA is frozen).
-    /// `sourceLabel` (display name / count) is shown on its own line when present
-    /// and there's batch context (otherwise the phase line already fits).
+    /// Batch runs show a second line naming the CURRENT job — "N genomes ·
+    /// rendering NAME — job 3 of 12" — instead of a nameless count.
     @ViewBuilder
     private func runningStatusLabel(snap: ExportProgressSnapshot) -> some View {
         let line = HStack(spacing: 8) {
             Text(phaseLabel(snap.phase))
             Text("frame \(snap.currentFrame) / \(snap.totalFrames)").monospacedDigit()
-            Text(String(format: "%.1f fps", snap.renderFPS)).monospacedDigit()
-            Text("\(elapsedLabel(snap.elapsed))")
+            if snap.totalJobs == 1 {
+                Text(String(format: "%.1f fps", snap.renderFPS)).monospacedDigit()
+                Text("\(elapsedLabel(snap.elapsed))")
+            }
             Text(etaToken(snap))
         }
         .font(.caption)
@@ -181,17 +185,19 @@ struct ExportProgressSurface: View {
         if snap.totalJobs > 1 {
             VStack(alignment: .leading, spacing: 2) {
                 line
-                if !model.exportManager.sourceLabel.isEmpty {
-                    HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    if let name = model.exportManager.currentBatchJobName {
+                        Text(model.exportManager.sourceLabel.isEmpty
+                             ? "Rendering \(name)"
+                             : "\(model.exportManager.sourceLabel) · rendering \(name)")
+                            .lineLimit(1).truncationMode(.middle)
+                    } else if !model.exportManager.sourceLabel.isEmpty {
                         Text(model.exportManager.sourceLabel)
                             .lineLimit(1).truncationMode(.middle)
-                        Text("job \(snap.jobIndex + 1) of \(snap.totalJobs)").monospacedDigit()
                     }
-                    .font(.caption2).foregroundStyle(.tertiary)
-                } else {
-                    Text("job \(snap.jobIndex + 1) of \(snap.totalJobs)")
-                        .font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                    Text("job \(snap.jobIndex + 1) of \(snap.totalJobs)").monospacedDigit()
                 }
+                .font(.caption2).foregroundStyle(.tertiary)
             }
         } else {
             line

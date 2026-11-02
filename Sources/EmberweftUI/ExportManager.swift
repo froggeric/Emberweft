@@ -103,6 +103,18 @@ public final class ExportManager {
     /// A transient label for the source (display name / count), for the banner.
     public private(set) var sourceLabel: String = ""
 
+    /// The file name of the batch job currently rendering (e.g.
+    /// "electricsheep.248.00788"), so the batch banner can say WHICH genome is
+    /// in flight — "N genomes — job 3 of 12" never named the item (a batch
+    /// finding). Nil on single/sequence runs and between jobs. Derived from
+    /// each job's `out` (the VM owns the jobs list; `BatchProgress` stays
+    /// unchanged).
+    public private(set) var currentBatchJobName: String?
+
+    /// jobIndex → output stem for the in-flight batch (private map behind
+    /// `currentBatchJobName`).
+    private var batchJobNames: [String] = []
+
     /// Transparency notice when an export silently dropped unrenderable genomes
     /// (`renderable.count < flames.count`). Nil when nothing was filtered. Set in
     /// `exportSequence`/`exportBatch`; cleared in `reset()`. (Behavior is
@@ -577,6 +589,8 @@ public final class ExportManager {
             state = .idle
             snapshot = .empty
             sourceLabel = ""
+            currentBatchJobName = nil
+            batchJobNames = []
             skipNotice = nil
             isPausable = false
         }
@@ -682,6 +696,8 @@ public final class ExportManager {
     private func startExport(_ kind: ExportKind, label: String, backend: ExportCoordinator.Backend) {
         sourceLabel = label
         snapshot = .empty
+        currentBatchJobName = nil
+        batchJobNames = []
         resetETAState()
         let coord = coordinatorFactory(backend, true)
         coordinator = coord
@@ -703,8 +719,9 @@ public final class ExportManager {
             // by the Task's own switch on `kind` below (re-bound there).
             resumableJob = job
             resumableInterval = interval
-        case .runBatch(_, let baseDir):
+        case .runBatch(let jobs, let baseDir):
             completionURL = baseDir; isResumable = false
+            batchJobNames = jobs.map { $0.out.deletingPathExtension().lastPathComponent }
         }
         isPausable = isResumable   // only `.runResumable` checkpoints ⇒ is pausable
         consumeTask = Task { [weak self] in
@@ -803,8 +820,12 @@ public final class ExportManager {
             }
         case ExportError.metalUnavailable:
             if isResumable {
+                // Actionable copy (a batch finding): the paused card offers only
+                // Resume/Discard and the run's backend is baked in — "switch to
+                // CPU and resume" named an action no visible control performs.
+                // Point at what IS possible.
                 state = .paused(out: out, checkpoint: cpURL,
-                                reason: "Metal is unavailable. Switch to CPU and resume.")
+                                reason: "Metal is unavailable. Discard this export, then start it again with the CPU backend (the Backend setting in the export sheet).")
                 setRememberedCheckpointURL(cpURL)
             } else {
                 state = .failed("Metal is unavailable. Try the CPU backend.")
@@ -841,6 +862,9 @@ public final class ExportManager {
     /// mapper stays pure (produces `etaSeconds == nil`); this method overwrites.
     private func applyETA(to event: ProgressEvent) {
         var snap = Self.snapshot(from: event)
+        if case .batch(let b) = event, batchJobNames.indices.contains(b.jobIndex) {
+            currentBatchJobName = batchJobNames[b.jobIndex]
+        }
         if snap.phase == .rendering {
             let now = nowProvider()
             // First sample has no delta (cold start) → dt = 0, so the EMA ramps
