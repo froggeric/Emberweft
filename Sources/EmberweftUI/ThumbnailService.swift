@@ -54,6 +54,73 @@ public actor ThumbnailService {
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
 
+    // MARK: - Disk budget (the storage-management gap)
+
+    /// Hard disk budget for the thumbnail cache: 1 GB. The cache used to grow
+    /// unboundedly (one PNG per genome × per parameter key, never evicted).
+    public static let diskBudgetBytes: Int64 = 1 << 30
+
+    /// Enumerate the cache directory's files with sizes + modification dates.
+    /// Deterministic order (rule #2): sorted by (mtime, name).
+    private static func diskFiles(in dir: URL) -> [(url: URL, size: Int64, mtime: Date)] {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return [] }
+        var out: [(URL, Int64, Date)] = []
+        for name in names.sorted() {
+            let url = dir.appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue,
+                  let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? Int64,
+                  let mtime = attrs[.modificationDate] as? Date else { continue }
+            out.append((url, size, mtime))
+        }
+        return out.sorted { lhs, rhs in
+            lhs.2 != rhs.2 ? lhs.2 < rhs.2 : lhs.0.lastPathComponent < rhs.0.lastPathComponent
+        }
+    }
+
+    /// Total bytes the disk cache occupies (async — up to 123k file stats).
+    public func diskCacheSize() async -> Int64 {
+        let dir = cacheDir
+        return await Task.detached(priority: .utility) {
+            Self.diskFiles(in: dir).reduce(0) { $0 + $1.size }
+        }.value
+    }
+
+    /// Delete oldest files until the cache fits `budget` bytes. Returns the
+    /// bytes freed. Called at launch (AppModel) and after a manual Clear.
+    @discardableResult
+    public func pruneDiskCache(toBudget budget: Int64 = ThumbnailService.diskBudgetBytes) async -> Int64 {
+        let dir = cacheDir
+        return await Task.detached(priority: .utility) {
+            let files = Self.diskFiles(in: dir)
+            let total = files.reduce(0) { $0 + $1.size }
+            guard total > budget else { return 0 }
+            var excess = total - budget
+            var freed: Int64 = 0
+            for file in files {          // oldest first (deterministic order)
+                guard excess > 0 else { break }
+                try? FileManager.default.removeItem(at: file.url)
+                freed += file.size
+                excess -= file.size
+            }
+            return freed
+        }.value
+    }
+
+    /// Remove every cached file. Returns the bytes freed. Thumbnails are
+    /// fully derivable — no confirmation semantics needed at this layer.
+    @discardableResult
+    public func clearDiskCache() async -> Int64 {
+        let dir = cacheDir
+        return await Task.detached(priority: .utility) {
+            let files = Self.diskFiles(in: dir)
+            for file in files { try? FileManager.default.removeItem(at: file.url) }
+            return files.reduce(0) { $0 + $1.size }
+        }.value
+    }
+
     /// Render (or fetch from cache) a display-sized thumbnail for `entry`'s genome
     /// `flame`. Renders at `renderParams` resolution, downscales to
     /// `displayWidth`×`displayHeight`.

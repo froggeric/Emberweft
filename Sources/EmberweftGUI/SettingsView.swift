@@ -26,6 +26,8 @@ struct SettingsView: View {
     @State private var shardSizes: [(name: String, count: Int, bytes: Int)] = []
     /// Last Rebuild error (nil unless `FlockCatalog.rebuild(from:)` threw).
     @State private var rebuildError: String?
+    /// Thumbnail disk-cache size for the Library pane's storage row.
+    @State private var thumbCacheBytes: Int64 = 0
 
     var body: some View {
         TabView {
@@ -44,6 +46,7 @@ struct SettingsView: View {
             // Seed the size readout from the long-lived catalog (T18).
             await model.flockModel.refreshBrowse()
             shardSizes = await loadShardSizes()
+            thumbCacheBytes = await model.thumbnailService.diskCacheSize()
         }
     }
 
@@ -124,6 +127,26 @@ struct SettingsView: View {
                         Text(dir.path).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
+            }
+
+            Section("Thumbnail cache") {
+                // Visibility + control (the storage-management gap): the disk
+                // cache is derivable but bounded only at 1 GB and was invisible.
+                HStack {
+                    Text("Cache size")
+                    Spacer()
+                    Text(ByteCountFormatter.string(fromByteCount: thumbCacheBytes, countStyle: .file))
+                        .foregroundStyle(.secondary).monospacedDigit()
+                }
+                Text("Bounded at 1 GB (oldest thumbnails are pruned at launch). Thumbnails are re-rendered on demand.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Clear Thumbnail Cache") {
+                    Task { @MainActor in
+                        _ = await model.thumbnailService.clearDiskCache()
+                        thumbCacheBytes = await model.thumbnailService.diskCacheSize()
+                    }
+                }
+                .disabled(thumbCacheBytes == 0)
             }
         }
         .formStyle(.grouped)
