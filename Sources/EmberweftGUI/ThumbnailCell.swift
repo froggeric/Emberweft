@@ -12,8 +12,10 @@ struct ThumbnailCell: View {
     let entry: LibraryEntry
     let selected: Bool
     /// Thumbnail frame. `.grid` (default) is the 16:9 card used by the library
-    /// grid; `.list` is the compact row thumb used by the collection reorder
-    /// list. Defaults preserve the existing grid call sites.
+    /// grid — FLEXIBLE: it fills the adaptive column's width at a fixed 16:9
+    /// aspect, so the Density control truly resizes cards (the old fixed
+    /// 176×99 ignored the column proposal entirely). `.list` is the fixed
+    /// compact row thumb used by the collection reorder list.
     var size: Size = .grid
     /// Whether to render the display-name caption beneath the thumbnail. The
     /// collection reorder list shows the name to the side of the thumb, so it
@@ -25,10 +27,12 @@ struct ThumbnailCell: View {
     var isFocused: Bool = false
 
     enum Size { case grid, list
-        var frame: CGSize {
+        /// Fixed frame for `.list`; `.grid` is column-driven (aspectRatio +
+        /// maxWidth .infinity in `body`) and returns nil here.
+        var fixedFrame: CGSize? {
             switch self {
-            case .grid: return CGSize(width: 176, height: 99)   // 16:9
-            case .list: return CGSize(width: 80, height: 45)    // 16:9, compact
+            case .grid: return nil
+            case .list: return CGSize(width: 80, height: 45)   // 16:9, compact
             }
         }
     }
@@ -42,7 +46,10 @@ struct ThumbnailCell: View {
     var body: some View {
         VStack(spacing: 6) {
             content
-                .frame(width: size.frame.width, height: size.frame.height)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .frame(width: size.fixedFrame?.width,
+                       height: size.fixedFrame?.height)
+                .frame(maxWidth: size.fixedFrame == nil ? .infinity : nil)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 // Selection ring (reinforces the tick).

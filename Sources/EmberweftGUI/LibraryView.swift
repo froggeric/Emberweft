@@ -68,6 +68,12 @@ struct LibraryView: View {
     @State private var dragTranslation: CGSize = .zero
     @State private var dropTargetStoredIndex: Int?
     @State private var collectionCellFrames: [Int: CGRect] = [:]
+    /// Edge autoscroll during a collection drag (the reorder could never leave
+    /// the viewport): `autoscrollDirection` is −1/+1 while the lifted copy sits
+    /// within the trigger band of the top/bottom visible row, and `autoscrollTick`
+    /// scrolls one row per ~150 ms while it holds. Both clear when the drag ends.
+    @State private var autoscrollDirection: Int?
+    @State private var autoscrollTick: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -768,6 +774,10 @@ struct LibraryView: View {
         let entryByStored: [Int: LibraryEntry] = Dictionary(
             pairs.map { ($0.storedIndex, $0.entry) },
             uniquingKeysWith: { a, _ in a })
+        // Stored index → ForEach id, for the drag edge-autoscroll's scrollTo.
+        let idByStored: [Int: LibraryEntry.ID] = Dictionary(
+            pairs.map { ($0.storedIndex, $0.entry.id) },
+            uniquingKeysWith: { a, _ in a })
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -833,6 +843,16 @@ struct LibraryView: View {
                 // the drop-target pulse keeps its own faster animation.
                 .animation(reduceMotion ? nil : .snappy, value: c.entries)
                 .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: dropTargetStoredIndex)
+                // Edge autoscroll during a drag: without this the reorder
+                // could never leave the viewport (only visible cells publish
+                // frames). One row per tick while the lifted copy holds in
+                // the trigger band; cancelled when the drag ends.
+                .onChange(of: dragTranslation) { _, _ in
+                    updateAutoscroll(proxy: proxy, idByStored: idByStored)
+                }
+                .onChange(of: draggingStoredIndex) { _, active in
+                    if active == nil { stopAutoscroll() }
+                }
             }
         }
     }
@@ -874,37 +894,49 @@ struct LibraryView: View {
                         .strokeBorder(Color.accentColor, lineWidth: 3)
                 }
             }
+            // Reorder affordance (it had none): a hover-revealed grip with its
+            // own LOW-threshold drag (3 pt vs the card body's 10 pt), so grip
+            // drags lift immediately while body drags keep the tap-safe
+            // threshold. Same shared handlers as the body gesture.
+            .overlay(alignment: .topLeading) {
+                HoverGate { hovered in
+                    if hovered && draggingStoredIndex == nil {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(5)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                            .padding(4)
+                            .help("Drag to reorder")
+                            .transition(.opacity)
+                            .gesture(
+                                DragGesture(minimumDistance: 3)
+                                    .onChanged { value in
+                                        collectionDragChanged(storedIndex: storedIndex,
+                                                              translation: value.translation)
+                                    }
+                                    .onEnded { value in
+                                        collectionDragEnded(storedIndex: storedIndex,
+                                                            collection: c,
+                                                            translation: value.translation)
+                                    }
+                            )
+                    }
+                }
+            }
             // Dim the source cell in place while its lifted copy follows the
             // pointer (the copy is rendered by the grid overlay).
             .opacity(isSource ? 0.35 : 1.0)
             .highPriorityGesture(
                 DragGesture(minimumDistance: 10)
                     .onChanged { value in
-                        if draggingStoredIndex == nil {
-                            draggingStoredIndex = storedIndex
-                        }
-                        dragTranslation = value.translation
-                        dropTargetStoredIndex = collectionDragTarget(
-                            sourceStored: storedIndex, translation: value.translation)
+                        collectionDragChanged(storedIndex: storedIndex,
+                                              translation: value.translation)
                     }
                     .onEnded { value in
-                        let target = collectionDragTarget(
-                            sourceStored: storedIndex, translation: value.translation)
-                        if let target = target, target != storedIndex {
-                            // "Drop on target → take target's stored slot." For a
-                            // DOWNWARD move (source < target) the source lands at
-                            // the target's original stored index via toOffset =
-                            // target+1 (Array.move's original-indexing "insert
-                            // after"); an UPWARD move uses toOffset = target
-                            // ("insert before"). Both proven against the store
-                            // tests (moveEntries delegates to Array.move).
-                            let toOffset = storedIndex < target ? target + 1 : target
-                            model.collectionsStore.moveEntries(
-                                in: c.id, from: IndexSet([storedIndex]), to: toOffset)
-                        }
-                        draggingStoredIndex = nil
-                        dropTargetStoredIndex = nil
-                        dragTranslation = .zero
+                        collectionDragEnded(storedIndex: storedIndex,
+                                            collection: c,
+                                            translation: value.translation)
                     }
             )
             .overlay(AppKitContextMenu {
@@ -1007,6 +1039,93 @@ struct LibraryView: View {
             }
         }
         return contained ?? nearest?.stored
+    }
+
+    /// Shared drag-reorder handlers (the card body's 10 pt gesture and the
+    /// grip's 3 pt gesture route through the same pair, so both lift, track,
+    /// and drop identically).
+    private func collectionDragChanged(storedIndex: Int, translation: CGSize) {
+        if draggingStoredIndex == nil {
+            draggingStoredIndex = storedIndex
+        }
+        dragTranslation = translation
+        dropTargetStoredIndex = collectionDragTarget(
+            sourceStored: storedIndex, translation: translation)
+    }
+
+    private func collectionDragEnded(storedIndex: Int,
+                                     collection c: GenomeCollection,
+                                     translation: CGSize) {
+        let target = collectionDragTarget(sourceStored: storedIndex, translation: translation)
+        if let target = target, target != storedIndex {
+            // "Drop on target → take target's stored slot." For a DOWNWARD move
+            // (source < target) the source lands at the target's original
+            // stored index via toOffset = target+1 (Array.move's original-
+            // indexing "insert after"); an UPWARD move uses toOffset = target
+            // ("insert before"). Both proven against the store tests
+            // (moveEntries delegates to Array.move).
+            let toOffset = storedIndex < target ? target + 1 : target
+            model.collectionsStore.moveEntries(
+                in: c.id, from: IndexSet([storedIndex]), to: toOffset)
+        }
+        draggingStoredIndex = nil
+        dropTargetStoredIndex = nil
+        dragTranslation = .zero
+        stopAutoscroll()
+    }
+
+    // MARK: Drag edge autoscroll
+
+    /// While a collection drag is live, keep the scroll view following the
+    /// lifted copy when it sits within the trigger band of the top/bottom
+    /// visible row — without this, a drag could never leave the viewport (the
+    /// hit-test only sees visible cells). Called from the grid's
+    /// `.onChange(of: dragTranslation)`; the ticking task scrolls one row per
+    /// ~150 ms while the direction holds.
+    private func updateAutoscroll(proxy: ScrollViewProxy, idByStored: [Int: LibraryEntry.ID]) {
+        guard let source = draggingStoredIndex,
+              let sourceFrame = collectionCellFrames[source] else { return }
+        let y = sourceFrame.midY + dragTranslation.height
+        let ordered = collectionCellFrames.sorted { $0.value.midY < $1.value.midY }
+        guard let top = ordered.first, let bottom = ordered.last else { return }
+        let trigger: CGFloat = 56
+        if y < top.value.midY + trigger {
+            autoscrollDirection = -1
+        } else if y > bottom.value.midY - trigger {
+            autoscrollDirection = 1
+        } else {
+            autoscrollDirection = nil
+            return
+        }
+        guard autoscrollTick == nil else { return }
+        autoscrollTick = Task { @MainActor in
+            while autoscrollDirection != nil {
+                autoscrollStep(proxy: proxy, idByStored: idByStored)
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            autoscrollTick = nil
+        }
+    }
+
+    /// One autoscroll step: scroll so the row one screen-row beyond the current
+    /// top/bottom visible cell becomes the new anchored edge.
+    private func autoscrollStep(proxy: ScrollViewProxy, idByStored: [Int: LibraryEntry.ID]) {
+        guard let dir = autoscrollDirection else { return }
+        let ordered = collectionCellFrames.sorted { $0.value.midY < $1.value.midY }
+        guard !ordered.isEmpty else { return }
+        let columns = max(1, gridColumnCount)
+        let anchorIdx = dir < 0 ? 0 : ordered.count - 1
+        let targetIdx = min(max(anchorIdx + dir * columns, 0), ordered.count - 1)
+        guard let id = idByStored[ordered[targetIdx].key] else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
+            proxy.scrollTo(id, anchor: dir < 0 ? .top : .bottom)
+        }
+    }
+
+    private func stopAutoscroll() {
+        autoscrollDirection = nil
+        autoscrollTick?.cancel()
+        autoscrollTick = nil
     }
 
     /// Empty state is destination-aware (Liked teaches sentiment; All offers the
@@ -1708,5 +1827,17 @@ private struct CollectionCellFramePreference: PreferenceKey {
     static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
         // Later values win per stored index (the live frame supersedes stale).
         value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// Per-cell hover state for the collection grip (a `@State` inside
+/// `LibraryView` would be shared by every cell; this wrapper owns one piece
+/// of state per mounted instance).
+private struct HoverGate<Content: View>: View {
+    @State private var hovered = false
+    @ViewBuilder var content: (Bool) -> Content
+
+    var body: some View {
+        content(hovered).onHover { hovered = $0 }
     }
 }
