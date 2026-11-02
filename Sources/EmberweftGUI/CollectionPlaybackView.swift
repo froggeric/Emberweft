@@ -1,6 +1,9 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import EmberweftUI
 import FlameKit
+import FlameReference
 
 /// A Codable route that opens the sequence-playback window for one collection
 /// (`WindowGroup("Collection Playback", for: CollectionPlaybackRoute.self)`).
@@ -64,6 +67,18 @@ struct CollectionPlaybackWindow: View {
                         }
                 } bar: {
                     bar
+                }
+                // Save Frame As… (the save-still gap) — same affordances as the
+                // single-genome window (⌘S + surface context menu).
+                .overlay(AppKitContextMenu {
+                    let menu = NSMenu()
+                    menu.addItem(NSMenuItem("Save Frame As…") { saveFrame() })
+                    return menu
+                })
+                .background {
+                    Button("Save Frame As…") { saveFrame() }
+                        .keyboardShortcut("s", modifiers: .command)
+                        .hidden()
                 }
             }
         }
@@ -195,6 +210,18 @@ struct CollectionPlaybackWindow: View {
 
     /// Stop deterministically, then dismiss.
     private func close() { Task { await vm.stop(); dismiss() } }
+
+    /// Write the exact displayed frame to a PNG via NSSavePanel (⌘S / the
+    /// surface's context menu).
+    private func saveFrame() {
+        guard let frame = vm.sinkView.lastFrame else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(collectionName)-genome\(vm.currentSheep + 1)-frame.png"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? frame.writePNG(to: url)
+    }
 
     /// Resolve the collection → live entries → loaded flames, then play.
     /// Genomes that no longer resolve (folder removed) or fail to parse are

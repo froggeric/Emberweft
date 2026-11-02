@@ -115,6 +115,11 @@ public final class FlameUI: NSView {
 
     // MARK: - Frame presentation
 
+    /// The most recently presented frame, exactly as displayed ("Save Frame
+    /// As…" in the playback windows). The pixel array is COW, so this store is
+    /// O(1) per frame — no copy, no extra retain churn.
+    public private(set) var lastFrame: RGBA8Image?
+
     /// Present a freshly rendered frame. Builds a `CGImage` from the renderer's
     /// RGBA8 pixels and hands it to the Metal layer's `contents`. No-fault if the
     /// image can't be built (returns `false`); the dispatcher never depends on
@@ -123,6 +128,7 @@ public final class FlameUI: NSView {
     /// On the MainActor; safe to call directly from tests (headless, no window).
     @discardableResult
     public func present(_ image: RGBA8Image) -> Bool {
+        lastFrame = image
         guard let cg = Self.makeCGImage(image) else { return false }
         metalLayer.contents = cg
         return true

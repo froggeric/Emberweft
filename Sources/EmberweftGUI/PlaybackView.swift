@@ -1,6 +1,9 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import EmberweftUI
 import FlameKit
+import FlameReference
 
 /// A playback window hosting `FlameUIView` for one clicked genome.
 struct PlaybackWindow: View {
@@ -38,6 +41,19 @@ struct PlaybackWindow: View {
                 }
         } bar: {
             bar
+        }
+        // Save Frame As… (the save-still gap): the poster frame is a primary
+        // artifact for a generative-art studio; ⌘S and the surface's context
+        // menu both write the exact displayed pixels.
+        .overlay(AppKitContextMenu {
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem("Save Frame As…") { saveFrame() })
+            return menu
+        })
+        .background {
+            Button("Save Frame As…") { saveFrame() }
+                .keyboardShortcut("s", modifiers: .command)
+                .hidden()
         }
         .frame(minWidth: 640, minHeight: 420)
         // Per-window title (H13): with several non-modal playback windows
@@ -210,6 +226,19 @@ struct PlaybackWindow: View {
 
     /// Stop deterministically, then dismiss.
     private func close() { Task { await vm.stop(); dismiss() } }
+
+    /// Write the exact displayed frame to a PNG via NSSavePanel (⌘S / the
+    /// surface's context menu). `lastFrame` is the presented buffer, COW —
+    /// zero-copy retention per frame.
+    private func saveFrame() {
+        guard let frame = vm.sinkView.lastFrame else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(entry.displayName)-frame\(currentFrame).png"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? frame.writePNG(to: url)
+    }
 
     private func start() async {
         do {
