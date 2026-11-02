@@ -16,6 +16,7 @@ struct KeyboardHelpView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if includesLibrary {
+                group("General", shortcuts: generalShortcuts)
                 group("Library", shortcuts: libraryShortcuts)
             }
             group("Preview", shortcuts: previewShortcuts)
@@ -50,12 +51,26 @@ struct KeyboardHelpView: View {
 
     // MARK: - Shortcut tables (static, deterministic)
 
+    /// Menu-bar-backed commands (C2) that apply app-wide.
+    private let generalShortcuts: [Shortcut] = [
+        .init(key: "⌘O", action: "Open a directory of genomes"),
+        .init(key: "⇧⌘I", action: "Import genome files"),
+        .init(key: "⌘F", action: "Search"),
+        .init(key: "⇧⌘F", action: "Filter"),
+        .init(key: "⌃⌘S", action: "Toggle sidebar"),
+        .init(key: "⌘?", action: "This shortcut list"),
+    ]
+
     private let libraryShortcuts: [Shortcut] = [
+        .init(key: "↑ ← ↓ →", action: "Move focus and select"),
+        .init(key: "Return / ⌘↓", action: "Open the focused or selected genome"),
+        .init(key: "Click", action: "Select a card"),
+        .init(key: "Double-click", action: "Open preview"),
         .init(key: "⌘A", action: "Select all (filtered)"),
         .init(key: "Esc", action: "Clear selection"),
-        .init(key: "Click", action: "Open preview"),
         .init(key: "⌘ / Ctrl-click", action: "Toggle selection"),
-        .init(key: "Shift-click", action: "Range select"),
+        .init(key: "⇧-click / ⇧-arrows", action: "Extend selection"),
+        .init(key: "⇧⌘E", action: "Export the selection"),
         .init(key: "Drag .flam3", action: "Import files"),
         .init(key: "⌘1…⌘4", action: "Sidebar: All / Library / Liked / Imported"),
     ]

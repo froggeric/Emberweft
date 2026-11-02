@@ -18,6 +18,8 @@ implications of porting flam3) is the owner's decision and under review.
 - Catalog schema v4 (a version re-stamp; older builds are refused the archive instead of mis-reading portrait material) and a rebuild integrity check that skips video files sitting in the wrong resolution folder.
 - GUI: vertical/square tiers in the export sheet, Standard/Vertical shard sections, and letterboxed portrait thumbnails in Browse.
 - GUI: library grid cards are now real accessibility elements — VoiceOver can browse the grid, open a genome, change its rating, and select or deselect it without a pointer (activate opens; Select, Like, Neutral, Dislike, and Remove from Collection are named rotor actions).
+- GUI: the library grid is keyboard-navigable, Finder-style — arrow keys move focus and select (shift extends the selection), Return opens the focused genome, Tab reaches cards, and a plain click selects (double-click opens; click on empty background clears). The focused card shows a keyboard-focus ring and reveals the rating bar on focus as well as hover.
+- GUI: the menu bar now carries the app's commands — File (Open Directory… ⌘O, Import Genomes… ⇧⌘I, Export… ⇧⌘E, New Collection… ⇧⌘N), a Genome menu (Play ⌘↓, Like/Neutral/Dislike, Add to Collection), View (Toggle Sidebar ⌃⌘S, Filter ⇧⌘F), Edit > Find (⌘F focuses search), and a working Help item (⌘? opens the shortcut list).
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).

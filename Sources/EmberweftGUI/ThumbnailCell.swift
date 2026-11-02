@@ -18,6 +18,10 @@ struct ThumbnailCell: View {
     /// collection reorder list shows the name to the side of the thumb, so it
     /// passes `false` to avoid a duplicate.
     var showsName: Bool = true
+    /// Keyboard focus (C1 grid navigation): draws the focus ring and reveals
+    /// the sentiment bar exactly like hover, so keyboard-only users get the
+    /// same affordances pointer users get.
+    var isFocused: Bool = false
 
     enum Size { case grid, list
         var frame: CGSize {
@@ -47,6 +51,16 @@ struct ThumbnailCell: View {
                             .strokeBorder(Color.accentColor, lineWidth: 2)
                     }
                 }
+                // Keyboard-focus ring (C1): sits OUTSIDE the selection ring so
+                // a selected card reads as both (double ring), and a focused
+                // unselected card still shows where keyboard input lands.
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1.5)
+                            .padding(-3)
+                    }
+                }
                 .overlay(alignment: .bottomLeading) {
                     if let cat = category {
                         Text(cat.capitalized)
@@ -58,14 +72,16 @@ struct ThumbnailCell: View {
                 }
                 .overlay(alignment: .topTrailing) { tick }
                 .overlay(alignment: .bottom) {
-                    if isHovered {
+                    // Revealed by hover OR keyboard focus (C1): hover-only
+                    // gating made rating pointer-only.
+                    if isHovered || isFocused {
                         SentimentBar(entry: entry)
                             .padding(4)
                             .transition(.opacity)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !isHovered { SentimentBadge(entry: entry).padding(6) }
+                    if !isHovered && !isFocused { SentimentBadge(entry: entry).padding(6) }
                 }
             if showsName {
                 Text(entry.displayName)
@@ -74,6 +90,7 @@ struct ThumbnailCell: View {
         }
         .onHover { isHovered = $0 }
         .animation(.snappy(duration: 0.12), value: isHovered)
+        .animation(.snappy(duration: 0.12), value: isFocused)
         .task(id: entry.id, priority: .utility) { await load() }
     }
 
@@ -98,8 +115,8 @@ struct ThumbnailCell: View {
         .accessibilityLabel(selected ? "Deselect" : "Select")
     }
 
-    /// Whether the tick is actually shown (selected or hovered).
-    private var tickVisible: Bool { selected || isHovered }
+    /// Whether the tick is actually shown (selected, hovered, or focused).
+    private var tickVisible: Bool { selected || isHovered || isFocused }
 
     @ViewBuilder
     private var content: some View {

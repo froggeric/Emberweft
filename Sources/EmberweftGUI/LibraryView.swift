@@ -35,6 +35,21 @@ struct LibraryView: View {
     @State private var creatingCollectionEntries: [CollectionEntry]?
     @State private var createText: String = ""
 
+    /// Keyboard focus for grid navigation (C1): the entry id of the focused
+    /// card. Arrows move it Finder-style (move + select), Return opens, and a
+    /// plain click sets it so arrow keys work immediately after pointer use.
+    @FocusState private var focusedCellID: String?
+    /// Content width of the active grid, measured with `.onGeometryChange` —
+    /// feeds `gridColumnCount` so ↑/↓ move across real grid rows.
+    @State private var gridWidth: CGFloat = 0
+    /// Sidebar visibility (View > Toggle Sidebar ⌃⌘S + the toolbar toggle).
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Search-field focus (Edit > Find > Search ⌘F).
+    @FocusState private var searchFocused: Bool
+    /// Loose-file import panel (File > Import Genomes… ⇧⌘I). The drop handler
+    /// already accepted loose .flam3 files; the menu gives that path a home.
+    @State private var importPanel = false
+
     /// Collection drag-reorder state. A custom in-app `DragGesture` (NOT system
     /// pasteboard DnD) — `.draggable`/`.dropDestination` never fired the drop and
     /// `List.onMove` replaced the grid with a list, so the grid uses its own
@@ -49,7 +64,7 @@ struct LibraryView: View {
     @State private var collectionCellFrames: [Int: CGRect] = [:]
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
         } detail: {
             detailGrid
@@ -92,6 +107,37 @@ struct LibraryView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Files stay on disk. Only the library reference is removed.")
+        }
+        // Menu-bar request handlers (C2): the commands bump AppModel counters;
+        // these translate them into the view-owned flows. Attached at body
+        // level (not detailChrome) so they stay live on every destination.
+        .onChange(of: model.openDirectoryRequest) { _, _ in openImporter = true }
+        .onChange(of: model.importFilesRequest) { _, _ in importPanel = true }
+        .onChange(of: model.newCollectionRequest) { _, _ in
+            creatingCollectionEntries = []
+            createText = defaultCollectionName()
+        }
+        .onChange(of: model.saveSelectionAsCollectionRequest) { _, _ in
+            creatingCollectionEntries = model.selection
+                .sorted { GenomeCollectionAppOrder.key($0) < GenomeCollectionAppOrder.key($1) }
+                .map(CollectionEntry.init)
+            createText = defaultCollectionName()
+        }
+        .onChange(of: model.playSelectionRequest) { _, _ in
+            if model.selection.count == 1, let entry = model.selection.first {
+                openWindow(value: PlaybackRoute(entry))
+            }
+        }
+        .onChange(of: model.toggleSidebarRequest) { _, _ in
+            columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+        }
+        .onChange(of: model.filterPopoverRequest) { _, _ in showFilterPopover.toggle() }
+        .onChange(of: model.keyboardHelpRequest) { _, _ in showKeyboardHelp = true }
+        .onChange(of: model.findRequest) { _, _ in searchFocused = true }
+        .fileImporter(isPresented: $importPanel,
+                      allowedContentTypes: [.data],
+                      allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { performImport(urls) }
         }
         .sheet(isPresented: Binding(
             get: { renamingCollection != nil },
@@ -461,6 +507,7 @@ struct LibraryView: View {
         let state = currentLoadState
         content()
             .searchable(text: $filter.searchText, prompt: "Search genomes")
+            .searchFocused($searchFocused)
             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                 handleDrop(providers); return true
             }
@@ -488,6 +535,11 @@ struct LibraryView: View {
             .animation(.snappy, value: model.selection.isEmpty)
             .animation(.snappy, value: filter)
             .animation(.snappy, value: destination)
+            // Keyboard focus follows the visible grid: a destination or filter
+            // change can remove the focused entry, so drop stale focus instead
+            // of leaving it pointed at a cell that no longer exists.
+            .onChange(of: destination) { _, _ in focusedCellID = nil }
+            .onChange(of: filter) { _, _ in focusedCellID = nil }
             .navigationTitle(destinationTitle)
             .navigationSubtitle(countSubtitle(for: state))
             .toolbar { toolbarContent }
@@ -508,14 +560,27 @@ struct LibraryView: View {
 
     /// The non-collection browsing surface: a `ScrollView` of filter chips + the
     /// destination grid body. (Collections use `collectionGridBody` instead.)
+    /// The `ScrollViewReader` lets keyboard focus movement scroll the target
+    /// card into view before focus lands on it (lazy cells must materialize).
     @ViewBuilder
     private func gridScrollBody(for state: LoadState) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                activeFilterChips
-                gridBody(for: state)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    activeFilterChips
+                    gridBody(for: state, proxy: proxy)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                // Click on empty grid background clears the selection (Finder
+                // convention). Cell taps win the gesture contest (the deeper
+                // view claims the hit), so this only fires in the margins.
+                .onTapGesture {
+                    model.clearSelection()
+                    focusedCellID = nil
+                }
             }
-            .padding(20)
         }
     }
 
@@ -562,7 +627,7 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
-    private func gridBody(for state: LoadState) -> some View {
+    private func gridBody(for state: LoadState, proxy: ScrollViewProxy) -> some View {
         // Collections are routed to `collectionGridBody` (the same `LazyVGrid` of
         // `ThumbnailCell`, plus a custom drag-reorder `DragGesture`) before this
         // point; this grid body serves the non-collection browsing destinations
@@ -587,7 +652,12 @@ struct LibraryView: View {
                 filteredEmptyState(hadEntries: !entries.isEmpty)
             } else {
                 LazyVGrid(columns: grid, spacing: 16) {
-                    ForEach(filtered) { entry in cell(entry, in: filtered) }
+                    ForEach(filtered) { entry in cell(entry, in: filtered, proxy: proxy) }
+                }
+                // Column count for ↑/↓ focus movement (mirrors the adaptive
+                // grid's own slot math — see `gridColumnCount`).
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, w in
+                    gridWidth = w
                 }
             }
         }
@@ -628,66 +698,80 @@ struct LibraryView: View {
         let entryByStored: [Int: LibraryEntry] = Dictionary(
             pairs.map { ($0.storedIndex, $0.entry) },
             uniquingKeysWith: { a, _ in a })
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                activeFilterChips
-                if filtered.isEmpty {
-                    // Mirror the grid's empty-state messaging: "collection empty"
-                    // vs "no resolvable" (resolved empty) vs "no matches" (filter).
-                    if resolved.isEmpty {
-                        emptyStateView
-                    } else {
-                        filteredEmptyState(hadEntries: true)
-                    }
-                } else {
-                    LazyVGrid(columns: grid, spacing: 16) {
-                        ForEach(filtered) { entry in
-                            collectionCell(entry,
-                                           storedIndex: storedOf[CollectionEntry(entry).identity] ?? 0,
-                                           collection: c,
-                                           in: filtered)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    activeFilterChips
+                    if filtered.isEmpty {
+                        // Mirror the grid's empty-state messaging: "collection empty"
+                        // vs "no resolvable" (resolved empty) vs "no matches" (filter).
+                        if resolved.isEmpty {
+                            emptyStateView
+                        } else {
+                            filteredEmptyState(hadEntries: true)
                         }
-                    }
-                    .coordinateSpace(name: CollectionGridSpace.name)
-                    .onPreferenceChange(CollectionCellFramePreference.self) {
-                        collectionCellFrames = $0
-                    }
-                    // The lifted copy: a translucent `ThumbnailCell` that follows
-                    // the pointer while a drag is in progress. Rendered as a grid
-                    // overlay (above all cells), positioned at the SOURCE cell's
-                    // center + the drag translation. Source cells themselves never
-                    // move, so their published frames stay stable and hit-testing
-                    // is exact. `allowsHitTesting(false)` so the copy can't
-                    // intercept the drag or taps. (The thumbnail loads from the
-                    // warm ThumbnailService cache — keyed by entry.id — so it
-                    // resolves in ~one frame.)
-                    .overlay {
-                        if let source = draggingStoredIndex,
-                           let frame = collectionCellFrames[source],
-                           let sourceEntry = entryByStored[source] {
-                            ThumbnailCell(entry: sourceEntry, selected: false)
-                                .opacity(0.92)
-                                .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
-                                .position(x: frame.midX + dragTranslation.width,
-                                          y: frame.midY + dragTranslation.height)
-                                .allowsHitTesting(false)
+                    } else {
+                        LazyVGrid(columns: grid, spacing: 16) {
+                            ForEach(filtered) { entry in
+                                collectionCell(entry,
+                                               storedIndex: storedOf[CollectionEntry(entry).identity] ?? 0,
+                                               collection: c,
+                                               in: filtered,
+                                               proxy: proxy)
+                            }
+                        }
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, w in
+                            gridWidth = w
+                        }
+                        .coordinateSpace(name: CollectionGridSpace.name)
+                        .onPreferenceChange(CollectionCellFramePreference.self) {
+                            collectionCellFrames = $0
+                        }
+                        // The lifted copy: a translucent `ThumbnailCell` that follows
+                        // the pointer while a drag is in progress. Rendered as a grid
+                        // overlay (above all cells), positioned at the SOURCE cell's
+                        // center + the drag translation. Source cells themselves never
+                        // move, so their published frames stay stable and hit-testing
+                        // is exact. `allowsHitTesting(false)` so the copy can't
+                        // intercept the drag or taps. (The thumbnail loads from the
+                        // warm ThumbnailService cache — keyed by entry.id — so it
+                        // resolves in ~one frame.)
+                        .overlay {
+                            if let source = draggingStoredIndex,
+                               let frame = collectionCellFrames[source],
+                               let sourceEntry = entryByStored[source] {
+                                ThumbnailCell(entry: sourceEntry, selected: false)
+                                    .opacity(0.92)
+                                    .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+                                    .position(x: frame.midX + dragTranslation.width,
+                                              y: frame.midY + dragTranslation.height)
+                                    .allowsHitTesting(false)
+                            }
                         }
                     }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                // Click on empty grid background clears the selection (same
+                // Finder convention as the browsing grid; cells win the hit).
+                .onTapGesture {
+                    model.clearSelection()
+                    focusedCellID = nil
+                }
+                .animation(.snappy(duration: 0.15), value: dropTargetStoredIndex)
             }
-            .padding(20)
-            .animation(.snappy(duration: 0.15), value: dropTargetStoredIndex)
         }
     }
 
-    /// One cell of the collection grid: the shared `ThumbnailCell` (identical
-    /// look to every other destination) + a per-cell `DragGesture(minimumDistance:
-    /// 10)` for reorder. The drag only recognizes after 10pt of movement, so a
-    /// quick tap still opens the preview (`.onTapGesture`) and the in-cell
-    /// Buttons (tick, sentiment) still receive their clicks. `.highPriorityGesture`
-    /// lets the drag claim the gesture once it recognizes (after 10pt), so a drag
-    /// does NOT also fire the tap (which would open the preview), and a click does
-    /// NOT start a drag. While dragging, the source cell is dimmed in place and a
+    /// One cell of the collection grid: the shared interaction core from
+    /// `cellCore` (select / double-click open / keyboard focus) + a per-cell
+    /// `DragGesture(minimumDistance: 10)` for reorder. The drag only recognizes
+    /// after 10pt of movement, so a quick tap still selects and the in-cell
+    /// Buttons (tick, sentiment) still receive their clicks.
+    /// `.highPriorityGesture` lets the drag claim the gesture once it recognizes
+    /// (after 10pt), so a drag does NOT also fire the tap, and a click does NOT
+    /// start a drag. While dragging, the source cell is dimmed in place and a
     /// lifted copy follows the pointer (see `collectionGridBody`'s overlay); the
     /// `dropTargetStoredIndex` cell gets an accent border.
     ///
@@ -699,15 +783,16 @@ struct LibraryView: View {
     private func collectionCell(_ entry: LibraryEntry,
                                 storedIndex: Int,
                                 collection c: GenomeCollection,
-                                in filtered: [LibraryEntry]) -> some View {
+                                in filtered: [LibraryEntry],
+                                proxy scrollProxy: ScrollViewProxy) -> some View {
         let isSource = draggingStoredIndex == storedIndex
         let isTarget = dropTargetStoredIndex == storedIndex
-        ThumbnailCell(entry: entry, selected: model.isSelected(entry))
+        cellCore(entry, in: filtered, proxy: scrollProxy)
             .background(
-                GeometryReader { proxy in
+                GeometryReader { geo in
                     Color.clear.preference(
                         key: CollectionCellFramePreference.self,
-                        value: [storedIndex: proxy.frame(in: .named(CollectionGridSpace.name))])
+                        value: [storedIndex: geo.frame(in: .named(CollectionGridSpace.name))])
                 }
             )
             .overlay {
@@ -719,8 +804,6 @@ struct LibraryView: View {
             // Dim the source cell in place while its lifted copy follows the
             // pointer (the copy is rendered by the grid overlay).
             .opacity(isSource ? 0.35 : 1.0)
-            .contentShape(Rectangle())
-            .onTapGesture { handleCellTap(entry, in: filtered) }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 10)
                     .onChanged { value in
@@ -966,8 +1049,7 @@ struct LibraryView: View {
                 .keyboardShortcut("a", modifiers: .command)
             Button("Clear Selection") { model.clearSelection() }
                 .keyboardShortcut(.escape, modifiers: [])
-            Button("Keyboard Shortcuts") { showKeyboardHelp = true }
-                .keyboardShortcut("?", modifiers: .command)
+            // ⌘? lives in the Help menu now (C2) — one command, one shortcut.
             Button("Go to All") { destination = .all }
                 .keyboardShortcut("1", modifiers: .command)
             Button("Go to Library") { destination = .library }
@@ -1181,35 +1263,108 @@ struct LibraryView: View {
 
     // MARK: - Cell (display + selection interaction)
 
-    // MARK: - Cell (display + selection interaction)
-
-    /// Shared cell body (thumbnail + tap interaction). Plain click opens the
-    /// single-genome playback window; ⌘/ctrl toggles selection; shift range-
-    /// selects. Context menus are added by the callers (`cell` / `collectionCell`).
-    @ViewBuilder
-    private func cellCore(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
-        ThumbnailCell(entry: entry, selected: model.isSelected(entry))
+    /// Shared cell body (display + full interaction model, HIG remediation):
+    /// plain click SELECTS (Finder/Photos convention — the primary curation
+    /// verb is the visible one), double-click opens the playback window,
+    /// ⌘/ctrl toggles selection, shift range-selects, click on empty grid
+    /// background clears (handled by the grid bodies). The focused card —
+    /// set by any click or by arrow navigation — answers Return (open) and
+    /// arrow keys (move focus + select), making the grid fully keyboard-
+    /// navigable. Context menus and the combined accessibility element are
+    /// added by the callers (`cell` / `collectionCell`).
+    private func cellCore(_ entry: LibraryEntry, in filtered: [LibraryEntry],
+                          proxy: ScrollViewProxy?) -> some View {
+        ThumbnailCell(entry: entry, selected: model.isSelected(entry),
+                      isFocused: focusedCellID == entry.id)
             .contentShape(Rectangle())
+            // Double FIRST so the pair can be claimed by the double handler;
+            // the single (select-only) is idempotent across both clicks of a
+            // double-click, so select-then-open reads naturally.
+            .onTapGesture(count: 2) { openWindow(value: PlaybackRoute(entry)) }
             .onTapGesture { handleCellTap(entry, in: filtered) }
+            .focusable(true)
+            .focused($focusedCellID, equals: entry.id)
+            // ThumbnailCell draws the focus ring; suppress the system's.
+            .focusEffectDisabled(true)
+            // Arrow navigation via onKeyPress (not .onMoveCommand — which does
+            // not fire for focusable custom views on this macOS build).
+            .onKeyPress(phases: .down) { press in
+                let direction: MoveCommandDirection
+                switch press.key {
+                case .downArrow:  direction = .down
+                case .upArrow:    direction = .up
+                case .leftArrow:  direction = .left
+                case .rightArrow: direction = .right
+                default: return .ignored
+                }
+                moveFocus(direction, in: filtered, proxy: proxy,
+                          shift: press.modifiers.contains(.shift))
+                return .handled
+            }
+            .onKeyPress(.return) {
+                openWindow(value: PlaybackRoute(entry))
+                return .handled
+            }
     }
 
-    /// Shared tap behavior: plain click → open the single-genome playback window;
-    /// ⌘/ctrl → toggle selection; shift → range-select. Used by both the grid
-    /// cell and the collection reorder-list row so the interaction stays uniform.
+    /// Shared click behavior (Finder/Photos model): plain click → select only
+    /// (double-click, claimed above, opens); ⌘/ctrl → toggle; shift → range.
+    /// Every click also focuses the card so arrow keys work right away.
     private func handleCellTap(_ entry: LibraryEntry, in filtered: [LibraryEntry]) {
+        focusedCellID = entry.id
         let mods = NSEvent.modifierFlags
         if mods.contains(.command) || mods.contains(.control) {
             model.toggleInSelection(entry)
         } else if mods.contains(.shift) {
             model.selectRange(entry, in: filtered)
         } else {
-            openWindow(value: PlaybackRoute(entry))
+            model.selectOnly(entry)
         }
     }
 
+    /// Arrow-key focus movement (C1): Finder-style — focus moves one slot in
+    /// the pressed direction (↑/↓ cross grid rows via the measured column
+    /// count), the moved-to card is selected, and shift EXTENDS the selection
+    /// from the anchor instead of replacing it. Scrolls the target into view
+    /// first so the lazy cell materializes before focus lands on it.
+    private func moveFocus(_ direction: MoveCommandDirection,
+                           in filtered: [LibraryEntry],
+                           proxy: ScrollViewProxy?,
+                           shift: Bool) {
+        guard let current = focusedCellID,
+              let idx = filtered.firstIndex(where: { $0.id == current }) else { return }
+        let next: Int
+        switch direction {
+        case .left:  next = idx - 1
+        case .right: next = idx + 1
+        case .up:    next = idx - gridColumnCount
+        case .down:  next = idx + gridColumnCount
+        @unknown default: return
+        }
+        guard filtered.indices.contains(next) else { return }
+        let target = filtered[next]
+        proxy?.scrollTo(target.id, anchor: .center)
+        focusedCellID = target.id
+        if shift {
+            model.selectRange(target, in: filtered)
+        } else {
+            model.selectOnly(target)
+        }
+    }
+
+    /// Columns in the active adaptive grid, mirroring LazyVGrid's own slot
+    /// math (n = floor((W + spacing) / (minimum + spacing))). Until a
+    /// measurement lands, horizontal movement still works via 1 column.
+    private var gridColumnCount: Int {
+        let slot = CGFloat(model.prefs.density.gridMinimum) + 16
+        guard gridWidth > slot else { return 1 }
+        return max(1, Int((gridWidth + 16) / slot))
+    }
+
     @ViewBuilder
-    private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry]) -> some View {
-        cellCore(entry, in: filtered)
+    private func cell(_ entry: LibraryEntry, in filtered: [LibraryEntry],
+                      proxy: ScrollViewProxy) -> some View {
+        cellCore(entry, in: filtered, proxy: proxy)
             .overlay(AppKitContextMenu { cellMenu(entry) })
             // One combined, actionable accessibility element per card (C1):
             // VoiceOver can browse the grid, activate to open, and reach every
@@ -1290,6 +1445,14 @@ struct LibraryView: View {
             var urls: [URL] = []
             for p in providers { if let u = await Self.loadDroppedURL(p) { urls.append(u) } }
             guard !urls.isEmpty else { return }
+            performImport(urls)
+        }
+    }
+
+    /// Shared import path (File > Import Genomes… ⇧⌘I and drag-and-drop):
+    /// runs the import and surfaces the result toast.
+    private func performImport(_ urls: [URL]) {
+        Task {
             let r = await model.importFiles(urls)
             if r.imported == 0 { importToast = "Nothing imported (skipped \(r.skipped))" }
             else if r.skipped > 0 { importToast = "Imported \(r.imported), skipped \(r.skipped)" }
