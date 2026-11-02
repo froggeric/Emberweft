@@ -83,6 +83,7 @@ struct CollectionPlaybackWindow: View {
             }
         }
         .frame(minWidth: 640, minHeight: 420)
+        .tint(Color.ember)
         // Per-window title (H13): title by the collection's name once
         // resolved (until then the window-group literal shows).
         .navigationTitle(collectionName.isEmpty ? "Collection Playback" : collectionName)

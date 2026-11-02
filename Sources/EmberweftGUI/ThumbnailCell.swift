@@ -40,8 +40,25 @@ struct ThumbnailCell: View {
     enum ThumbState: Equatable { case placeholder, ready(NSImage), failed }
     @State private var state: ThumbState = .placeholder
     @State private var isHovered = false
+    /// Hover-scrub frames (nil until first hover renders them; static under
+    /// Reduce Motion). Frame 0 of the flipbook is the poster's own t=0 still.
+    @State private var flipFrames: [NSImage]?
 
     private var category: String? { entry.rank?.category ?? model.facets.facet(for: entry)?.category }
+
+    /// Authored card caption (craft item): curated Electric Sheep genomes
+    /// read "Filament 00628" (category + short id) instead of the raw archive
+    /// key "electricsheep.248.00628" — the most-read text in the app stops
+    /// being a database row. The full id moves to the tooltip; non-archive
+    /// files keep their stem.
+    private var cardName: String {
+        guard let category,
+              entry.displayName.hasPrefix("electricsheep."),
+              let shortID = entry.displayName.split(separator: ".").last,
+              !shortID.isEmpty
+        else { return entry.displayName }
+        return "\(category.capitalized) \(shortID)"
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -56,7 +73,7 @@ struct ThumbnailCell: View {
                 .overlay {
                     if selected {
                         RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.accentColor, lineWidth: 2)
+                            .strokeBorder(Color.ember, lineWidth: 2)
                     }
                 }
                 // Keyboard-focus ring (C1): sits OUTSIDE the selection ring so
@@ -65,7 +82,7 @@ struct ThumbnailCell: View {
                 .overlay {
                     if isFocused {
                         RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1.5)
+                            .strokeBorder(Color.ember.opacity(0.85), lineWidth: 1.5)
                             .padding(-3)
                     }
                 }
@@ -92,21 +109,42 @@ struct ThumbnailCell: View {
                     if !isHovered && !isFocused { SentimentBadge(entry: entry).padding(6) }
                 }
             if showsName {
-                Text(entry.displayName)
+                Text(cardName)
                     .font(.caption).lineLimit(1).foregroundStyle(.secondary)
+                    // The full archive id (what you'd search for, what the ES
+                    // community calls it) lives one hover away. (macOS has no
+                    // optional-String help overload; for stem-named cards the
+                    // tooltip simply repeats the caption.)
+                    .help(entry.displayName)
             }
         }
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: isHovered)
         .animation(reduceMotion ? nil : .snappy(duration: 0.12), value: isFocused)
         .task(id: entry.id, priority: .utility) { await load() }
+        // First hover renders the flipbook off-main (cached thereafter — the
+        // NSCache in ThumbnailService outlives the cell). Skipped entirely
+        // under Reduce Motion (static poster).
+        .task(id: isHovered, priority: .utility) {
+            guard isHovered, !reduceMotion, flipFrames == nil,
+                  case .ready = state,
+                  let flame = try? await model.libraryIndex.loadGenome(for: entry)
+            else { return }
+            let frames = await model.thumbnailService.flipbook(
+                for: entry, flame: flame,
+                posterParams: model.prefs.thumbnailRenderParams(),
+                backend: model.prefs.thumbnailBackend)
+            if let frames {
+                flipFrames = frames.compactMap { $0.toNSImage() }
+            }
+        }
     }
 
     /// Selection tick (top-right): visible when selected or hovered.
     private var tick: some View {
         Button { model.toggleInSelection(entry) } label: {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .foregroundStyle(selected ? Color.ember : Color.secondary)
                 .font(.title3)
                 .padding(6)
                 .contentShape(Circle())
@@ -132,7 +170,22 @@ struct ThumbnailCell: View {
         case .placeholder:
             RoundedRectangle(cornerRadius: 8).fill(.quaternary).redacted(reason: .placeholder)
         case .ready(let img):
-            Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+            // Hover-scrub flipbook (the signature craft item): once frames
+            // load, a hovered card plays its loop at ~10 fps — the grid
+            // becomes a living flock at browse time. Static everywhere else
+            // (and under Reduce Motion — decorative motion is dropped, the
+            // poster still is the fallback). TimelineView drives the cadence
+            // without per-frame state churn in the body.
+            if let frames = flipFrames, isHovered, !reduceMotion, frames.count > 1 {
+                TimelineView(.periodic(from: .now, by: 0.1)) { timeline in
+                    let index = Int(timeline.date.timeIntervalSinceReferenceDate * 10)
+                        % frames.count
+                    Image(nsImage: frames[frames.indices.contains(index) ? index : 0])
+                        .resizable().aspectRatio(contentMode: .fit)
+                }
+            } else {
+                Image(nsImage: img).resizable().aspectRatio(contentMode: .fit)
+            }
         case .failed:
             ZStack {
                 Color.black

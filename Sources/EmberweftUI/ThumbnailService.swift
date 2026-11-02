@@ -170,6 +170,57 @@ public actor ThumbnailService {
         return .image(display)
     }
 
+    // MARK: - Flipbook frames (craft: hover-scrub)
+
+    /// Frames per flipbook (~8 per the spec; t=1 is rotationally t=0, excluded).
+    public static let flipbookFrameCount = 8
+
+    /// Flipbook memory cache — hover artifacts only (never disk: they're tiny,
+    /// cheap to re-render, and age out with browsing). ~100 entries × 8 frames
+    /// × 256×144 ≈ 30 MB worst case before NSCache eviction.
+    private let flipbooks = NSCache<NSString, FlipbookBox>()
+
+    private final class FlipbookBox {
+        let frames: [RGBA8Image]
+        init(_ frames: [RGBA8Image]) { self.frames = frames }
+    }
+
+    /// Render one loop cycle's flipbook frames for hover-scrub (the signature
+    /// craft item): `Loop.blend` at evenly spaced t — frame 0 IS the poster's
+    /// t=0 still — framing-normalized like the poster (M6.6) so the motion
+    /// matches the still's framing. Rendered at deliberately small params
+    /// (256×144, spp ≤ 4): 8 tiny frames keep first-hover latency low on
+    /// either backend. Deterministic (rule #2): same inputs ⇒ same frames.
+    public func flipbook(for entry: LibraryEntry,
+                          flame: Flame,
+                          posterParams: RenderParams,
+                          backend: AppPreferences.Backend) async -> [RGBA8Image]? {
+        guard flame.isRenderable else { return nil }
+        let params = RenderParams(seed: posterParams.seed,
+                                   width: 256, height: 144,
+                                   oversample: 1,
+                                   samplesPerPixel: min(posterParams.samplesPerPixel, 4))
+        let key = "flip1__" + Self.cacheKey(
+            id: entry.id, renderW: params.width, renderH: params.height,
+            displayW: params.width, displayH: params.height,
+            spp: params.samplesPerPixel, backend: backend.rawValue, seed: params.seed)
+        if let box = flipbooks.object(forKey: key as NSString) { return box.frames }
+
+        let normalized = Framing.normalize(flame: flame, renderWidth: params.width)
+        var frames: [RGBA8Image] = []
+        for i in 0..<Self.flipbookFrameCount {
+            let t = Double(i) / Double(Self.flipbookFrameCount)
+            let blended = Loop.blend(normalized, t: t)
+            let full = await render(flame: blended, params: params, backend: backend)
+            guard let display = full.scaled(toWidth: params.width, toHeight: params.height),
+                  !full.isAllZero else { continue }
+            frames.append(display)
+        }
+        guard frames.count >= 2 else { return nil }
+        flipbooks.setObject(FlipbookBox(frames), forKey: key as NSString)
+        return frames
+    }
+
     // MARK: - Cache key (pure, deterministic — rule #2)
 
     /// Deterministic cache key from string/int components only. Same inputs ⇒

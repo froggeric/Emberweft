@@ -39,6 +39,7 @@ struct SettingsView: View {
                 .tabItem { Label("Flock", systemImage: "bird") }
         }
         .frame(width: 460)
+        .tint(Color.ember)
         .onChange(of: model.prefs) { _, _ in
             try? model.prefs.save()
         }

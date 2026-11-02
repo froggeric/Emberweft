@@ -148,6 +148,9 @@ struct LibraryView: View {
         // title/search toolbar row fight for width. 720 keeps sidebar-min +
         // one card column + the toolbar legible.
         .frame(minWidth: 720, minHeight: 480)
+        // Ember accent (craft): prominent buttons ride the app tint; explicit
+        // Color.ember sites cover selection identity.
+        .tint(Color.ember)
         // Session restoration (the @SceneStorage gap): reopen where the user
         // left — destination + filter (incl. search) from scene storage.
         .onAppear { restoreSessionState() }
@@ -603,7 +606,7 @@ struct LibraryView: View {
             .overlay {
                 if isDropTargeted {
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.accentColor, lineWidth: 2)
+                        .strokeBorder(Color.ember, lineWidth: 2)
                         .overlay(alignment: .bottom) {
                             Text("Drop to add genomes or folders")
                                 .font(.callout)
@@ -1026,7 +1029,7 @@ struct LibraryView: View {
             .overlay {
                 if isTarget {
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                        .strokeBorder(Color.ember, lineWidth: 3)
                 }
             }
             // Reorder affordance (it had none): a hover-revealed grip with its
@@ -1459,7 +1462,7 @@ struct LibraryView: View {
                     .font(.caption2).bold().monospacedDigit()
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.accentColor, in: Capsule())
+                    .background(Color.ember, in: Capsule())
             }
         }
     }

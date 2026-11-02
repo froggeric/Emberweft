@@ -56,6 +56,7 @@ struct PlaybackWindow: View {
                 .hidden()
         }
         .frame(minWidth: 640, minHeight: 420)
+        .tint(Color.ember)
         // Per-window title (H13): with several non-modal playback windows
         // open, the Window menu / Mission Control must tell them apart —
         // title by the genome's display name (the file stem).
