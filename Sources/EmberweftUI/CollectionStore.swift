@@ -159,6 +159,20 @@ public final class CollectionsStore {
         scheduleSave()
     }
 
+    /// Batch removal of stored-index entries (the selection bar's "Remove from
+    /// Collection" — previously removable only one right-click at a time).
+    /// Indices are STORED positions; removal runs in DESCENDING order so
+    /// earlier removals never shift later indices. Out-of-range indices are
+    /// dropped; no-op when the collection is unknown or the set is empty.
+    public func removeEntries(at storedIndices: IndexSet, from id: UUID) {
+        guard let i = index(of: id), !storedIndices.isEmpty else { return }
+        for index in storedIndices.sorted(by: >)
+        where collections[i].entries.indices.contains(index) {
+            collections[i].entries.remove(at: index)
+        }
+        scheduleSave()
+    }
+
     /// Move the entry at `from` to `to` within a collection's stored `entries`
     /// (Move Up/Down — the context-menu accessible fallback). Semantics mirror
     /// `Array.move`: the element at `from` is removed then inserted at `to`.

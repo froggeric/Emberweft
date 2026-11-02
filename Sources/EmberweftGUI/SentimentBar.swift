@@ -19,7 +19,11 @@ struct SentimentBar: View {
             segment(1, "hand.thumbsup", .green, "Like")
         }
         .frame(maxWidth: .infinity, minHeight: 30)
-        .background(.ultraThinMaterial.opacity(0.92), in: RoundedRectangle(cornerRadius: 6))
+        // A step up the material ladder (H11): the bar floats over bright flame
+        // artwork, so the thinnest material let content bleed through and the
+        // glyphs fell near 2:1 contrast. Never stack .opacity on a Material or
+        // on an already-translucent semantic color.
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func segment(_ value: Int, _ icon: String, _ tint: Color, _ label: String) -> some View {
@@ -28,13 +32,18 @@ struct SentimentBar: View {
             model.metadataStore.setSentiment(value, for: entry)
         } label: {
             Image(systemName: active ? "\(icon).fill" : icon)
-                .foregroundStyle(active ? tint : Color.secondary.opacity(0.7))
+                // No .opacity(0.7) on the inactive state — .secondary is already
+                // the dimmed label color; compounding them dropped contrast.
+                .foregroundStyle(active ? tint : Color.secondary)
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .symbolEffect(.bounce, value: active)
         .accessibilityLabel(label)
+        // State must be conveyed, not just identity (a11y medium): VoiceOver
+        // announces which rating is active.
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 
@@ -64,6 +73,11 @@ struct SentimentBadge: View {
 /// "Add to ▾" (appends the selection to an existing collection).
 struct SelectionBar: View {
     @Environment(AppModel.self) private var model
+
+    /// The collection being browsed, if any (nil on non-collection
+    /// destinations). When set, the bar gains "Remove from Collection" —
+    /// bulk removal was previously reachable only via N per-card right-clicks.
+    var activeCollection: GenomeCollection?
 
     /// Presents the "Save as Collection…" name sheet.
     @State private var showCreateSheet = false
@@ -134,6 +148,12 @@ struct SelectionBar: View {
                 }
             }
             Divider().frame(height: 18)
+            if let c = activeCollection {
+                Button { removeFromCollection(c) } label: {
+                    Label("Remove from Collection", systemImage: "minus.circle")
+                }
+                .help("Remove the selected genomes from “\(c.name)”. The files stay in your library.")
+            }
             Button { model.clearSelection() } label: {
                 Label("Clear", systemImage: "xmark").labelStyle(.titleAndIcon)
             }
@@ -236,6 +256,18 @@ struct SelectionBar: View {
             .map(CollectionEntry.init)
         model.collectionsStore.create(name: newName, from: entries)
         newName = ""
+        model.clearSelection()
+    }
+
+    /// Remove the selection from the browsed collection (stored indices,
+    /// descending-order batch removal — see `CollectionsStore.removeEntries`),
+    /// then clear the selection.
+    private func removeFromCollection(_ c: GenomeCollection) {
+        let selectedIds = Set(model.selection.map { CollectionEntry($0).identity })
+        let indices = IndexSet(c.entries.enumerated().compactMap {
+            selectedIds.contains($0.element.identity) ? $0.offset : nil
+        })
+        model.collectionsStore.removeEntries(at: indices, from: c.id)
         model.clearSelection()
     }
 

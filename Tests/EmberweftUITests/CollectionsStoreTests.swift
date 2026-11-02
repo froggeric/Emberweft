@@ -127,6 +127,30 @@ final class CollectionsStoreTests: XCTestCase {
         XCTAssertEqual(store.collection(id: c.id)?.entries.count, 1)
     }
 
+    // MARK: - removeEntries (batch, stored indices)
+
+    func testRemoveEntriesBatchRemovesInAnyOrder() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle),
+                                                ce("c", .bundle), ce("d", .bundle)])
+        store.removeEntries(at: IndexSet([0, 2]), from: c.id)   // remove "a" and "c"
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["b", "d"])
+    }
+
+    func testRemoveEntriesOutOfRangeIndicesAreDropped() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle), ce("b", .bundle)])
+        store.removeEntries(at: IndexSet([1, 9]), from: c.id)   // 9 dropped, 1 removed
+        XCTAssertEqual(store.collection(id: c.id)?.entries.map(\.id), ["a"])
+    }
+
+    func testRemoveEntriesUnknownCollectionIsNoOp() {
+        let store = CollectionsStore()
+        let c = store.create(name: "C", from: [ce("a", .bundle)])
+        store.removeEntries(at: IndexSet([0]), from: UUID())
+        XCTAssertEqual(store.collection(id: c.id)?.entries.count, 1)
+    }
+
     // MARK: - moveEntry (reorder)
 
     func testMoveEntryDownSwapsOrder() {

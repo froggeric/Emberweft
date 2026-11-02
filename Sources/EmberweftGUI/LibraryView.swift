@@ -549,12 +549,18 @@ struct LibraryView: View {
             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                 handleDrop(providers); return true
             }
-            .overlay(alignment: .bottom) {
+            // The selection bar insets the scroll content (it used to OVERLAY
+            // the bottom row, hiding the cards being acted on); the transient
+            // import toast stays a floating overlay.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 if !model.selection.isEmpty {
-                    SelectionBar()
-                        .padding(.bottom, 16)
+                    SelectionBar(activeCollection: activeCollection)
+                        .padding(.bottom, 10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if let toast = importToast {
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let toast = importToast, model.selection.isEmpty {
                     Text(toast)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -630,6 +636,15 @@ struct LibraryView: View {
             return c.name
         }
         return destination.title
+    }
+
+    /// The browsed collection, if the active destination is one (feeds the
+    /// selection bar's Remove-from-Collection action).
+    private var activeCollection: GenomeCollection? {
+        if case .collection(let id) = destination {
+            return model.collectionsStore.collection(id: id)
+        }
+        return nil
     }
 
     /// The `LoadState` for the selected destination.
