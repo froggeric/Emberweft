@@ -75,7 +75,7 @@ struct SettingsView: View {
                 }
 
                 Picker("Backend", selection: $model.prefs.backend) {
-                    ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
+                    ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 .help("Metal renders on the GPU (fast, recommended); CPU is slower. The image is identical either way.")
 
@@ -106,7 +106,7 @@ struct SettingsView: View {
         return Form {
             Section("Thumbnails") {
                 Picker("Thumbnail backend", selection: $model.prefs.thumbnailBackend) {
-                    ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
+                    ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 .help("Metal renders thumbnails off the main thread (fast, and it does not block the UI); CPU is slower, also off the main thread.")
                 Stepper("Thumbnail samples: \(model.prefs.thumbnailSPP)",
