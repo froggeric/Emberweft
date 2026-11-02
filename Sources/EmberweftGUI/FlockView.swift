@@ -155,7 +155,7 @@ private struct ShardPaceSteppers: View {
             Stepper("Loop: \(String(format: "%.1f", shard.loopSeconds)) s",
                     value: $shard.loopSeconds, in: 1...120, step: 0.5)
                 .onChange(of: shard.loopSeconds) { _, _ in applyPace() }
-            Stepper("Edge: \(String(format: "%.1f", shard.transSeconds)) s",
+            Stepper("Transition: \(String(format: "%.1f", shard.transSeconds)) s",
                     value: $shard.transSeconds, in: 1...120, step: 0.5)
                 .onChange(of: shard.transSeconds) { _, _ in applyPace() }
         }
@@ -705,7 +705,7 @@ private struct StitchTab: View {
             // hit/miss count UNIQUE archive work (a repeated loop that must be
             // generated is ONE will-gen); `segments` is the timeline slot total
             // (duplicates included — the progress denominator).
-            Text("Plan: \(hit) HIT, \(miss) will-gen · \(segments) segment\(segments == 1 ? "" : "s").")
+            Text("Plan: \(hit) reused · \(miss) to render · \(segments) segment\(segments == 1 ? "" : "s").")
                 .font(.caption).foregroundStyle(.secondary)
         case .resolving:
             HStack(spacing: 6) {

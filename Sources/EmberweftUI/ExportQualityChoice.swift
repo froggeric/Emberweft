@@ -67,7 +67,7 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
             return "off"
         case .spp(let n):
             let eff = n * (2 * TemporalSmoothing.centeredHalfWidth + 1)
-            return "smoothed, ≈\(eff) spp"
+            return "smoothed, ≈\(eff) samples/pixel"
         }
     }
 }

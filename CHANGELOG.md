@@ -22,6 +22,7 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: the menu bar now carries the app's commands — File (Open Directory… ⌘O, Import Genomes… ⇧⌘I, Export… ⇧⌘E, New Collection… ⇧⌘N), a Genome menu (Play ⌘↓, Like/Neutral/Dislike, Add to Collection), View (Toggle Sidebar ⌃⌘S, Filter ⇧⌘F), Edit > Find (⌘F focuses search), and a working Help item (⌘? opens the shortcut list).
 - GUI: playback windows are titled by their genome/collection name instead of all reading "Playback", so the Window menu and Mission Control can tell them apart.
 - GUI: the Flock area switches Generate/Stitch/Browse with a real tab view; switching no longer resets the other panes' forms mid-run.
+- GUI: user-facing language unified — one noun ("genome", no more flame/sheep drift), "loop"/"transition" everywhere (the Flock "Edge" stepper renamed), form labels renamed to outcomes (Motion blur, Smooth Motion, Same at Every Size / As Authored, Pause safety), and help text rewritten in plain language (no CLI names, no "reference oracle", no "Chaos-game", no unexplained "spp", no removed-algorithm descriptions in tooltips).
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).

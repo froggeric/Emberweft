@@ -975,7 +975,7 @@ struct LibraryView: View {
             ContentUnavailableView(
                 "Nothing liked yet",
                 systemImage: "hand.thumbsup",
-                description: Text("Mark flames with 👍 to build your favorites.")
+                description: Text("Mark genomes with the thumbs-up to build your favorites.")
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         case .all:

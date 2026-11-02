@@ -122,24 +122,24 @@ struct ExportSheet: View {
                             Text($0.sheetLabel).tag($0)
                         }
                     }
-                    .help("Auto probes Metal and falls back to CPU. CPU is the slower reference oracle; the image is identical either way.")
+                    .help("Auto uses Metal when available and falls back to CPU. The image is identical either way; CPU is slower.")
                     Picker("Framing", selection: $em.framingChoice) {
-                        Text("Normalized").tag(ExportSettings.FramingMode.normalized)
-                        Text("Authored").tag(ExportSettings.FramingMode.faithful)
+                        Text("Same at Every Size").tag(ExportSettings.FramingMode.normalized)
+                        Text("As Authored").tag(ExportSettings.FramingMode.faithful)
                     }
-                    .help("Normalized keeps each genome's authored framing at any resolution. Authored uses the genome's raw scale.")
+                    .help("Same at Every Size keeps each genome's authored composition at any resolution. As Authored uses the genome's raw scale, so framing varies with output size.")
                 }
 
-                Section("Motion") {
+                Section("Timing & Motion") {
                     Stepper("Loop duration \(String(format: "%.1f", em.loopDurationSeconds)) s",
                             value: $em.loopDurationSeconds, in: 0.1...120, step: 0.5)
                         .help("Loop length in seconds. Frames per segment = round(duration × FPS).")
                     Stepper("Transition duration \(String(format: "%.1f", em.transitionDurationSeconds)) s",
                             value: $em.transitionDurationSeconds, in: 0.1...120, step: 0.5)
-                        .help("Transition (edge) length in seconds. Shorter than loop keeps edges brief. Transition frames = round(duration × FPS).")
+                        .help("Transition length in seconds. Shorter than loop keeps transitions brief. Transition frames = round(duration × FPS).")
                     Stepper(temporalLabel, value: $em.temporalSamples, in: 1...64)
-                        .help("1 uses the genome default (≈1000 on real ES sheep, motion-blurred). Higher values are sharper but slower. Metal caps at 64.")
-                    Toggle("Temporal smoothing", isOn: temporalSmoothingBinding)
+                        .help(temporalHelp)
+                    Toggle("Smooth Motion", isOn: temporalSmoothingBinding)
                         .disabled(em.qualityChoice == .genomeDefault)
                         .help(smoothingHelp)
                     if em.qualityChoice != .genomeDefault {
@@ -149,9 +149,9 @@ struct ExportSheet: View {
                     }
                     Stepper("Seed \(seed)", value: $seed, in: 0...1_000_000_000)
                         .help("Deterministic render seed. Same seed + genome + params = identical output.")
-                    Stepper("Checkpoint every \(em.checkpointIntervalFrames) frames",
+                    Stepper("Pause safety every \(em.checkpointIntervalFrames) frames",
                             value: $em.checkpointIntervalFrames, in: 5...300)
-                        .help("Pause/resume granularity. Smaller = finer checkpoints + less re-render on resume, at the cost of more encoder sessions.")
+                        .help("How often completed work is checkpointed for pause/resume. Smaller = less re-render on resume, at the cost of more encoder sessions.")
                 }
             }
             .formStyle(.grouped)
@@ -203,7 +203,7 @@ struct ExportSheet: View {
             return "1 genome — \(name)"
         case .sequence(let flames, let name, _):
             let n = flames.count
-            return "Collection \"\(name)\" (\(n) sheep)"
+            return "Collection \"\(name)\" (\(n) genome\(n == 1 ? "" : "s"))"
         case .batch(let items):
             let n = items.count
             return "\(n) selected genome\(n == 1 ? "" : "s")"
@@ -217,10 +217,19 @@ struct ExportSheet: View {
             // for named tiers it's literal single-pass (sharp, fastest — the
             // genome-default ts was wasteful at low spp for invisible motion blur).
             return model.exportManager.qualityChoice == .genomeDefault
-                ? "Temporal samples (genome default)"
-                : "Temporal samples (single-pass)"
+                ? "Motion blur (genome default)"
+                : "Motion blur (single pass)"
         }
-        return "Temporal samples \(ts)"
+        return "Motion blur (\(ts) passes)"
+    }
+
+    /// Motion-blur stepper tooltip, conditional like `temporalLabel` (the old
+    /// static string contradicted the label's own tier distinction).
+    private var temporalHelp: String {
+        if model.exportManager.qualityChoice == .genomeDefault {
+            return "Uses the motion blur stored in each genome file (≈1000 passes on Electric Sheep archives — slow). Lower is sharper and faster."
+        }
+        return "Renders each frame in multiple passes for within-frame motion blur. 1 is sharpest and fastest; higher is smoother. Metal caps at 64."
     }
 
     /// M6.1 slice 2 / Task 10: bridges the `TemporalSmoothing` enum (`.auto`/
@@ -238,9 +247,11 @@ struct ExportSheet: View {
     /// (byte-identical unsmoothed) and why it's disabled at genome-default.
     private var smoothingHelp: String {
         if model.exportManager.qualityChoice == .genomeDefault {
-            return "Disabled — genome-default quality already uses α = 1.0 (no smoothing)."
+            return "Disabled at genome-default quality — it already renders each frame exactly as authored."
         }
-        return "ON: blend each frame with the prior histogram (α ramps with quality) for smoother motion. OFF: α = 1.0, byte-identical to the unsmoothed path."
+        // Shipped behavior (M6.1 rev): a CENTERED window blending each frame
+        // with its neighbors — not the old causal EMA this text used to describe.
+        return "Blends each frame with its neighbors to remove grain and flicker at lower quality. Off matches the raw per-frame render exactly."
     }
 
     /// Metal-unavailable notice when the user explicitly picked Metal and it's
@@ -261,7 +272,9 @@ struct ExportSheet: View {
     }
 
     private var qualityHelp: String {
-        "Genome default is byte-identical to `emberweft animate`. Named tiers fix samples-per-pixel (oversample pinned 1)."
+        "Genome reproduces the exact quality stored in each genome file — slowest, "
+            + "and the only tier that matches the original Electric Sheep render. "
+            + "Low, Medium, and High set the sampling level: higher is cleaner but slower."
     }
 
     /// Start is disabled unless the manager can start AND the source has at

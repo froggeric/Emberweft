@@ -153,7 +153,7 @@ struct PreviewQualityPopover: View {
                 Stepper(value: Binding(get: { effSPP }, set: { applySPP($0) }), in: 1...64) {
                     Text("\(effSPP)").monospacedDigit()
                 }
-                .help("Chaos-game iterations per pixel: the main quality-versus-cost knob. Higher reduces noise and reveals finer detail at roughly proportional render cost; low values look grainy.")
+                .help("Samples per pixel: the main quality-versus-cost knob. Higher reduces noise and reveals finer detail at roughly proportional render cost; low values look grainy.")
             }
 
             LabeledRow("Oversample") {
@@ -186,7 +186,7 @@ struct PreviewQualityPopover: View {
                         Text("CPU").tag(AppPreferences.Backend.cpu)
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 120)
-                    .help("Metal renders on the GPU (fast, recommended); CPU is the slower reference oracle. The image is identical either way.")
+                    .help("Metal renders on the GPU (fast, recommended); CPU is slower. The image is identical either way.")
                 } else {
                     Text("CPU (Metal unavailable)").foregroundStyle(.secondary)
                 }

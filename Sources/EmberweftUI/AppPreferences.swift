@@ -395,9 +395,9 @@ public struct AppPreferences: Codable, Sendable, Equatable {
         /// One-line spec for the popover row (resolution · spp · oversample).
         public var detail: String {
             switch self {
-            case .draft: return "854×480 · 2 spp"
-            case .balanced: return "1280×720 · 8 spp"
-            case .quality: return "1920×1080 · 16 spp · 2×"
+            case .draft: return "854×480 · 2 samples/px"
+            case .balanced: return "1280×720 · 8 samples/px"
+            case .quality: return "1920×1080 · 16 samples/px · 2×"
             case .custom: return "Custom values"
             }
         }

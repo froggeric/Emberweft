@@ -319,9 +319,10 @@ final class AppPreferencesTests: XCTestCase {
 
     func testPresetDerivedValuesAreInternallyConsistent() {
         // The preset's computed props are the single source of truth previewParams reads.
+        // (Copy remediation: the spec token is spelled "samples/px", not "spp".)
         for preset in [AppPreferences.PreviewPreset.draft, .balanced, .quality] {
-            XCTAssertEqual(preset.detail.contains("\(preset.samplesPerPixel) spp"), true,
-                           "detail should mention the preset's spp")
+            XCTAssertEqual(preset.detail.contains("\(preset.samplesPerPixel) samples/px"), true,
+                           "detail should mention the preset's samples per pixel")
         }
     }
 

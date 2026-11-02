@@ -34,7 +34,7 @@ struct SettingsView: View {
                 if model.prefs.previewPreset == .custom {
                     let r = AppPreferences.PreviewResolution.nearest(
                         width: model.prefs.previewWidth, height: model.prefs.previewHeight)
-                    Text("Custom — \(r.label) · \(model.prefs.previewSamplesPerPixel) spp · \(model.prefs.previewOversample)× (set via the playback popover)")
+                    Text("Custom — \(r.label) · \(model.prefs.previewSamplesPerPixel) samples/pixel · \(model.prefs.previewOversample)× (set via the playback popover)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -42,7 +42,7 @@ struct SettingsView: View {
                 Picker("Backend", selection: $model.prefs.backend) {
                     ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
                 }
-                .help("Metal renders on the GPU (fast, recommended); CPU is the slower reference oracle. The image is identical either way.")
+                .help("Metal renders on the GPU (fast, recommended); CPU is slower. The image is identical either way.")
 
                 Picker("Target FPS", selection: $model.prefs.targetFPS) {
                     Text("24").tag(24); Text("30").tag(30); Text("60").tag(60)
@@ -64,10 +64,10 @@ struct SettingsView: View {
                 Picker("Thumbnail backend", selection: $model.prefs.thumbnailBackend) {
                     ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
                 }
-                .help("Metal renders thumbnails off the main thread (fast, and it does not block the UI); CPU is the slower reference renderer, also off the main thread.")
+                .help("Metal renders thumbnails off the main thread (fast, and it does not block the UI); CPU is slower, also off the main thread.")
                 Stepper("Thumbnail samples: \(model.prefs.thumbnailSPP)",
                         value: $model.prefs.thumbnailSPP, in: 1...64)
-                .help("Chaos-game iterations per pixel for grid thumbnails. Higher gives cleaner thumbnails but takes longer to fill the grid.")
+                .help("Samples per pixel for grid thumbnails. Higher gives cleaner thumbnails but takes longer to fill the grid.")
             }
 
             Section("Library folders") {

@@ -113,7 +113,7 @@ struct EmberweftApp: App {
                     ContentUnavailableView(
                         "Genome no longer available",
                         systemImage: "photo.badge.exclamationmark",
-                        description: Text("This flame may have been removed or its folder rescanned. Close this window and pick another from the library.")
+                        description: Text("This genome may have been removed or its folder rescanned. Close this window and pick another from the library.")
                     )
                     .frame(minWidth: 480, minHeight: 320)
                 }
