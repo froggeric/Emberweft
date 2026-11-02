@@ -198,23 +198,32 @@ final class SimilarityTests: XCTestCase {
         return out
     }
 
-    /// Resolve the `emberweft` executable: build it, then read its bin path.
+    /// Resolve the already-built `emberweft` executable WITHOUT spawning
+    /// `swift build`: under `swift test`, the driver holds the package-level
+    /// `.build` lock for the whole run, so a nested `swift build --show-bin-path`
+    /// DEADLOCKS forever (new swift-build lock architecture, 26B118 toolchain).
+    /// Probe the known bin-path layouts directly instead; skip loudly when the
+    /// CLI has not been built yet (the in-process tests still cover the logic).
     private func resolveEmberweftExecutable() -> String? {
-        let task = Process()
-        task.launchPath = "/usr/bin/env"
-        task.arguments = ["swift", "build", "--product", "emberweft", "--show-bin-path"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        do { try task.run() } catch { return nil }
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let bin = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let bin, !bin.isEmpty else { return nil }
-        let exe = bin + "/emberweft"
-        return FileManager.default.isExecutableFile(atPath: exe) ? exe : nil
+        // `swift test` runs from the package root; #filePath-relative fallback
+        // covers Xcode/other runners with a different cwd.
+        let packageRoots = [
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+            URL(fileURLWithPath: #file)
+                .deletingLastPathComponent()      // Tests/FlameKitTests
+                .deletingLastPathComponent()      // Tests
+                .deletingLastPathComponent()      // package root
+        ]
+        // .build/debug = new swift-build layout; .build/arm64-apple-macosx/debug
+        // = the classic layout (older toolchains).
+        let binRelatives = ["debug", "arm64-apple-macosx/debug"]
+        for root in packageRoots {
+            for rel in binRelatives {
+                let exe = root.appendingPathComponent(".build/\(rel)/emberweft").path
+                if FileManager.default.isExecutableFile(atPath: exe) { return exe }
+            }
+        }
+        return nil
     }
 
     /// Spawn `exe` with `args`, wait, return trimmed stdout as a String.
