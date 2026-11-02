@@ -87,7 +87,7 @@ public final class SequencePlaybackViewModel {
         self.flames = flames
         self.prefsSeed = prefs.seed
         self.params = prefs.previewParams()
-        self.renderer = (prefs.backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.renderer = Self.makeRenderer(backend: prefs.backend)
         self.targetFPS = Double(prefs.targetFPS)
         self.framesPerSegment = 160
         self.transitionFramesPerSegment = 80
@@ -100,6 +100,14 @@ public final class SequencePlaybackViewModel {
         } else {
             buildDispatcher()
         }
+    }
+
+    /// Metal only when the device can actually deliver it (H5) — same gate as
+    /// `PlaybackViewModel.makeRenderer`: prevents silent black playback at a
+    /// healthy green FPS readout on a Metal-less machine.
+    private static func makeRenderer(backend: AppPreferences.Backend) -> any Renderer {
+        (backend == .metal && MetalFrameRenderer.isMetalAvailable)
+            ? MetalFrameRenderer() : CPUFrameRenderer()
     }
 
     private func buildDispatcher() {
@@ -173,7 +181,7 @@ public final class SequencePlaybackViewModel {
     public func updateParams(prefs: AppPreferences) {
         let wasPlaying = isPlaying
         self.params = prefs.previewParams()
-        self.renderer = (prefs.backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.renderer = Self.makeRenderer(backend: prefs.backend)
         self.targetFPS = Double(prefs.targetFPS)
         runTask?.cancel(); runTask = nil
         dispatcher = nil

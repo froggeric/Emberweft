@@ -29,6 +29,11 @@ import FlameExport
 struct ExportProgressSurface: View {
     @Environment(AppModel.self) private var model
 
+    /// Stop/discard confirmation (H1): cancelling a resumable export deletes
+    /// the checkpoint + completed chunks — potentially hours of render work —
+    /// so it confirms with a Pause-Instead escape. True while the alert shows.
+    @State private var confirmingStop = false
+
     var body: some View {
         let state = model.exportManager.state
         if state != .idle {
@@ -38,7 +43,27 @@ struct ExportProgressSurface: View {
                 .shadow(radius: 6, y: 2)
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .transition(.opacity)
+                .alert("Stop this export?", isPresented: $confirmingStop) {
+                    Button("Keep Exporting", role: .cancel) {}
+                    if model.exportManager.isPausable && !isPausedState {
+                        Button("Pause Instead") {
+                            Task { await model.exportManager.pause() }
+                        }
+                    }
+                    Button("Stop and Discard", role: .destructive) {
+                        Task { await model.exportManager.cancel() }
+                    }
+                } message: {
+                    Text("Completed frames will be discarded. Pausing keeps them for a later resume.")
+                }
         }
+    }
+
+    /// True while the run sits in `.paused` (the alert hides "Pause Instead"
+    /// there — Resume is already the card's primary action).
+    private var isPausedState: Bool {
+        if case .paused = model.exportManager.state { return true }
+        return false
     }
 
     @ViewBuilder
@@ -85,7 +110,7 @@ struct ExportProgressSurface: View {
             Spacer(minLength: 8)
             Button("Resume") { Task { await em.resume() } }
                 .help("Continue from the last checkpoint.")
-            Button("Discard") { em.discardPaused() }
+            Button("Discard") { confirmingStop = true }
                 .help("Delete the checkpoint and completed chunks, return to idle.")
         }
     }
@@ -114,7 +139,13 @@ struct ExportProgressSurface: View {
                     .help("Finish the in-flight frame, keep completed work, and stop. Resume later.")
                 }
                 Button(isCancelling ? "Cancelling…" : "Cancel") {
-                    Task { await em.cancel() }
+                    // Any rendered work ⇒ confirm (discarding deletes hours of
+                    // checkpointed progress); frame 0 ⇒ nothing to lose yet.
+                    if snap.currentFrame > 0 {
+                        confirmingStop = true
+                    } else {
+                        Task { await em.cancel() }
+                    }
                 }
                 .disabled(isCancelling)
                 .help("Finish the in-flight frame, then stop and discard the partial file.")

@@ -34,6 +34,11 @@ struct LibraryView: View {
     /// "New Collection…" row). Mirrors the rename-sheet pattern above.
     @State private var creatingCollectionEntries: [CollectionEntry]?
     @State private var createText: String = ""
+    /// Pending collection for the delete confirmation (H1): nil ⇒ dialog
+    /// hidden. A collection is a hand-built, ordered playlist — deleting it is
+    /// unrecoverable (no undo anywhere), so it confirms like folder removal
+    /// does (the LOWER-stakes action that already confirms).
+    @State private var pendingCollectionDeletion: GenomeCollection?
 
     /// Keyboard focus for grid navigation (C1): the entry id of the focused
     /// card. Arrows move it Finder-style (move + select), Return opens, and a
@@ -68,6 +73,24 @@ struct LibraryView: View {
             sidebar
         } detail: {
             detailGrid
+                // Collection-delete confirmation (H1), attached to the DETAIL
+                // column (one dialog per node — the folder-removal dialog
+                // lives on the split view above).
+                .confirmationDialog(
+                    Text("Delete “\(pendingCollectionDeletion?.name ?? "collection")”?"),
+                    isPresented: Binding(
+                        get: { pendingCollectionDeletion != nil },
+                        set: { if !$0 { pendingCollectionDeletion = nil } }
+                    ),
+                    presenting: pendingCollectionDeletion
+                ) { c in
+                    Button("Delete Collection", role: .destructive) {
+                        deleteCollection(c.id)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { c in
+                    Text("“\(c.name)” and its \(resolvedCount(of: c)) genomes are removed from the sidebar. The genome files stay in your library.")
+                }
                 // Create-collection sheet (same `NameCollectionSheet` as the
                 // rename one). Attached HERE, not as another `.sheet` on the
                 // NavigationSplitView chain above — two `.sheet(isPresented:)`
@@ -320,7 +343,7 @@ struct LibraryView: View {
                 renamingCollection = c; renameText = c.name
             })
             menu.addItem(NSMenuItem("Delete", destructive: true) {
-                deleteCollection(c.id)
+                pendingCollectionDeletion = c
             })
             return menu
         })

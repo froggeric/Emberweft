@@ -27,6 +27,10 @@ implications of porting flam3) is the owner's decision and under review.
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
 - GUI: the hidden selection tick on unselected cards no longer intercepts clicks in the top-right corner of a card or exposes a phantom "Select" element.
 - GUI: cancelling the Stitch save panel now cancels the stitch (it used to proceed to a fixed output path and silently overwrite the previous result).
+- GUI: destructive actions now confirm instead of firing instantly — deleting a collection, moving an archive artifact to the Trash (formerly a permanent delete), and stopping/discarding an export (which deletes checkpointed work; the alert offers Pause Instead).
+- GUI: Browse pagination can no longer strand past the last page into a false "No artifacts" dead end; Next disables on the last page and the pager stays mounted.
+- GUI: when Metal is unavailable, playback falls back to the CPU renderer instead of showing solid black at a healthy green FPS readout.
+- GUI: dragging the scrub slider (or arrow-stepping) while playing now seeks live — the render loop is reseeded from the new position instead of silently overriding the drag every frame.
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).

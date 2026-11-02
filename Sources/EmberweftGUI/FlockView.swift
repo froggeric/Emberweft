@@ -829,6 +829,10 @@ private struct BrowseTab: View {
     @State private var offset = 0
     @State private var rebuilding = false
     @State private var error: String?
+    /// Pending artifact for the delete confirmation (H1): nil ⇒ dialog hidden.
+    /// Deleting destroys minutes-to-hours of render output, so it confirms and
+    /// moves files to the Trash (recoverable) instead of permanent removal.
+    @State private var pendingDelete: ArtifactRow?
 
     private let pageSize = 60
 
@@ -878,6 +882,24 @@ private struct BrowseTab: View {
             offset = 0
             Task { await loadPage() }
         }
+        // Delete confirmation (H1): each artifact is minutes-to-hours of
+        // render output — confirm, then Trash (recoverable) instead of
+        // permanent removal. Triggered from the AppKit context menu; the
+        // bridge's one-runloop-turn deferral lets the dialog present after
+        // menu teardown.
+        .confirmationDialog(
+            Text("Delete this \(pendingDelete?.kind == .loop ? "loop" : "transition")?"),
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { row in
+            Button("Move to Trash", role: .destructive) { delete(row) }
+            Button("Cancel", role: .cancel) {}
+        } message: { row in
+            Text("It was rendered at \(row.spp) samples per pixel and must be re-rendered to restore.")
+        }
     }
 
     @ViewBuilder
@@ -904,7 +926,7 @@ private struct BrowseTab: View {
                 description: Text("Generate material to populate the archive, or Rebuild from existing \(flockRoot.path) files.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if rows.isEmpty {
+        } else if stats.count == 0 {
             ContentUnavailableView(
                 "No artifacts in \(selectedShardName ?? "shard")",
                 systemImage: "shippingbox",
@@ -912,22 +934,33 @@ private struct BrowseTab: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.adaptive(minimum: 180), spacing: 12),
-                                          count: 4),
-                          spacing: 12) {
-                    ForEach(rows, id: \.file) { row in
-                        artifactCell(row)
+            // H7: the pager stays mounted whenever the shard HAS artifacts —
+            // an offset past the last page (deletions, exact-multiple counts)
+            // shows an empty grid + a working Previous instead of a false
+            // "No artifacts" dead end with no way back.
+            if rows.isEmpty {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.adaptive(minimum: 180), spacing: 12),
+                                              count: 4),
+                              spacing: 12) {
+                        ForEach(rows, id: \.file) { row in
+                            artifactCell(row)
+                        }
                     }
+                    .padding(14)
                 }
-                .padding(14)
             }
             HStack {
-                Button("← Prev") { offset = max(0, offset - pageSize); Task { await loadPage() } }
+                Button("Previous") { offset = max(0, offset - pageSize); Task { await loadPage() } }
                     .disabled(offset == 0)
                 Text(pageLabel).font(.caption).foregroundStyle(.secondary)
-                Button("Next →") { offset += pageSize; Task { await loadPage() } }
-                    .disabled(rows.count < pageSize)
+                Button("Next") { offset += pageSize; Task { await loadPage() } }
+                    // Last page when the page END reaches the count (an
+                    // exact-multiple page used to leave Next enabled into an
+                    // empty page).
+                    .disabled(offset + rows.count >= stats.count)
                 Spacer()
                 Text(humanBytes(stats.bytes))
                     .font(.caption).foregroundStyle(.secondary)
@@ -966,7 +999,9 @@ private struct BrowseTab: View {
         .overlay(AppKitContextMenu {
             let menu = NSMenu()
             menu.addItem(NSMenuItem("Show in Finder") { reveal(row) })
-            menu.addItem(NSMenuItem("Delete", destructive: true) { delete(row) })
+            menu.addItem(NSMenuItem("Move to Trash", destructive: true) {
+                pendingDelete = row
+            })
             return menu
         })
     }
@@ -1030,10 +1065,17 @@ private struct BrowseTab: View {
         Task {
             try? await catalog.removeArtifact(aGen: row.aGen, aId: row.aId,
                                               bGen: row.bGen, bId: row.bId, shard: name)
-            // Best-effort file removal (the .mov + .jpg); the catalog is truth.
+            // Best-effort file removal (.mov + .jpg) to the TRASH — recoverable
+            // (each artifact is minutes-to-hours of render output); the catalog
+            // is truth for the archive listing.
             let base = flockRoot.appendingPathComponent(row.file)
-            try? FileManager.default.removeItem(at: base)
-            try? FileManager.default.removeItem(at: base.deletingPathExtension().appendingPathExtension("jpg"))
+            let jpg = base.deletingPathExtension().appendingPathExtension("jpg")
+            var thrown: [URL] = []
+            if FileManager.default.fileExists(atPath: base.path) { thrown.append(base) }
+            if FileManager.default.fileExists(atPath: jpg.path) { thrown.append(jpg) }
+            if !thrown.isEmpty {
+                NSWorkspace.shared.recycle(thrown) { _, _ in }   // best-effort
+            }
             await loadPage()
             await flockModel.refreshBrowse()
         }

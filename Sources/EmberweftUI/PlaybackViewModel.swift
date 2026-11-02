@@ -61,7 +61,7 @@ public final class PlaybackViewModel {
                      cycles: Int = 1) {
         self.flame = flame
         self.params = params
-        self.renderer = (backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.renderer = Self.makeRenderer(backend: backend)
         self.targetFPS = targetFPS
         self.framesPerSegment = framesPerSegment
         self.cycles = cycles
@@ -81,8 +81,17 @@ public final class PlaybackViewModel {
                              backend: AppPreferences.Backend,
                              targetFPS: Double) {
         self.params = params
-        self.renderer = (backend == .metal) ? MetalFrameRenderer() : CPUFrameRenderer()
+        self.renderer = Self.makeRenderer(backend: backend)
         self.targetFPS = targetFPS
+    }
+
+    /// Metal only when the device can actually deliver it (H5): an ungated
+    /// `.metal` pick on a Metal-less machine rendered all-black frames at a
+    /// healthy green FPS readout. Mirrors the export path's `resolveBackend`
+    /// fallback — CPU produces the same image, just slower.
+    private static func makeRenderer(backend: AppPreferences.Backend) -> any Renderer {
+        (backend == .metal && MetalFrameRenderer.isMetalAvailable)
+            ? MetalFrameRenderer() : CPUFrameRenderer()
     }
 
     // MARK: - Transport
@@ -104,10 +113,18 @@ public final class PlaybackViewModel {
     public func togglePlaying() { isPlaying ? pause() : play() }
 
     /// Set the loop position (0…1). While **paused**, renders that frame on
-    /// demand (scrub). While playing, the loop picks the new position up next frame.
+    /// demand (scrub). While **playing**, reseeds the loop from the new
+    /// position (H6): the running loop derives position from its own frame
+    /// counter and would overwrite the drag on the next frame (~16 ms), so a
+    /// live scrub restarts the loop seeded from `position` — QuickTime-style.
     public func scrub(to p: Double) async {
-        position = min(max(p, 0), 1)
-        if !isPlaying { await renderOnce(at: position) }
+        let clamped = min(max(p, 0), 1)
+        position = clamped
+        if isPlaying {
+            startLoop()
+        } else {
+            await renderOnce(at: clamped)
+        }
     }
 
     /// Step the loop position by `delta` whole frames (←/→ keys). One frame =
