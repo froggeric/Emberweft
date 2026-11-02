@@ -20,6 +20,13 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: library grid cards are now real accessibility elements — VoiceOver can browse the grid, open a genome, change its rating, and select or deselect it without a pointer (activate opens; Select, Like, Neutral, Dislike, and Remove from Collection are named rotor actions).
 - GUI: the library grid is keyboard-navigable, Finder-style — arrow keys move focus and select (shift extends the selection), Return opens the focused genome, Tab reaches cards, and a plain click selects (double-click opens; click on empty background clears). The focused card shows a keyboard-focus ring and reveals the rating bar on focus as well as hover.
 - GUI: the menu bar now carries the app's commands — File (Open Directory… ⌘O, Import Genomes… ⇧⌘I, Export… ⇧⌘E, New Collection… ⇧⌘N), a Genome menu (Play ⌘↓, Like/Neutral/Dislike, Add to Collection), View (Toggle Sidebar ⌃⌘S, Filter ⇧⌘F), Edit > Find (⌘F focuses search), and a working Help item (⌘? opens the shortcut list).
+- GUI: playback windows are titled by their genome/collection name instead of all reading "Playback", so the Window menu and Mission Control can tell them apart.
+- GUI: the Flock area switches Generate/Stitch/Browse with a real tab view; switching no longer resets the other panes' forms mid-run.
+
+### Fixed
+- Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
+- GUI: the hidden selection tick on unselected cards no longer intercepts clicks in the top-right corner of a card or exposes a phantom "Select" element.
+- GUI: cancelling the Stitch save panel now cancels the stitch (it used to proceed to a fixed output path and silently overwrite the previous result).
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).

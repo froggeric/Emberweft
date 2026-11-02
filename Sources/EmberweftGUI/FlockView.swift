@@ -25,14 +25,6 @@ struct FlockView: View {
         @Bindable var flock = flockModel
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Picker("Flock tab", selection: $tab) {
-                    Text("Generate").tag(FlockTab.generate)
-                    Text("Stitch").tag(FlockTab.stitch)
-                    Text("Browse").tag(FlockTab.browse)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 300)
                 Spacer(minLength: 0)
                 Picker("Backend", selection: $flock.backendChoice) {
                     ForEach(BackendChoice.allCases, id: \.self) { b in
@@ -46,14 +38,21 @@ struct FlockView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
 
-            Divider()
-
-            Group {
-                switch tab {
-                case .generate: GenerateTab()
-                case .stitch:   StitchTab()
-                case .browse:   BrowseTab()
-                }
+            // A tab view in the main content area (H12, segmented-controls.md:
+            // full panes are views, not attributes of a selection). TabView
+            // also keeps each pane's @State alive across switches — the old
+            // segmented picker rebuilt the active branch, wiping the
+            // Generate/Stitch form mid-run.
+            TabView(selection: $tab) {
+                GenerateTab()
+                    .tabItem { Label("Generate", systemImage: "wand.and.rays") }
+                    .tag(FlockTab.generate)
+                StitchTab()
+                    .tabItem { Label("Stitch", systemImage: "film") }
+                    .tag(FlockTab.stitch)
+                BrowseTab()
+                    .tabItem { Label("Browse", systemImage: "square.grid.2x2") }
+                    .tag(FlockTab.browse)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -800,8 +799,11 @@ private struct StitchTab: View {
         let ordered = sequence.map { (gen: $0.gen, id: $0.id, flame: $0.flame) }
         guard ordered.count >= 1 else { return }
         let ext = shard.codec.requiresMOVContainer ? "mov" : "mp4"
-        let out = chooseSaveURL(defaultName: "flock-stitch.\(ext)", suggestedDir: flockRoot)
-            ?? flockRoot.appendingPathComponent("flock-stitch.\(ext)")
+        // Save-panel Cancel aborts the command (H2): coalescing nil into a
+        // FIXED fallback path used to run the multi-minute stitch anyway and
+        // silently overwrote the previous result at that same fixed path.
+        guard let out = chooseSaveURL(defaultName: "flock-stitch.\(ext)",
+                                      suggestedDir: flockRoot) else { return }
         let request = StitchRequest(shard: shard, orderedFlames: ordered,
                                     settings: archiveSettings(for: shard, quality: qualityChoice),
                                     flockRoot: flockRoot, out: out,

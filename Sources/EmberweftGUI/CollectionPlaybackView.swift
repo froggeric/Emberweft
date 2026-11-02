@@ -51,6 +51,9 @@ struct CollectionPlaybackWindow: View {
             }
         }
         .frame(minWidth: 640, minHeight: 420)
+        // Per-window title (H13): title by the collection's name once
+        // resolved (until then the window-group literal shows).
+        .navigationTitle(collectionName.isEmpty ? "Collection Playback" : collectionName)
         .overlay(alignment: .top) {
             // Non-blocking export-progress banner (spec §4.7). Same mount as the
             // single-genome PlaybackWindow: the main LibraryView is NOT always

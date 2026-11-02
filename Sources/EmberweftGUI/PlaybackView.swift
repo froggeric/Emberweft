@@ -26,6 +26,10 @@ struct PlaybackWindow: View {
             bar
         }
         .frame(minWidth: 640, minHeight: 420)
+        // Per-window title (H13): with several non-modal playback windows
+        // open, the Window menu / Mission Control must tell them apart —
+        // title by the genome's display name (the file stem).
+        .navigationTitle(entry.displayName)
         .overlay(alignment: .top) {
             // Non-blocking export-progress banner (spec §4.7). Mounted in all
             // three window types — the main window is NOT always open, so each
