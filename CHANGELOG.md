@@ -33,10 +33,6 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: when Metal is unavailable, playback falls back to the CPU renderer instead of showing solid black at a healthy green FPS readout.
 - GUI: dragging the scrub slider (or arrow-stepping) while playing now seeks live — the render loop is reseeded from the new position instead of silently overriding the drag every frame.
 
-### Fixed
-- Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
-- GUI: the hidden selection tick on unselected cards no longer intercepts clicks in the top-right corner of a card or exposes a phantom "Select" element.
-
 ## [0.6.1] - 2026-08-18
 
 Framing at last: every genome now keeps its authored composition at every

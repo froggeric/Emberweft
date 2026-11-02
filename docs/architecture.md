@@ -277,18 +277,31 @@ facets, multi-selection, and per-section load + rendered-id state). It provides:
 - **`NavigationSplitView` studio:** a sidebar of destinations (All / Library /
   Liked / Imported, plus one row per opened folder and one per collection) drives a
   single detail grid (one section at a time). `⌘1–4` jump; density S/M/L persists.
+- **Menu bar (HIG remediation):** File (Open Directory… ⌘O, Import Genomes… ⇧⌘I,
+  Export… ⇧⌘E, New Collection… ⇧⌘N), a Genome menu (Play ⌘↓, Like/Neutral/Dislike,
+  Add to Collection), View (Toggle Sidebar ⌃⌘S, Filter ⇧⌘F), Edit > Find (⌘F
+  focuses search), and Help (⌘? opens the shortcut sheet). Commands reach
+  view-owned flows through one-shot request counters on `AppModel` (menus can't
+  touch view state directly).
 - **Grid browser:** a `LazyVGrid` of `ThumbnailCell` (off-main Metal thumbnails,
-  category pill, hover selection tick, hover-revealed tri-state sentiment bar plus
-  an always-on badge), skeleton loading, and destination-aware
-  `ContentUnavailableView` empty/error states.
-- **Multi-select + collections:** click / `⌘` / shift / `⌘A` selection with a
-  bottom-floating selection bar (bulk Like/Dislike, Save as Collection, Add to);
-  collections with rename / delete / add / remove and a custom in-app drag reorder.
+  category pill, hover-or-focus selection tick, hover- or keyboard-focus-revealed
+  tri-state sentiment bar plus an always-on badge), skeleton loading, and
+  destination-aware `ContentUnavailableView` empty/error states. Each card is one
+  combined accessibility element (button + selected traits, named rotor actions for
+  open/select/rate) — the grid is fully VoiceOver- and keyboard-navigable.
+- **Multi-select + collections:** Finder-style selection — click selects,
+  double-click opens playback, click on empty background clears; `⌘`/ctrl toggles,
+  shift extends; arrow keys move focus + select (`⇧` extends), Return/⌘↓ opens,
+  `⌘A`/Esc select-all/clear — with a bottom-floating selection bar (bulk
+  Like/Dislike, Save as Collection, Add to, Export); collections with rename /
+  delete / add / remove and a custom in-app drag reorder.
 - **Non-modal playback windows:** a value-driven `WindowGroup(for: PlaybackRoute.self)`
-  (one window per genome; browse and rate while it plays) and a second
-  `WindowGroup(for: CollectionPlaybackRoute.self)` that plays a collection as a
-  loop+transition sequence via the M3 `PlaybackDispatcher`. Transport: play/pause,
-  scrub, `←`/`→` frame-step, frame/time readouts, sentiment bar.
+  (one window per genome, titled by its display name; browse and rate while it
+  plays) and a second `WindowGroup(for: CollectionPlaybackRoute.self)` (titled by
+  collection name) that plays a collection as a loop+transition sequence via the M3
+  `PlaybackDispatcher`. Transport: play/pause, live scrub (the loop reseeds while
+  playing), `←`/`→` frame-step, frame/time readouts, sentiment bar. Both VMs fall
+  back to the CPU renderer when Metal is unavailable.
 - **Search & filter:** `.searchable` plus a filter popover (sentiment / category /
   palette) with an active-count badge and removable active-filter chips.
 
