@@ -90,6 +90,30 @@ final class AppModel {
     }
     var thumbTotal: Int = 0
 
+    /// Cells whose thumbnail task has STARTED (i.e. they appeared onscreen —
+    /// `.task` is lazy). The toolbar progress bar's denominator: thumbs resolve
+    /// lazily as cells appear, so "rendered / total entries" stalled below 1.0
+    /// forever (below-fold cells never render until scrolled — the bar sat at
+    /// "15/24" at rest, caught in a live probe). rendered/appeared reaches 1.0
+    /// once every VISIBLE cell is filled in, which is what the bar means:
+    /// "the grid is still filling in." Mirrors the rendered sets' per-source
+    /// shape so `hideEntry` keeps both consistent.
+    private var bundleAppeared: Set<String> = []
+    private var directoryAppeared: [URL: Set<String>] = [:]
+    private var importedAppeared: Set<String> = []
+    var thumbAppearedCount: Int {
+        bundleAppeared.union(importedAppeared).count
+            + prefs.directorySources.reduce(0) { $0 + (directoryAppeared[$1]?.count ?? 0) }
+    }
+
+    func markThumbAppeared(for entry: LibraryEntry) {
+        switch entry.source {
+        case .bundle: bundleAppeared.insert(entry.id)
+        case .directory(let url): directoryAppeared[url, default: []].insert(entry.id)
+        case .imported: importedAppeared.insert(entry.id)
+        }
+    }
+
     var importedDir: URL {
         AppPreferences.defaultDirectory.appendingPathComponent("Imported", isDirectory: true)
     }
@@ -108,12 +132,15 @@ final class AppModel {
         case .bundle:
             bundleLoadState = filtering(out: entry.id, in: bundleLoadState)
             bundleRendered.remove(entry.id)
+            bundleAppeared.remove(entry.id)
         case .directory(let url):
             directoryLoadStates[url] = filtering(out: entry.id, in: directoryLoadStates[url] ?? .empty)
             directoryRendered[url]?.remove(entry.id)
+            directoryAppeared[url]?.remove(entry.id)
         case .imported:
             importedLoadState = filtering(out: entry.id, in: importedLoadState)
             importedRendered.remove(entry.id)
+            importedAppeared.remove(entry.id)
         }
         recomputeThumbTotal()
     }

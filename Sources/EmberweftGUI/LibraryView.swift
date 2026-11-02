@@ -211,6 +211,15 @@ struct LibraryView: View {
                 }
             }
             Section("Folders") {
+                // The primary content-acquisition action lives at the TOP of
+                // the section it populates (it used to be the sidebar's LAST
+                // row, where a relocated window's edge hides it).
+                Button {
+                    openImporter = true
+                } label: {
+                    Label("Open Directory…", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
                 if folderSources.isEmpty {
                     Text("No folders added")
                         .foregroundStyle(.secondary)
@@ -253,12 +262,6 @@ struct LibraryView: View {
                 flockSidebarRow
             }
             Section {
-                Button {
-                    openImporter = true
-                } label: {
-                    Label("Open Directory…", systemImage: "plus")
-                }
-                .buttonStyle(.plain)
             } footer: {
                 densityControl
             }
@@ -598,7 +601,15 @@ struct LibraryView: View {
             }
             .onChange(of: importToast) {
                 let snap = importToast
+                // Announce transient results to VoiceOver — the toast is
+                // visual-only otherwise.
+                if let snap { AccessibilityNotification.Announcement(snap).post() }
                 Task { try? await Task.sleep(for: .seconds(3)); if importToast == snap { importToast = nil } }
+            }
+            .onChange(of: model.selection.isEmpty) { _, empty in
+                if !empty {
+                    AccessibilityNotification.Announcement("\(model.selection.count) selected").post()
+                }
             }
     }
 
@@ -812,6 +823,9 @@ struct LibraryView: View {
                     model.clearSelection()
                     focusedCellID = nil
                 }
+                // Post-drop re-layout slides cards into place (was instant);
+                // the drop-target pulse keeps its own faster animation.
+                .animation(.snappy, value: c.entries)
                 .animation(.snappy(duration: 0.15), value: dropTargetStoredIndex)
             }
         }
@@ -927,26 +941,34 @@ struct LibraryView: View {
         let menu = NSMenu()
         menu.addItem(NSMenuItem("Play") { openWindow(value: PlaybackRoute(entry)) })
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem("👍 Like") { model.metadataStore.setSentiment(1, for: entry) })
-        menu.addItem(NSMenuItem("● Neutral") { model.metadataStore.setSentiment(0, for: entry) })
-        menu.addItem(NSMenuItem("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) })
+        menu.addItem(sentimentItem(1, "Like", "hand.thumbsup", entry))
+        menu.addItem(sentimentItem(0, "Neutral", "circle", entry))
+        menu.addItem(sentimentItem(-1, "Dislike", "hand.thumbsdown", entry))
         menu.addItem(.separator())
-        let moveUp = NSMenuItem("Move Up") {
-            model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
+        // Hide at boundaries, don't dim (context menus show only what applies
+        // to THIS item — the first entry never offered a dead "Move Up").
+        let canUp = storedIndex > 0
+        let canDown = storedIndex < c.entries.count - 1
+        if canUp || canDown {
+            if canUp {
+                menu.addItem(NSMenuItem("Move Up") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex - 1)
+                })
+            }
+            if canDown {
+                menu.addItem(NSMenuItem("Move Down") {
+                    model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
+                })
+            }
+            menu.addItem(.separator())
         }
-        moveUp.isEnabled = storedIndex > 0
-        menu.addItem(moveUp)
-        let moveDown = NSMenuItem("Move Down") {
-            model.collectionsStore.moveEntry(in: c.id, from: storedIndex, to: storedIndex + 1)
-        }
-        moveDown.isEnabled = storedIndex < c.entries.count - 1
-        menu.addItem(moveDown)
+        menu.addItem(addToCollectionSubmenu(for: [CollectionEntry(entry)]))
         menu.addItem(.separator())
+        // Destructive LAST (a red Remove above a benign submenu read as the
+        // safer bottom action).
         menu.addItem(NSMenuItem("Remove from Collection", destructive: true) {
             model.collectionsStore.removeEntry(at: storedIndex, from: c.id)
         })
-        menu.addItem(.separator())
-        menu.addItem(addToCollectionSubmenu(for: [CollectionEntry(entry)]))
         return menu
     }
 
@@ -1019,7 +1041,7 @@ struct LibraryView: View {
                 systemImage: "list.bullet.rectangle",
                 description: Text(stored > 0
                     ? "The genomes in this collection's folder(s) are no longer available. Re-open the folder to bring them back."
-                    : "Add genomes with the selection bar's “Save as Collection…” or “Add to ▾”, or drag them from another collection.")
+                    : "Select genomes in any grid, then use the selection bar’s “Save as Collection…” or “Add to”, or a card’s “Add to Collection” menu.")
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         default:
@@ -1119,15 +1141,28 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        // Trailing-edge actions (next to the search field, where Mac users
+        // look for them) — a center-right floating cluster read as misplaced.
+        // macOS 26 toolbar placement recap (verified against the 27.2 SDK):
+        // `.primaryAction` CENTERS the group in the space between the title
+        // and the search field (and ToolbarSpacer's flexible gap just joins
+        // the equal split — verified no effect); `.automatic` packs items in
+        // declaration order hard against the search field's left edge. The
+        // iOS-only names (.supplementary/.topBarTrailing/.minimize search)
+        // don't exist on macOS. One ToolbarItemGroup = one glass capsule.
+        ToolbarItemGroup(placement: .automatic) {
             filterButton
             keyboardHelpButton
         }
+        // .automatic too, NOT .navigation — that's the sidebar-toggle's slot,
+        // which this conditional item used to displace while thumbnails
+        // render (toggle vanishing mid-session). It packs with the trailing
+        // cluster during a render, then disappears.
         if let progress = thumbProgress, progress < 1.0 {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItem(placement: .automatic) {
                 HStack(spacing: 6) {
                     ProgressView(value: progress).frame(width: 120)
-                    Text("\(model.renderedThumbIDs.count)/\(model.thumbTotal)")
+                    Text("\(model.renderedThumbIDs.count)/\(model.thumbAppearedCount)")
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
@@ -1182,9 +1217,9 @@ struct LibraryView: View {
                 get: { filter.sentiment ?? 999 },
                 set: { filter.sentiment = $0 == 999 ? nil : $0 })) {
                 Text("Any").tag(999)
-                Text("👍 Liked").tag(1)
-                Text("● Neutral").tag(0)
-                Text("👎 Disliked").tag(-1)
+                Label("Liked", systemImage: "hand.thumbsup").tag(1)
+                Label("Neutral", systemImage: "circle").tag(0)
+                Label("Disliked", systemImage: "hand.thumbsdown").tag(-1)
             }
             .pickerStyle(.menu)
 
@@ -1209,7 +1244,7 @@ struct LibraryView: View {
             if !filter.isEmpty {
                 HStack {
                     Spacer()
-                    Button("Clear all") { filter = LibraryFilter() }
+                    Button("Clear All") { filter = LibraryFilter() }
                         .buttonStyle(.borderless)
                 }
             }
@@ -1246,7 +1281,7 @@ struct LibraryView: View {
                         .transition(.scale.combined(with: .opacity))
                 }
                 Spacer(minLength: 8)
-                Button("Clear all") { filter = LibraryFilter() }
+                Button("Clear All") { filter = LibraryFilter() }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
             }
@@ -1449,12 +1484,22 @@ struct LibraryView: View {
         let menu = NSMenu()
         menu.addItem(NSMenuItem("Play") { openWindow(value: PlaybackRoute(entry)) })
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem("👍 Like") { model.metadataStore.setSentiment(1, for: entry) })
-        menu.addItem(NSMenuItem("● Neutral") { model.metadataStore.setSentiment(0, for: entry) })
-        menu.addItem(NSMenuItem("👎 Dislike") { model.metadataStore.setSentiment(-1, for: entry) })
+        menu.addItem(sentimentItem(1, "Like", "hand.thumbsup", entry))
+        menu.addItem(sentimentItem(0, "Neutral", "circle", entry))
+        menu.addItem(sentimentItem(-1, "Dislike", "hand.thumbsdown", entry))
         menu.addItem(.separator())
         menu.addItem(addToCollectionSubmenu(for: [CollectionEntry(entry)]))
         return menu
+    }
+
+    /// One sentiment menu item with a real SF Symbol image (uniform icon
+    /// treatment — emoji baked into titles rendered as colored inline glyphs,
+    /// mixing two icon languages in one menu).
+    private func sentimentItem(_ value: Int, _ title: String, _ symbol: String,
+                               _ entry: LibraryEntry) -> NSMenuItem {
+        let item = NSMenuItem(title) { model.metadataStore.setSentiment(value, for: entry) }
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        return item
     }
 
     /// "Add to Collection" submenu (NSMenu) — adds the given entries (deduped
@@ -1507,9 +1552,13 @@ struct LibraryView: View {
     private func performImport(_ urls: [URL]) {
         Task {
             let r = await model.importFiles(urls)
-            if r.imported == 0 { importToast = "Nothing imported (skipped \(r.skipped))" }
-            else if r.skipped > 0 { importToast = "Imported \(r.imported), skipped \(r.skipped)" }
-            else { importToast = "Imported \(r.imported)" }
+            if r.imported == 0 {
+                importToast = "Nothing imported — only .flam3 genome files can be added (skipped \(r.skipped))."
+            } else if r.skipped > 0 {
+                importToast = "Imported \(r.imported); skipped \(r.skipped) file\(r.skipped == 1 ? "" : "s") that isn't a .flam3 genome or couldn't be read."
+            } else {
+                importToast = "Imported \(r.imported)"
+            }
         }
     }
 
@@ -1537,8 +1586,15 @@ struct LibraryView: View {
     }
 
     private var thumbProgress: Double? {
-        guard model.thumbTotal > 0 else { return nil }
-        return Double(model.renderedThumbIDs.count) / Double(model.thumbTotal)
+        // Denominator = cells that have APPEARED, not all entries: below-fold
+        // cells never render until scrolled, so rendered/total stalled below
+        // 1.0 at rest (a permanently 62%-full bar). Rendered == appeared ⇒
+        // every visible cell is filled in ⇒ nil hides the item entirely.
+        let appeared = model.thumbAppearedCount
+        guard appeared > 0 else { return nil }
+        let rendered = model.renderedThumbIDs.count
+        guard rendered < appeared else { return nil }
+        return Double(rendered) / Double(appeared)
     }
 }
 

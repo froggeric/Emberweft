@@ -136,6 +136,9 @@ struct ThumbnailCell: View {
     }
 
     private func load() async {
+        // First line: this cell is onscreen and its thumb is pending — the
+        // toolbar bar's denominator (see AppModel.thumbAppearedCount).
+        model.markThumbAppeared(for: entry)
         guard let flame = try? await model.libraryIndex.loadGenome(for: entry) else {
             state = .failed
             model.markThumbResolved(for: entry)

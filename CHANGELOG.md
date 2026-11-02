@@ -23,6 +23,10 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: playback windows are titled by their genome/collection name instead of all reading "Playback", so the Window menu and Mission Control can tell them apart.
 - GUI: the Flock area switches Generate/Stitch/Browse with a real tab view; switching no longer resets the other panes' forms mid-run.
 - GUI: user-facing language unified — one noun ("genome", no more flame/sheep drift), "loop"/"transition" everywhere (the Flock "Edge" stepper renamed), form labels renamed to outcomes (Motion blur, Smooth Motion, Same at Every Size / As Authored, Pause safety), and help text rewritten in plain language (no CLI names, no "reference oracle", no "Chaos-game", no unexplained "spp", no removed-algorithm descriptions in tooltips).
+- GUI: grid context menus use SF Symbols for ratings (Like/Neutral/Dislike as system icons instead of emoji), offer Move Up/Move Down only when a move exists in that direction, and put Remove from Collection last in the collection menu (destructive actions belong at the bottom).
+- GUI: the library toolbar packs Filter and Help against the search field at the window's trailing edge (they floated mid-toolbar), the thumbnail progress readout no longer displaces the sidebar toggle while rendering, and "Open Directory…" is the first row of the sidebar's Folders section.
+- GUI: VoiceOver announces transient results — the import toast's outcome (including why files were skipped) and the selection count when the selection bar appears.
+- GUI: dropping a selection into a collection now animates cards into their new order instead of snapping.
 
 ### Fixed
 - Building with the macOS 26.2 SDK (26B118): worked around a Swift type-checker crash in `FramePlan.descriptor` (identical values and behavior).
@@ -32,6 +36,8 @@ implications of porting flam3) is the owner's decision and under review.
 - GUI: Browse pagination can no longer strand past the last page into a false "No artifacts" dead end; Next disables on the last page and the pager stays mounted.
 - GUI: when Metal is unavailable, playback falls back to the CPU renderer instead of showing solid black at a healthy green FPS readout.
 - GUI: dragging the scrub slider (or arrow-stepping) while playing now seeks live — the render loop is reseeded from the new position instead of silently overriding the drag every frame.
+- GUI: the thumbnail progress bar in the toolbar now completes and hides — it measured rendered thumbnails against every genome in the library, so it stalled part-full forever (below-fold cards don't render until scrolled). It now tracks the cards actually on screen and disappears once they're all filled in.
+- GUI: an empty collection now explains the two real ways to fill it (the selection bar's Save as Collection… / Add to, or a card's Add to Collection menu) instead of describing a drag that isn't possible on an empty grid.
 
 ## [0.6.1] - 2026-08-18
 
