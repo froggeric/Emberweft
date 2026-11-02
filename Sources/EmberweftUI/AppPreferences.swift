@@ -383,12 +383,14 @@ public struct AppPreferences: Codable, Sendable, Equatable {
             }
         }
 
-        /// Capitalized display label.
+        /// Capitalized display label. Unified vocabulary with
+        /// `ExportQualityChoice.displayName` (Draft / Standard / High) so the
+        /// preview and export pickers name the same concept the same way.
         public var label: String {
             switch self {
             case .draft: return "Draft"
-            case .balanced: return "Balanced"
-            case .quality: return "Quality"
+            case .balanced: return "Standard"
+            case .quality: return "High"
             case .custom: return "Custom"
             }
         }

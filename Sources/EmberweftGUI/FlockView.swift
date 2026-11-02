@@ -399,11 +399,13 @@ private struct GenerateTab: View {
                 Text(scopeSummary).font(.caption).foregroundStyle(.secondary)
             }
             Section("Quality") {
+                // Rendered from displayName (tier unification): the Generate
+                // and Stitch pickers used to hand-write a THIRD set of names
+                // ("Genome (mastering)" / "Low (draft)") for the same cases.
                 Picker("Quality", selection: $qualityChoice) {
-                    Text("Genome (mastering)").tag(ExportQualityChoice.genomeDefault)
-                    Text("Standard").tag(ExportQualityChoice.medium)
-                    Text("High").tag(ExportQualityChoice.high)
-                    Text("Low (draft)").tag(ExportQualityChoice.low)
+                    ForEach(ExportQualityChoice.allCases, id: \.self) {
+                        Text($0.displayName).tag($0)
+                    }
                 }
                 .disabled(running)
                 .help(qualityHelp)
@@ -653,11 +655,11 @@ private struct StitchTab: View {
                 if let loadError { Text(loadError).font(.caption).foregroundStyle(.red) }
             }
             Section("Quality") {
+                // displayName again (tier unification) — see the Generate tab.
                 Picker("Quality", selection: $qualityChoice) {
-                    Text("Genome (mastering)").tag(ExportQualityChoice.genomeDefault)
-                    Text("Standard").tag(ExportQualityChoice.medium)
-                    Text("High").tag(ExportQualityChoice.high)
-                    Text("Low (draft)").tag(ExportQualityChoice.low)
+                    ForEach(ExportQualityChoice.allCases, id: \.self) {
+                        Text($0.displayName).tag($0)
+                    }
                 }
                 .disabled(running)
                 .help(stitchQualityHelp)

@@ -13,6 +13,10 @@ import FlameFlock
 /// These are intentionally separate so a fast, low-cost preview never forces a
 /// slow export, and vice versa. The playback window's quality popover edits the
 /// same `previewPreset` (and exposes per-parameter Custom tuning).
+///
+/// Organized as panes (the macOS Settings contract): a TabView inside the
+/// Settings scene renders as the pane-switching toolbar with per-pane window
+/// titles, replacing the old single scrolling Form that mixed five domains.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -24,11 +28,42 @@ struct SettingsView: View {
     @State private var rebuildError: String?
 
     var body: some View {
+        TabView {
+            playbackExportPane
+                .tabItem { Label("Playback & Export", systemImage: "speedometer") }
+            libraryPane
+                .tabItem { Label("Library", systemImage: "square.grid.2x2") }
+            flockPane
+                .tabItem { Label("Flock", systemImage: "bird") }
+        }
+        .frame(width: 460)
+        .onChange(of: model.prefs) { _, _ in
+            try? model.prefs.save()
+        }
+        .task {
+            // Seed the size readout from the long-lived catalog (T18).
+            await model.flockModel.refreshBrowse()
+            shardSizes = await loadShardSizes()
+        }
+    }
+
+    // MARK: - Pane: Playback & Export
+
+    private var playbackExportPane: some View {
         @Bindable var model = model
-        Form {
+        return Form {
             Section("Playback (realtime preview)") {
-                Picker("Preview quality", selection: $model.prefs.previewPreset) {
-                    ForEach([AppPreferences.PreviewPreset.draft, .balanced, .quality], id: \.self) { Text($0.label).tag($0) }
+                Picker("Preview quality", selection: previewPresetBinding) {
+                    ForEach([AppPreferences.PreviewPreset.draft, .balanced, .quality], id: \.self) {
+                        Text($0.label).tag($0)
+                    }
+                    // Custom is a DERIVED status (set only by the playback
+                    // popover's advanced controls), never a pickable segment —
+                    // but a pop-up with no matching tag renders BLANK, which
+                    // reads as "no value set". List it, disabled.
+                    Text("Custom (set in the playback window)")
+                        .tag(AppPreferences.PreviewPreset.custom)
+                        .disabled(true)
                 }
                 .help("Realtime preview quality. Higher presets sharpen the image and reduce noise by raising the resolution and samples-per-pixel, at the cost of framerate. For per-parameter tuning, use a playback window's quality popover — it can switch to a Custom preset, shown read-only below.")
                 if model.prefs.previewPreset == .custom {
@@ -59,7 +94,16 @@ struct SettingsView: View {
                 }
                 .help("The default quality for the one-shot export sheet — each sheet opens at this tier and an in-sheet change affects that run only. Does NOT affect the realtime preview (its own Preview quality above) or the Flock archive (its own quality setting).")
             }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
 
+    // MARK: - Pane: Library
+
+    private var libraryPane: some View {
+        @Bindable var model = model
+        return Form {
             Section("Thumbnails") {
                 Picker("Thumbnail backend", selection: $model.prefs.thumbnailBackend) {
                     ForEach(AppPreferences.Backend.allCases, id: \.self) { Text($0.rawValue.uppercased()).tag($0) }
@@ -67,7 +111,7 @@ struct SettingsView: View {
                 .help("Metal renders thumbnails off the main thread (fast, and it does not block the UI); CPU is slower, also off the main thread.")
                 Stepper("Thumbnail samples: \(model.prefs.thumbnailSPP)",
                         value: $model.prefs.thumbnailSPP, in: 1...64)
-                .help("Samples per pixel for grid thumbnails. Higher gives cleaner thumbnails but takes longer to fill the grid.")
+                    .help("Samples per pixel for grid thumbnails. Higher gives cleaner thumbnails but takes longer to fill the grid.")
             }
 
             Section("Library folders") {
@@ -81,13 +125,21 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
 
+    // MARK: - Pane: Flock
+
+    private var flockPane: some View {
+        @Bindable var model = model
+        return Form {
             Section("Flock archive") {
                 // Archive folder (flockDir). "Choose…" opens a folder picker
                 // (NSOpenPanel); the path field is also hand-editable. Empty ⇒
                 // the default <app-support>/Emberweft/Flock. Persisted via the
-                // Form's `.onChange(of: model.prefs)` save (same path as the
-                // other pickers).
+                // `.onChange(of: model.prefs)` save (same path as the pickers).
                 HStack {
                     TextField(
                         "Archive folder",
@@ -111,7 +163,21 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .help("Where the Flock archive lives (shard .mov files + flock.sqlite). Leave empty for the default (Application Support/Emberweft/Flock). A change takes effect for the catalog on the next launch; Rebuild repopulates the chosen folder immediately.")
+                .help("Where the Flock archive lives (shard .mov files + flock.sqlite). Leave empty for the default (Application Support/Emberweft/Flock).")
+                // The relaunch caveat used to live only in a hover tooltip —
+                // every OTHER setting in this window applies immediately, so
+                // the deferred behavior must be visible where the edit happens.
+                Text("Folder changes take effect the next time Emberweft opens; Rebuild repopulates the chosen folder immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // Inline validation (entering-data): the TextField accepts any
+                // text, so a path that isn't an existing folder is called out
+                // at the field instead of silently not working.
+                if let badPath = invalidArchivePath {
+                    Text("“\(badPath)” doesn't exist as a folder — check the path or use Choose…")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
 
                 // Default shard for the Flock Generate/Stitch tabs (wired):
                 // persisted as `AppPreferences.flockDefaultShard`; the tabs
@@ -154,15 +220,28 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 460)
-        .onChange(of: model.prefs) { _, _ in
-            try? model.prefs.save()
+    }
+
+    /// Non-nil (carrying the offending path) when the stored archive folder
+    /// exists in prefs but not on disk.
+    private var invalidArchivePath: String? {
+        guard let dir = model.prefs.flockDir else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else {
+            return dir.path
         }
-        .task {
-            // Seed the size readout from the long-lived catalog (T18).
-            await model.flockModel.refreshBrowse()
-            shardSizes = await loadShardSizes()
-        }
+        return nil
+    }
+
+    /// Preview-quality picker binding that mirrors the pref but refuses
+    /// selection of `.custom` (Custom is derived — set only by the playback
+    /// popover's forkToCustomIfNeeded; the row is disabled, this is the belt to
+    /// its suspenders).
+    private var previewPresetBinding: Binding<AppPreferences.PreviewPreset> {
+        @Bindable var model = model
+        return Binding(
+            get: { model.prefs.previewPreset },
+            set: { if $0 != .custom { model.prefs.previewPreset = $0 } })
     }
 
     /// Two-way binding for the default-shard picker: nil (unset) displays as the
@@ -238,7 +317,7 @@ struct SettingsView: View {
     private var exportQualityBinding: Binding<ExportQualityChoice> {
         Binding(
             get: { model.prefs.exportQualityChoice },
-            set: { model.prefs.exportQuality = $0.rawValue }   // persisted by the Form's `.onChange(of: model.prefs)` save
+            set: { model.prefs.exportQuality = $0.rawValue }   // persisted by the `.onChange(of: model.prefs)` save
         )
     }
 }

@@ -263,7 +263,7 @@ struct ExportSheet: View {
             // for named tiers it's literal single-pass (sharp, fastest — the
             // genome-default ts was wasteful at low spp for invisible motion blur).
             return model.exportManager.qualityChoice == .genomeDefault
-                ? "Motion blur (genome default)"
+                ? "Motion blur (as stored in the genome)"
                 : "Motion blur (single pass)"
         }
         return "Motion blur (\(ts) passes)"
@@ -293,7 +293,7 @@ struct ExportSheet: View {
     /// (byte-identical unsmoothed) and why it's disabled at genome-default.
     private var smoothingHelp: String {
         if model.exportManager.qualityChoice == .genomeDefault {
-            return "Disabled at genome-default quality — it already renders each frame exactly as authored."
+            return "Disabled at Genome quality — it already renders each frame exactly as authored."
         }
         // Shipped behavior (M6.1 rev): a CENTERED window blending each frame
         // with its neighbors — not the old causal EMA this text used to describe.
@@ -320,7 +320,7 @@ struct ExportSheet: View {
     private var qualityHelp: String {
         "Genome reproduces the exact quality stored in each genome file — slowest, "
             + "and the only tier that matches the original Electric Sheep render. "
-            + "Low, Medium, and High set the sampling level: higher is cleaner but slower."
+            + "Draft, Standard, and High set the sampling level: higher is cleaner but slower."
     }
 
     /// Start is disabled unless the manager can start AND the source has at

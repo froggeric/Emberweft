@@ -63,11 +63,13 @@ final class ExportQualityChoiceTests: XCTestCase {
     // MARK: - displayName (the shared sheet/Settings label)
 
     func testDisplayNameMatchesSheetLabels() {
-        // One label source for the export sheet's picker and Settings' default
-        // picker, so the two surfaces can never disagree.
-        XCTAssertEqual(ExportQualityChoice.genomeDefault.displayName, "Genome default")
-        XCTAssertEqual(ExportQualityChoice.low.displayName, "Low")
-        XCTAssertEqual(ExportQualityChoice.medium.displayName, "Medium")
+        // One label source for the export sheet's picker, Settings' default
+        // picker, AND the Flock pickers, so the surfaces can never disagree.
+        // Vocabulary unified with PreviewPreset.label (tier unification):
+        // Draft / Standard / High / Genome.
+        XCTAssertEqual(ExportQualityChoice.genomeDefault.displayName, "Genome")
+        XCTAssertEqual(ExportQualityChoice.low.displayName, "Draft")
+        XCTAssertEqual(ExportQualityChoice.medium.displayName, "Standard")
         XCTAssertEqual(ExportQualityChoice.high.displayName, "High")
     }
 

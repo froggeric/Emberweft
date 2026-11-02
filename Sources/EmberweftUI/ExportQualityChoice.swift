@@ -18,13 +18,17 @@ public enum ExportQualityChoice: String, Sendable, CaseIterable, Hashable {
     case medium
     case high
 
-    /// Human label shared by the export sheet's picker and Settings' default
-    /// picker (one source so the two never disagree).
+    /// Human label shared by the export sheet's picker, Settings' default
+    /// picker, and the Flock pickers (one source so the surfaces can never
+    /// disagree). The vocabulary is unified app-wide with PreviewPreset.label:
+    /// **Draft / Standard / High / Genome** (the tier-unification decision —
+    /// the old "Low / Medium / High / Genome default" and Flock's hand-written
+    /// "Standard / Low (draft)" named the same cases three different ways).
     public var displayName: String {
         switch self {
-        case .genomeDefault: "Genome default"
-        case .low:           "Low"
-        case .medium:        "Medium"
+        case .genomeDefault: "Genome"
+        case .low:           "Draft"
+        case .medium:        "Standard"
         case .high:          "High"
         }
     }
